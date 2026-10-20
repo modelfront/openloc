@@ -1,0 +1,67 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "internal/database/migrations"
+    queries:
+      - "internal/project/queries.sql"
+      - "internal/file/queries.sql"
+      - "internal/segment/queries.sql"
+      - "internal/translation/queries.sql"
+      - "internal/translationmemory/queries.sql"
+      - "internal/mtengine/queries.sql"
+      - "internal/template/queries.sql"
+      - "internal/language/queries.sql"
+      - "internal/job/queries.sql"
+      - "internal/auth/queries.sql"
+      - "internal/invite/queries.sql"
+      - "internal/terminology/queries.sql"
+      - "internal/qa/queries.sql"
+      - "internal/spellcheck/queries.sql"
+      - "internal/workflow/queries.sql"
+      - "internal/stepround/queries.sql"
+      - "internal/workflowlib/queries.sql"
+      - "internal/stepdef/queries.sql"
+      - "internal/notification/queries.sql"
+      - "internal/analytics/queries.sql"
+      - "internal/settings/queries.sql"
+      - "internal/tmprofile/queries.sql"
+      - "internal/comments/queries.sql"
+      - "internal/customer/queries.sql"
+      - "internal/label/queries.sql"
+      - "internal/userpair/queries.sql"
+      - "internal/analysis/queries.sql"
+      - "internal/ai/queries.sql"
+      - "internal/extension/queries.sql"
+      - "internal/aiprompt/queries.sql"
+      - "internal/aiengine/queries.sql"
+      - "internal/airouter/queries.sql"
+      - "internal/mtrouter/queries.sql"
+      - "internal/appearance/queries.sql"
+      - "internal/mcp/queries.sql"
+      - "internal/projectevents/queries.sql"
+      - "internal/hold/queries.sql"
+      - "internal/issues/queries.sql"
+      - "internal/chat/queries.sql"
+      - "internal/demodata/queries.sql"
+      - "internal/demoorg/queries.sql"
+      - "internal/dashboard/queries.sql"
+      - "internal/dashboard/pinned_queries.sql"
+      - "internal/oauthserver/queries.sql"
+      - "internal/timing/queries.sql"
+      - "internal/taskedit/queries.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/database/sqlcgen"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        emit_interface: true
+        overrides:
+          # Returned inside file rows by the API: raw JSON, not base64 bytes.
+          - column: "files.xlsx_layout"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+            nullable: true

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file source-language="en" target-language="es" datatype="plaintext" original="tags-test.xliff">
+    <body>
+      <trans-unit id="1">
+        <source>Click <bpt id="1">&lt;b&gt;</bpt>here<ept id="1">&lt;/b&gt;</ept> to continue</source>
+      </trans-unit>
+      <trans-unit id="2">
+        <source>Press <ph id="2">{key}</ph> to submit</source>
+      </trans-unit>
+      <trans-unit id="3">
+        <source><bpt id="3">&lt;b&gt;</bpt>Bold text<ept id="3">&lt;/b&gt;</ept> with trailing words</source>
+      </trans-unit>
+      <trans-unit id="4">
+        <source>Normal text without tags</source>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

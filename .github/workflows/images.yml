@@ -1,0 +1,147 @@
+# Publishes the two images to GitHub's registry (GHCR), for amd64 and arm64.
+#
+# Started by publishing a GitHub Release whose tag is a version vX.Y.Z on a
+# commit on main, or by hand for an existing tag (Actions → Publish images →
+# Run workflow) to build it again. The images are named after the repo:
+# ghcr.io/modelfront/openloc and ghcr.io/modelfront/openloc-parser (a fork gets
+# its own names). v1.4.3 is pushed as
+# 1.4.3, 1.4, 1 and latest; a 0.x version gets no bare major tag. A moving tag
+# (1.4, 1, latest) is pushed only when this is the newest version on main that
+# it covers, decided just before the push, so a moving tag never goes back.
+#
+# Both images are built for both platforms before either is pushed, so a failed
+# build pushes nothing. The two pushes are separate steps: if the second one
+# fails (a registry error), run the workflow again for the same tag.
+#
+# In a fork, a new GHCR package is private until you change its visibility on
+# the package page.
+name: Publish images
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing version tag on main, e.g. v1.4.3"
+        required: true
+
+# One run at a time, so two releases published close together push in order.
+# GitHub keeps one waiting run per group: a third run replaces the waiting one,
+# which then needs a run by hand.
+concurrency:
+  group: images
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      PLATFORMS: linux/amd64,linux/arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      # Only a plain release version, and only one main has: images must be
+      # built from released code.
+      - name: Check the version tag
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not a version tag vX.Y.Z"; exit 1; }
+          [ "${{ github.event.release.prerelease || false }}" != true ] || { echo "::error::$TAG is a pre-release; it publishes no images"; exit 1; }
+          git rev-parse --verify --quiet "refs/tags/$TAG" > /dev/null || { echo "::error::tag $TAG does not exist"; exit 1; }
+          git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 1. Build both, push nothing. A failure here leaves the registry as it was.
+      - name: Build the app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: dockerfiles/openloc.dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          build-args: GIT_HASH=${{ steps.source.outputs.sha }}
+          cache-to: type=gha,scope=app,mode=max
+      - name: Build the parser image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: dockerfiles/openloc-docparser.dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          cache-to: type=gha,scope=parser,mode=max
+
+      # 2. Which moving tags this version may take, from the tags on main now:
+      # a release published during the build is counted, and a tag that is not
+      # on main (which this workflow never publishes) is not.
+      - id: newest
+        name: Which moving tags this version may take
+        run: |
+          git fetch --quiet --force --tags origin main
+          versions="$(git tag -l --merged origin/main 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)"
+          v="${TAG#v}"; major="${v%%.*}"; minor="${v%.*}"
+          newest() { printf '%s\n' "$versions" | grep -E "^v$1" | tail -1; }
+          is() { [ "$1" = "$TAG" ] && echo true || echo false; }
+          {
+            echo "minor=$(is "$(newest "${minor//./\\.}\\.")")"
+            echo "major=$(is "$(newest "$major\\.")")"
+            echo "latest=$(is "$(newest "")")"
+          } >> "$GITHUB_OUTPUT"
+      # GHCR names must be lowercase; an owner or repo name may not be.
+      - id: name
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - id: app
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.repo }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ steps.newest.outputs.minor }}
+            type=semver,pattern={{major}},value=${{ env.TAG }},enable=${{ steps.newest.outputs.major }}
+            type=raw,value=latest,enable=${{ steps.newest.outputs.latest }}
+      - id: parser
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.repo }}-parser
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ steps.newest.outputs.minor }}
+            type=semver,pattern={{major}},value=${{ env.TAG }},enable=${{ steps.newest.outputs.major }}
+            type=raw,value=latest,enable=${{ steps.newest.outputs.latest }}
+
+      # 3. Both built: push them, from the cache the builds just wrote.
+      - name: Push the app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: dockerfiles/openloc.dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          build-args: GIT_HASH=${{ steps.source.outputs.sha }}
+          cache-from: type=gha,scope=app
+          push: true
+          tags: ${{ steps.app.outputs.tags }}
+          labels: ${{ steps.app.outputs.labels }}
+      - name: Push the parser image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: dockerfiles/openloc-docparser.dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          cache-from: type=gha,scope=parser
+          push: true
+          tags: ${{ steps.parser.outputs.tags }}
+          labels: ${{ steps.parser.outputs.labels }}

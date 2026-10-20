@@ -1,0 +1,137 @@
+# Dev "instance" stack. Host ports + COMPOSE_PROJECT_NAME are interpolated from
+# the environment (exported by the Makefile from an optional, git-ignored
+# instance.conf) so multiple checkouts run side-by-side without clashing. Each
+# instance gets a 20-wide port block in the 9000s. With no env set — a bare
+# `docker compose up` outside `make` — each `${VAR:-default}` falls back to the
+# instance-1 port. Drive Docker through `make` so this instance's ports/project
+# are used.
+#
+# Host ports bind to 127.0.0.1 only: the credentials below are public dev
+# defaults, so the services must not be reachable from the network.
+services:
+  postgres:
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: openloc
+      POSTGRES_USER: openloc
+      POSTGRES_PASSWORD: openloc
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-9002}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openloc"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-9003}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+  seaweedfs:
+    # S3-compatible object storage. Single node: master, volume server, filer
+    # and S3 gateway in one process. The S3 API is on S3_PORT; the filer's file
+    # browser is on S3_UI_PORT.
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    # Each bucket is a SeaweedFS collection with its own volumes. GROWTH_COPY_1=1
+    # starts a bucket with one volume instead of seven, and volume.max lifts the
+    # default cap of 8 volumes, so a second bucket still gets space.
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333",
+              "-s3.config=/etc/seaweedfs/s3.json",
+              "-master.volumeSizeLimitMB=1024", "-volume.max=100"]
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
+    ports:
+      - "127.0.0.1:${S3_PORT:-9004}:8333"
+      - "127.0.0.1:${S3_UI_PORT:-9005}:8888"
+    volumes:
+      - ./dockerfiles/seaweedfs-s3.dev.json:/etc/seaweedfs/s3.json:ro
+      - seaweedfsdata:/data
+    healthcheck:
+      # /healthz answers before the volume server registers, and writes fail
+      # until it does ("Max" > 0 in the master's status). 127.0.0.1, not
+      # localhost: busybox wget tries only the first address, and localhost can
+      # resolve to ::1 on a host whose containers have no IPv6 loopback.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/dir/status | grep -q '\"Max\":[1-9]' && wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  libretranslate:
+    image: libretranslate/libretranslate:v1.9.6@sha256:1de2d7056bb8ad607a412f4563d9abe324ff632b43b5be9428bcc8e213aebb32
+    ports:
+      - "127.0.0.1:${LIBRETRANSLATE_PORT:-9006}:5000"
+    command: ["--char-limit", "5000"]
+    environment:
+      LT_LOAD_ONLY: "en,de,es,fr"
+      LT_DISABLE_WEB_UI: "false"
+      LT_THREADS: "4"
+      LT_SUGGESTIONS: "false"
+      ARGOS_BEAM_SIZE: "1"
+      ARGOS_BATCH_SIZE: "512"
+    volumes:
+      - ltdata:/home/libretranslate/.local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/languages"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # Spell + grammar check for the CAT editor. Self-hosted because the public
+  # api.languagetool.org endpoint allows 20 requests/IP/minute and returns
+  # suggestions for only the first 30 misspellings per check — a document-wide
+  # check blows through both — and because it would otherwise send every
+  # customer target segment to a third party.
+  #
+  # LanguageTool publishes no official image, so this is the widely-used
+  # community one, pinned by version and digest so an upstream rule change
+  # can't silently move QA results underneath us.
+  #
+  # The self-hosted server has no AI-based rules (those are cloud-only). The
+  # dictionary-based misspelling rules this feature is mostly about are
+  # identical. n-gram data for context-dependent confusions is a separate,
+  # multi-gigabyte opt-in and is deliberately not mounted here.
+  languagetool:
+    image: erikvl87/languagetool:6.8@sha256:ef8fa12cbd485166c9ceeb7139d76d56d07707a624da6bb1fc1fbb5411750527
+    ports:
+      - "127.0.0.1:${LANGUAGETOOL_PORT:-9008}:8010"
+    environment:
+      Java_Xms: "256m"
+      Java_Xmx: "1g"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8010/v2/languages"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  parser-sidecar:
+    build:
+      context: .
+      dockerfile: dockerfiles/openloc-docparser.dev.dockerfile
+    ports:
+      - "127.0.0.1:${PARSER_PORT:-9007}:5200"
+    volumes:
+      - ./sidecars/parser:/app
+      - parser-pip:/usr/local/lib/python3.12/site-packages
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
+  seaweedfsdata:
+  ltdata:
+  parser-pip:

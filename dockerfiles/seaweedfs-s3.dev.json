@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "app",
+      "credentials": [{ "accessKey": "changeme-s3-access-key", "secretKey": "changeme-s3-secret-key" }],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}

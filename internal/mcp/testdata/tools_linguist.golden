@@ -1,0 +1,45 @@
+openloc_add_comment write
+openloc_advance_step write open-world
+openloc_apply_mt write open-world
+openloc_apply_tm write
+openloc_clear_job_translations destructive
+openloc_clear_segment destructive
+openloc_confirm_translation write
+openloc_delete_comment destructive
+openloc_delete_custom_palette destructive
+openloc_download_source read
+openloc_export_file read
+openloc_export_job read
+openloc_find_replace_job write
+openloc_get_appearance read
+openloc_get_doc_page read
+openloc_get_job read
+openloc_get_job_analysis read
+openloc_get_job_leverage read
+openloc_get_me read
+openloc_get_notification_preferences read
+openloc_get_qa_report read
+openloc_get_segment_history read
+openloc_get_tm_matches read
+openloc_ignore_qa_finding write
+openloc_list_comments read
+openloc_list_docs read
+openloc_list_job_steps read
+openloc_list_my_tasks read
+openloc_list_notifications read
+openloc_list_segments read
+openloc_lock_segment write
+openloc_lookup_term read
+openloc_mark_notifications_read write
+openloc_preview_mt read open-world
+openloc_reimport_xliff write
+openloc_reject_step write open-world
+openloc_run_qa write
+openloc_run_segment_qa write
+openloc_save_draft write
+openloc_save_drafts_batch write
+openloc_search_docs read
+openloc_search_tm read
+openloc_set_active_palette write
+openloc_update_notification_preferences write
+openloc_upsert_custom_palette write

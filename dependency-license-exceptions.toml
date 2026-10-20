@@ -1,0 +1,20 @@
+# Packages `make check-licenses` (scripts/check-licenses.sh) accepts although
+# their license is not on its allowlist (the permissive licenses plus
+# MPL-2.0), or cannot be told from the package. Prefer replacing such a
+# dependency. Every entry names the package as <ecosystem>:<name> (go, npm or
+# py, the name as the notices print it), the license label the review looked
+# at (the entry stops applying when the package's label changes), why the
+# review accepts it, and an expiry date: from that day on, the check fails
+# again. Remove an entry when its package is replaced or relicensed.
+#
+# [[Exceptions]]
+# package = "npm:some-package"
+# license = "GPL-2.0 OR MIT"
+# reason = "Dual-licensed; the MIT grant applies (reviewed 2026-10-16)."
+# expires = 2027-04-01
+
+[[Exceptions]]
+package = "py:pypdfium2"
+license = "BSD-3-Clause, Apache-2.0, dependency licenses"
+reason = "pypdfium2 itself is Apache-2.0 or BSD-3-Clause. 'dependency licenses' is the PDFium build it bundles and that build's third-party libraries (abseil, agg23, fast_float, FreeType, ICU, Little-CMS, libjpeg-turbo, OpenJPEG, libpng, libtiff, llvm-libc, simdutf, zlib: Apache-2.0, BSD, MIT, zlib, FreeType and similar permissive terms), every text of which the package ships and the notices reproduce. Reviewed 2026-10-16."
+expires = 2027-10-16

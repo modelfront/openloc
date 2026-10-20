@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<martif type="TBX-Basic" xml:lang="en">
+  <martifHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Sample legacy TBX v2 (martif) file for import tests.</p>
+      </sourceDesc>
+    </fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="c1">
+        <descrip type="subjectField">finance</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>invoice</term>
+            <termNote type="partOfSpeech">noun</termNote>
+          </tig>
+        </langSet>
+        <langSet xml:lang="fr">
+          <tig>
+            <term>facture</term>
+            <termNote type="administrativeStatus">preferredTerm-admn-sts</termNote>
+          </tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="c2">
+        <langSet xml:lang="en">
+          <ntig>
+            <termGrp>
+              <term>spreadsheet</term>
+              <termNote type="partOfSpeech">noun</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="fr">
+          <ntig>
+            <termGrp>
+              <term>tableur</term>
+            </termGrp>
+          </ntig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

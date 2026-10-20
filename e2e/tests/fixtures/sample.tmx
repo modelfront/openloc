@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tmx SYSTEM "tmx14.dtd">
+<tmx version="1.4">
+  <header creationtool="openloc-test" creationtoolversion="1.0"
+          datatype="plaintext" segtype="sentence"
+          adminlang="en" srclang="en"
+          o-tmf="TW4Win 2.0 Format"/>
+  <body>
+    <tu tuid="1">
+      <tuv xml:lang="en">
+        <seg>Hello world</seg>
+      </tuv>
+      <tuv xml:lang="es">
+        <seg>Hola mundo</seg>
+      </tuv>
+      <tuv xml:lang="fr">
+        <seg>Bonjour le monde</seg>
+      </tuv>
+    </tu>
+    <tu tuid="2">
+      <tuv xml:lang="en">
+        <seg>Good morning</seg>
+      </tuv>
+      <tuv xml:lang="es">
+        <seg>Buenos días</seg>
+      </tuv>
+      <tuv xml:lang="fr">
+        <seg>Bonjour</seg>
+      </tuv>
+    </tu>
+    <tu tuid="3">
+      <tuv xml:lang="en">
+        <seg>Thank you very much</seg>
+      </tuv>
+      <tuv xml:lang="es">
+        <seg>Muchas gracias</seg>
+      </tuv>
+    </tu>
+    <tu tuid="4">
+      <tuv xml:lang="en">
+        <seg><bpt i="1" type="bold">&lt;b&gt;</bpt>Important<ept i="1">&lt;/b&gt;</ept> notice</seg>
+      </tuv>
+      <tuv xml:lang="es">
+        <seg><bpt i="1" type="bold">&lt;b&gt;</bpt>Importante<ept i="1">&lt;/b&gt;</ept> aviso</seg>
+      </tuv>
+    </tu>
+    <tu tuid="5">
+      <tuv xml:lang="EN-US">
+        <seg>File not found</seg>
+      </tuv>
+      <tuv xml:lang="es-MX">
+        <seg>Archivo no encontrado</seg>
+      </tuv>
+      <tuv xml:lang="fr-CA">
+        <seg>Fichier non trouvé</seg>
+      </tuv>
+    </tu>
+  </body>
+</tmx>

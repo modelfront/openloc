@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 252" width="700" height="252" role="img" aria-labelledby="t d">
+  <title id="t">How several memories are searched</title>
+  <desc id="d">Exact matches let each memory fill what the ones above it missed; for fuzzy matches the first memory above the threshold wins, even when a lower one holds a better percentage.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+    <style>
+      .h { font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2937; }
+      .m { font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2937; }
+      .s { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b7280; }
+      .win { font: 600 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #b45309; }
+      .arw { stroke: #6b7280; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    </style>
+  </defs>
+
+  <rect width="700" height="252" fill="#ffffff"/>
+
+  <!-- left panel: exact -->
+  <text class="h" x="20" y="26">Exact matches — every memory gets a turn</text>
+  <rect x="20" y="40" width="300" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="m" x="34" y="62">1 · Master memory</text>
+  <text class="s" x="34" y="79">fills every segment it matches</text>
+
+  <rect x="20" y="104" width="300" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="m" x="34" y="126">2 · Client memory</text>
+  <text class="s" x="34" y="143">fills only what memory 1 missed</text>
+
+  <rect x="20" y="168" width="300" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="m" x="34" y="190">3 · Legacy memory</text>
+  <text class="s" x="34" y="207">fills only what 1 and 2 missed</text>
+
+  <path class="arw" d="M170,92 V100"/>
+  <path class="arw" d="M170,156 V164"/>
+
+  <!-- divider -->
+  <line x1="350" y1="16" x2="350" y2="236" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <!-- right panel: fuzzy -->
+  <text class="h" x="380" y="26">Fuzzy matches — the first one above the threshold wins</text>
+  <rect x="380" y="40" width="300" height="52" rx="8" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1.5"/>
+  <text class="m" x="394" y="62">1 · Master memory</text>
+  <text class="s" x="394" y="79">best match 68% — below the 75% threshold</text>
+
+  <rect x="380" y="104" width="300" height="52" rx="8" fill="#fffbeb" stroke="#fcd34d" stroke-width="2"/>
+  <text class="m" x="394" y="126">2 · Client memory</text>
+  <text class="s" x="394" y="143">best match 82% — passes, so this one is used</text>
+  <text class="win" x="666" y="126" text-anchor="end">✓ used</text>
+
+  <rect x="380" y="168" width="300" height="52" rx="8" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1.5"/>
+  <text class="m" x="394" y="190">3 · Legacy memory</text>
+  <text class="s" x="394" y="207">best match 94% — never looked at</text>
+  <text class="s" x="666" y="190" text-anchor="end" fill="#9ca3af">✕ not reached</text>
+
+  <path class="arw" d="M530,92 V100"/>
+</svg>

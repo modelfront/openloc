@@ -1,0 +1,208 @@
+paths:
+  /projects/{projectID}/jobs:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      operationId: listProjectJobs
+      summary: List a project's jobs
+      description: The project's jobs, one per file and target language, oldest first.
+      tags: [Jobs]
+      x-roles: [owner, admin, project_manager]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the project's jobs.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{jobID}:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    get:
+      operationId: getJob
+      summary: Get a job
+      description: A Linguist may read jobs assigned to them.
+      tags: [Jobs]
+      x-roles: [owner, admin, project_manager, linguist]
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteJob
+      summary: Delete a job
+      description: Deletes the job and its translations. The file stays.
+      tags: [Jobs]
+      x-roles: [owner, admin, project_manager]
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{jobID}/export:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    get:
+      operationId: exportJob
+      summary: Download the translated file
+      description: |
+        `format=source` (the default) returns the file in its original format
+        with the translations filled in. `format=xliff` returns a bilingual
+        XLIFF 1.2 file for another translation tool.
+      tags: [Jobs]
+      x-roles: [owner, admin, project_manager, linguist]
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [source, xliff]
+            default: source
+      responses:
+        "200":
+          description: The translated file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            application/x-xliff+xml:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /jobs/{jobID}/assign:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    post:
+      operationId: assignJob
+      summary: Assign a job
+      description: Assigns a member to the job's current workflow step. The job then shows in their tasks.
+      tags: [Jobs]
+      x-roles: [owner, admin, project_manager]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The job, with its new assignee.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+components:
+  schemas:
+    JobStatus:
+      type: string
+      description: |
+        Progress of the translation. `created`: nothing translated yet.
+        `in_progress`: work under way. `needs_attention`: some segments need
+        review. `completed`: every segment is approved in the current
+        step, or in the last step once the workflow is done.
+      enum: [created, in_progress, needs_attention, completed]
+    Job:
+      type: object
+      required: [id, project_id, file_id, file_name, source_language, target_language, word_count, segment_count, status, processing_status, counts, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64, description: "Job id. One job is one file in one target language." }
+        project_id: { type: integer, format: int64, description: "The project the job belongs to." }
+        file_id: { type: integer, format: int64, description: "The file the job translates." }
+        file_name: { type: string, description: "Name of that file." }
+        source_language: { type: string, description: "Source language code." }
+        target_language: { type: string, description: "Target language code." }
+        word_count: { type: integer, description: "Source words in the file." }
+        segment_count: { type: integer, description: "Segments in the file." }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        processing_status:
+          type: string
+          description: |
+            State of the automatic work on the job (pre-translation, quality
+            estimation), for example `queued`, `in_progress`, `completed` or `failed`.
+        error_message:
+          type: string
+          nullable: true
+          description: Why the automatic work failed, when `processing_status` is `failed`.
+        mt_skip_reason:
+          type: string
+          nullable: true
+          enum: [no_route, no_provider]
+          description: |
+            Why the last pre-translation asked for machine translation and got
+            none: `no_route` (the project's MT router has no engine for the target
+            language) or `no_provider` (the AI engine it points to cannot
+            translate the pair). Null otherwise. A job on a pre-translation-only
+            workflow stays `in_progress` while this is set.
+        counts: { $ref: "#/components/schemas/SegmentCounts" }
+        workflow_step:
+          allOf:
+            - $ref: "#/components/schemas/WorkflowStep"
+          nullable: true
+        created_at: { type: string, format: date-time, description: "When the job was created." }
+        updated_at: { type: string, format: date-time, description: "When the job last changed." }
+    SegmentCounts:
+      type: object
+      description: Segments by state.
+      required: [total, untranslated, pre_translated, auto_approved, needs_review, approved]
+      properties:
+        total: { type: integer, description: "All segments." }
+        untranslated: { type: integer, description: "Segments with no translation yet." }
+        pre_translated: { type: integer, description: "Filled from translation memory or machine translation, not reviewed." }
+        auto_approved: { type: integer, description: "Approved automatically by quality estimation." }
+        needs_review: { type: integer, description: "Waiting for a person." }
+        approved: { type: integer, description: "Confirmed by a person." }
+    WorkflowStep:
+      type: object
+      description: The job's current workflow step.
+      required: [id, name, order, type, status, is_last_step]
+      properties:
+        id: { type: integer, format: int64, description: "Job id. One job is one file in one target language." }
+        name: { type: string, description: "Step name, for example `Translation`." }
+        order: { type: integer, description: "Position in the workflow, starting at 0." }
+        type:
+          type: string
+          enum: [human, hybrid, ai]
+        status: { type: string, description: "State of the step for this job, for example `in_progress`." }
+        is_last_step: { type: boolean, description: "Whether completing this step completes the job." }
+        assignee_id: { type: integer, format: int64, nullable: true, description: "The member working on the step." }
+        deadline: { type: string, format: date-time, nullable: true }

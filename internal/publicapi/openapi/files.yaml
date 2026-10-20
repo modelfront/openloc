@@ -1,0 +1,182 @@
+paths:
+  /projects/{projectID}/files:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      operationId: listFiles
+      summary: List a project's files
+      tags: [Files]
+      x-roles: [owner, admin, project_manager]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of files, oldest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/File" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      operationId: uploadFile
+      summary: Upload a file
+      description: |
+        Adds a document to the project and makes one job per target language.
+        The format is detected from the file. The maximum size is 50 MB.
+      tags: [Files]
+      x-roles: [owner, admin, project_manager]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                analyze:
+                  type: boolean
+                  description: Run the word-count analysis once the jobs exist.
+                xlsx_layout:
+                  type: string
+                  description: |
+                    For an `.xlsx` without language codes in row 1: an
+                    `XLSXLayout` as JSON text. Only the listed sheets are
+                    translated: the chosen columns of each, or every text cell
+                    of a sheet without any. Without it, every text cell of
+                    every visible sheet is translated. Either way, each
+                    translation is written back into its own cell. A workbook
+                    with language codes in row 1 is read by them and refuses
+                    a layout (400).
+      responses:
+        "201":
+          description: The stored file.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/File" }
+                  warnings:
+                    type: array
+                    description: Work that could not be started after the file was saved.
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /projects/{projectID}/files/{fileID}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - $ref: "#/components/parameters/FileID"
+    get:
+      operationId: getFile
+      summary: Get a file
+      tags: [Files]
+      x-roles: [owner, admin, project_manager]
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/File" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteFile
+      summary: Delete a file
+      description: |
+        Deletes the file with its jobs and translations. Owner and Admin only,
+        except on a draft project, where a Project manager may delete too.
+      tags: [Files]
+      x-roles: [owner, admin, project_manager]
+      x-handler-check: true
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /files/{fileID}/source:
+    parameters:
+      - $ref: "#/components/parameters/FileID"
+    get:
+      operationId: downloadSourceFile
+      summary: Download the original upload
+      description: The file exactly as it was uploaded. A Linguist may download files of jobs assigned to them.
+      tags: [Files]
+      x-roles: [owner, admin, project_manager, linguist]
+      responses:
+        "200":
+          description: The original file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+components:
+  schemas:
+    File:
+      type: object
+      required: [id, project_id, name, format, segment_count, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64, description: "File id." }
+        project_id: { type: integer, format: int64, description: "The project the file belongs to." }
+        name: { type: string, description: "File name, as shown in the app." }
+        original_name:
+          type: string
+          nullable: true
+          description: The name at upload, when the file was renamed since.
+        format:
+          type: string
+          description: Detected format, for example `docx`, `xlsx`, `xliff`, `html`, `json_i18n`.
+        segment_count: { type: integer, description: "Number of segments the file was split into." }
+        created_at: { type: string, format: date-time, description: "When the file was uploaded." }
+        updated_at: { type: string, format: date-time, description: "When the file last changed." }
+        xlsx_layout:
+          allOf: [{ $ref: "#/components/schemas/XLSXLayout" }]
+          nullable: true
+          description: The column layout an Excel workbook was uploaded with; null for every other file.
+    XLSXLayout:
+      type: object
+      required: [sheets]
+      description: Which sheets to translate and, per sheet, which columns hold the text.
+      properties:
+        sheets:
+          type: array
+          items: { $ref: "#/components/schemas/XLSXSheetLayout" }
+    XLSXSheetLayout:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "Sheet name." }
+        header_row:
+          type: boolean
+          description: Row 1 names the columns and is not translated.
+        columns:
+          type: array
+          items: { type: string }
+          description: Letters of the columns to translate, for example `["B", "D"]`. Omit it, or leave it empty, to translate every text cell of the sheet.

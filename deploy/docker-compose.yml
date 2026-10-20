@@ -1,0 +1,172 @@
+# Self-hosted openloc: the app and everything it needs, on one machine.
+#
+#   cp deploy/env.example deploy/.env      # then fill in the secrets
+#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml run --rm -e OWNER_PASSWORD app \
+#     ./server create-org --name "Acme" --owner-email you@example.com
+#
+# Images come from GHCR; `up -d --build` builds them from dockerfiles/ instead.
+# Optional services: `--profile spellcheck` (LanguageTool) and `--profile mt`
+# (LibreTranslate, a free machine translation engine).
+
+x-app-image: &app-image ${OPENLOC_IMAGE:-ghcr.io/modelfront/openloc:latest}
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://openloc:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/openloc?sslmode=disable
+  ENV: production
+  BASE_URL: ${BASE_URL:-http://localhost:8080}
+  DOCS_HOST: ${DOCS_HOST:-}
+  DEVELOPER_HOST: ${DEVELOPER_HOST:-}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/.env}
+  AI_SECRETS_KEY: ${AI_SECRETS_KEY:?set AI_SECRETS_KEY in deploy/.env}
+  REDIS_ADDR: redis:6379
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_BUCKET: openloc
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in deploy/.env}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in deploy/.env}
+  PARSER_SIDECAR_URL: http://parser:5200
+  SPELLCHECK_LT_URL: http://languagetool:8010/v2/check
+  LIBRETRANSLATE_URL: ${LIBRETRANSLATE_URL:-}
+  PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+  DEMO_ORG: ${DEMO_ORG:-}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+  WORKER_LONG_CONCURRENCY: ${WORKER_LONG_CONCURRENCY:-4}
+  # Email: NOTIFICATION_EMAIL plus either SMTP_* or the Google service account.
+  NOTIFICATION_EMAIL: ${NOTIFICATION_EMAIL:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_TLS: ${SMTP_TLS:-}
+  NOTIFICATION_SERVICE_CLIENT_ID: ${NOTIFICATION_SERVICE_CLIENT_ID:-}
+  NOTIFICATION_SERVICE_PRIVATE_KEY: ${NOTIFICATION_SERVICE_PRIVATE_KEY:-}
+
+services:
+  app:
+    image: *app-image
+    build:
+      context: ..
+      dockerfile: dockerfiles/openloc.dockerfile
+    environment: *app-env
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/complete"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Shutdown drains running tasks and open requests within a 27s budget;
+    # Docker's default would kill the app after 10s.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # Applies pending database migrations, then exits. `app` starts only after
+  # it succeeds, so an upgrade migrates first.
+  migrate:
+    # The app's image: the app service pulls or builds it before any container
+    # starts, so this one never pulls on its own.
+    image: *app-image
+    pull_policy: never
+    command: ["./server", "migrate"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: openloc
+      POSTGRES_USER: openloc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openloc -d openloc"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # S3-compatible file storage. Same image and flags as the dev stack.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    # Each bucket is a SeaweedFS collection with its own volumes. GROWTH_COPY_1=1
+    # starts a bucket with one volume instead of seven, and volume.max lifts the
+    # default cap of 8 volumes.
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333",
+              "-master.volumeSizeLimitMB=1024", "-volume.max=100"]
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
+      # SeaweedFS's S3 gateway accepts exactly this key pair.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in deploy/.env}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in deploy/.env}
+    volumes:
+      - seaweedfsdata:/data
+    healthcheck:
+      # /healthz answers before the volume server registers, and writes fail
+      # until it does ("Max" > 0 in the master's status).
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/dir/status | grep -q '\"Max\":[1-9]' && wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # DOCX and PDF parsing.
+  parser:
+    image: ${OPENLOC_PARSER_IMAGE:-ghcr.io/modelfront/openloc-parser:latest}
+    build:
+      context: ..
+      dockerfile: dockerfiles/openloc-docparser.dockerfile
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5200/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  languagetool:
+    profiles: ["spellcheck"]
+    image: erikvl87/languagetool:6.8@sha256:ef8fa12cbd485166c9ceeb7139d76d56d07707a624da6bb1fc1fbb5411750527
+    environment:
+      Java_Xms: "256m"
+      Java_Xmx: "1g"
+    restart: unless-stopped
+
+  libretranslate:
+    profiles: ["mt"]
+    image: libretranslate/libretranslate:v1.9.6@sha256:1de2d7056bb8ad607a412f4563d9abe324ff632b43b5be9428bcc8e213aebb32
+    command: ["--char-limit", "5000"]
+    environment:
+      LT_LOAD_ONLY: ${LT_LOAD_ONLY:-en,de,es,fr}
+    volumes:
+      - ltdata:/home/libretranslate/.local
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  seaweedfsdata:
+  ltdata:

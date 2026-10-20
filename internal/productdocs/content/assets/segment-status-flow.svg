@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 400" width="780" height="400" role="img" aria-labelledby="t d">
+  <title id="t">Segment status flow</title>
+  <desc id="d">How a segment moves between Untranslated, Pretranslated, Draft, Auto-approved and Approved.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+    <style>
+      .l { font: 600 14px system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .e { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #4b5563; }
+      .n { font: italic 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b7280; }
+      .arw { stroke: #6b7280; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    </style>
+  </defs>
+
+  <rect width="780" height="400" fill="#ffffff"/>
+
+  <!-- boxes -->
+  <rect x="20" y="150" width="140" height="46" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="l" x="90" y="178" text-anchor="middle" fill="#374151">Untranslated</text>
+
+  <rect x="220" y="150" width="140" height="46" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="l" x="290" y="178" text-anchor="middle" fill="#374151">Pretranslated</text>
+
+  <rect x="426" y="62" width="150" height="46" rx="8" fill="#dcfce7" stroke="#86efac" stroke-width="1.5"/>
+  <text class="l" x="501" y="90" text-anchor="middle" fill="#166534">Auto-approved</text>
+
+  <rect x="426" y="244" width="150" height="46" rx="8" fill="#fee2e2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text class="l" x="501" y="272" text-anchor="middle" fill="#991b1b">Draft</text>
+
+  <rect x="640" y="150" width="116" height="46" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="l" x="698" y="178" text-anchor="middle" fill="#1e40af">Approved</text>
+
+  <!-- untranslated -> pretranslated -->
+  <path class="arw" d="M160,173 H214"/>
+  <text class="e" x="187" y="164" text-anchor="middle">fill</text>
+
+  <!-- untranslated -> draft (you type into an empty segment) -->
+  <path class="arw" d="M110,196 C110,252 230,267 420,267"/>
+  <text class="e" x="214" y="252" text-anchor="middle">you type</text>
+
+  <!-- pretranslated -> auto-approved -->
+  <path class="arw" d="M360,163 C392,163 396,85 420,85"/>
+  <text class="e" x="404" y="136" text-anchor="start">AI approves</text>
+
+  <!-- pretranslated -> draft -->
+  <path class="arw" d="M360,183 C392,183 396,267 420,267"/>
+  <text class="e" x="380" y="212" text-anchor="end">you edit,</text>
+  <text class="e" x="380" y="226" text-anchor="end">or AI rejects</text>
+
+  <!-- pretranslated -> approved, straight over the top -->
+  <path class="arw" d="M290,150 V32 H692 V144"/>
+  <text class="e" x="491" y="24" text-anchor="middle">Ctrl+Enter</text>
+
+  <!-- confirm from auto-approved and from draft -->
+  <path class="arw" d="M576,85 C614,85 626,116 638,142"/>
+  <text class="e" x="584" y="70" text-anchor="start">Ctrl+Enter</text>
+
+  <path class="arw" d="M576,267 C614,267 626,236 638,204"/>
+  <text class="e" x="634" y="286" text-anchor="end">Ctrl+Enter</text>
+
+  <!-- editing downgrades -->
+  <path class="arw" d="M501,108 V238"/>
+  <text class="e" x="512" y="178" text-anchor="start">you edit</text>
+
+  <path class="arw" d="M698,196 V318 H520 V296"/>
+  <text class="e" x="612" y="334" text-anchor="middle">you edit</text>
+
+  <!-- the second entrance to Approved -->
+  <path class="arw" d="M62,196 V366 H716 V202" stroke-dasharray="5 4"/>
+  <text class="n" x="389" y="358" text-anchor="middle">an exact (100% / 101%) memory match is confirmed for you</text>
+</svg>

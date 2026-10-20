@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tmx SYSTEM "tmx14.dtd">
+<tmx version="1.4">
+  <header creationtool="openloc-test" creationtoolversion="1.0" datatype="plaintext" segtype="sentence" adminlang="en" srclang="en" o-tmf="tmx"/>
+  <body>
+    <tu tuid="j1-001" creationdate="20260101T000000Z" creationid="test">
+      <tuv xml:lang="en"><seg>password</seg></tuv>
+      <tuv xml:lang="es"><seg>contraseña</seg></tuv>
+    </tu>
+    <tu tuid="j1-002" creationdate="20260101T000000Z" creationid="test">
+      <tuv xml:lang="en"><seg>email</seg></tuv>
+      <tuv xml:lang="es"><seg>correo electrónico</seg></tuv>
+    </tu>
+    <tu tuid="j1-003" creationdate="20260101T000000Z" creationid="test">
+      <tuv xml:lang="en"><seg>Reset your password</seg></tuv>
+      <tuv xml:lang="es"><seg>Restablezca su contraseña</seg></tuv>
+    </tu>
+    <tu tuid="j1-004" creationdate="20260101T000000Z" creationid="test">
+      <tuv xml:lang="en"><seg>account</seg></tuv>
+      <tuv xml:lang="es"><seg>cuenta</seg></tuv>
+    </tu>
+    <tu tuid="j1-005" creationdate="20260101T000000Z" creationid="test">
+      <tuv xml:lang="en"><seg>settings</seg></tuv>
+      <tuv xml:lang="es"><seg>configuración</seg></tuv>
+    </tu>
+  </body>
+</tmx>

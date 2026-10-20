@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE tms SYSTEM "Tms.dtd">
+<tms name="T.0 Acme AF7 Pump Addendum" source="en-US" target="de-DE" source-culture="en-US" target-culture="de-DE" user="test@test.com" date="08/13/2026 14:59:15" version="ST4.ClientBase.TMS, Version=14.0.3.0, Culture=neutral, PublicKeyToken=201f642519e2a688" export-version="2" test="false" guid="3f2a9c10-5b7e-4d21-9a8e-1c0d4e6f7a21" commit-date="2026-08-13T14:59:21Z" commit-version="10000001" file-hash="0F1E2D3C4B5A69788796A5B4C3D2E1F0"><!--TMS Settings
+Test Export: false
+
+Advanced Mode: 
+Target File: C:\Export\de–DE\T_0_Acme_AF7_Pump_Addendum_en–US_to_de–DE.xml
+Filter: All
+Source Aspect: en-US [en-US] (100001)
+Target Aspect: de-DE [de-DE] (100002)
+Context Node(s): 100000000001 
+Variant Filter: 
+Skip Forbidden Nodes: true
+Resource Treatment: both
+Graphic Selection: trans.Text
+Export Original Graphic: false
+Export Context: false
+Context in Target Language if Available: false
+Export Fragment Titles: false
+Export Resource Titles: false
+Export DocumentStructure Titles: true
+Export Group Titles: false
+Recursive: true
+Index/Glossary Sorting: false
+Remove Page Breaks: true
+COTI Export: false
+--><tmsnode id="100000000001" xml:space="preserve"><title>T.0 Acme AF7 Pump Addendum</title></tmsnode><tmsnode id="100000000002" xml:space="preserve"><title>ManualType</title><content>
+<p>Nachtrag zur Gebrauchsanweisung</p></content></tmsnode><tmsnode id="100000000003" xml:space="preserve"><title>Version</title><content>
+<p>Rev. T.0</p></content></tmsnode><tmsnode id="100000000004" xml:space="preserve"><title>PublishDate</title><content>
+<p>2026-03</p></content></tmsnode><tmsnode id="100000000005" xml:space="preserve"><title>CE</title><content>
+<p>1234</p></content></tmsnode><tmsnode id="100000000006" xml:space="preserve"><title>Published/PrintedIn</title><content> 
+<p>Springfield 2026-09</p> 
+<p>2</p></content></tmsnode><tmsnode id="100000000007" xml:space="preserve"><title>Barcodetype</title><content>
+<p>1</p> </content></tmsnode><tmsnode id="100000000008" xml:space="preserve"><title>SideBar</title><content> 
+<p>2</p></content></tmsnode><tmsnode id="100000000009" xml:space="preserve"><title>BarcodePosition</title><content> 
+<p>2</p></content></tmsnode><tmsnode id="100000000010" xml:space="preserve"><title>BackCover_PartNo</title><content> 
+<p>3</p></content></tmsnode><tmsnode id="100000000011" xml:space="preserve"><title>ReferenceNumber / PartNo</title><content>
+<p>100000123456</p></content></tmsnode><tmsnode id="100000000012" xml:space="preserve"><title>Nachtrag zur Gebrauchsanweisung</title><content>
+<p>Dieser Nachtrag enthält zusätzliche Informationen zur Gebrauchsanweisung der Wasserpumpe Rev. T.xx für folgende Pumpen:</p> 
+<ul type="disc"><li><p>AquaFlow AF400-550</p></li><li><p>AquaFlow AF750/AF850</p></li><li><p>Acme Water Pump 6000 Series (WP 6100, WP 6300, WP 6500)</p></li> 
+</ul>
+<p>Legen Sie ihn bitte mit der Pumpendokumentation ab.</p></content></tmsnode><tmsnode id="100000000013" xml:space="preserve"><title>Überarbeitete Informationen: Spezifikationen – Durchflusssensor F7m</title><content> 
+<p>Der Durchflusssensor F7 (100234) entspricht ISO 4064-2‑55: 2018 und ISO 4065‑1: 2023.</p> 
+<table-container type="text-width" frame="framed" keep-together="no"><table type="fixed" hsdl-percent="33.3 33.3 33.3"><thead><tr><th colspan="3"><p>Leistungsspezifikationen – Durchflusssensor F7</p> </th> </tr> </thead> 
+<tbody><tr><td rowspan="4"><p><b>Allgemeine Spezifikationen</b> </p> </td> 
+<td><p>Nenndurchfluss</p> </td> 
+<td><p>20 l/min ±2 l/min</p> </td> </tr> 
+<tr><td><p>Messverzögerung</p> </td> 
+<td><p>&lt; 5 Sekunden</p> </td> </tr> 
+<tr><td><p>Lufteintrag</p> </td> 
+<td><p>&lt;40 ml per purge cycle</p> </td> </tr> 
+<tr><td><p>Drift</p></td><td><p>Compensated by automatic periodic recalibration</p></td></tr> 
+<tr><td rowspan="4"><p><b>Wasser</b> </p> </td> 
+<td><p>Bereich</p> </td> 
+<td><p>0 bis 13,6 l/min</p> </td> </tr> 
+<tr><td><p>Genauigkeit</p> </td> 
+<td><p>±(0,43 l/min + +8% relativ)</p> </td> </tr> 
+<tr><td><p>Auflösung</p> </td> 
+<td><p>1 mbar</p> </td> </tr> 
+<tr><td><p>Anstiegszeit</p> </td> 
+<td><p>&lt; 300 ms typisch</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>Sole</b> </p> </td> 
+<td><p>Bereich</p> </td> 
+<td><p>0 bis 100 l/min</p> </td> </tr> 
+<tr><td><p>Genauigkeit</p> </td> 
+<td><p>±(2,5 l/min + 2,5% relativ)</p> </td> </tr> 
+<tr><td><p>Auflösung</p> </td> 
+<td><p>1 l/min </p> </td> </tr> 
+<tr><td><p>Anstiegszeit</p> </td> 
+<td><p>&lt; 500 ms typisch</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>Glykol</b> </p> </td> 
+<td><p>Bereich</p> </td> 
+<td><p>0 bis 100 l/min</p> </td> </tr> 
+<tr><td><p>Genauigkeit</p> </td> 
+<td><p>±(2,0 l/min + +8% relativ)</p> </td> </tr> 
+<tr><td><p>Auflösung</p> </td> 
+<td><p>1 l/min </p> </td> </tr> 
+<tr><td><p>Anstiegszeit</p> </td> 
+<td><p>&lt; 300 ms typisch</p> </td> </tr> 
+<tr><td rowspan="7"><p><b>Ethanol</b> </p> 
+<p><b>Methanol</b> </p> 
+<p><b>Glycerin</b> </p> 
+<p><b>Aceton</b> </p> 
+<p><b>Toluol</b> </p> </td> 
+<td><p>Bereich</p> </td> 
+<td><p>Ethanol 0 bis 8,5 l/min</p> 
+<p>Methanol 0 bis 10,0 l/min</p> 
+<p>Glycerin 0 bis 8,5 l/min</p> 
+<p>Aceton 0 bis 10,0 l/min</p> 
+<p>Toluol 0 bis 20,0 l/min</p> </td> </tr> 
+<tr><td><p>Genauigkeit</p> </td> 
+<td><p>±(0,15 l/min + +15,0% relativ)</p> </td> </tr> 
+<tr><td><p>Auflösung</p> </td> 
+<td><p>0,05 l/min</p> </td> </tr> 
+<tr><td><p>Anstiegszeit</p> </td> 
+<td><p>&lt; 450 ms typisch</p> </td> </tr> 
+<tr><td><p>Reaktionszeit bis Fluid-Erkennung</p> </td> 
+<td><p>15 s für das erste Fluid<br />20 s für das zweite Fluid</p> </td> </tr> 
+<tr><td><p>Erkennungsschwelle für das erste Fluid</p> </td> 
+<td><p>max. 0,3 l/min</p> </td> </tr> 
+<tr><td><p>Erkennungsschwelle für das zweite Fluid</p> </td> 
+<td><p>max. 0,4 l/min, außer wenn das erste Fluid Toluol ist<br /><br /></p> 
+<p>10 l/min der aktuellen Toluolkonzentration</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>HF</b> </p> </td> 
+<td><p>Bereich</p> </td> 
+<td><p>0 bis 100/min</p> </td> </tr> 
+<tr><td><p>Genauigkeit</p> </td> 
+<td><p>±1/min für Hubfrequenzen von 0 bis 80/min und I:O = 1:2, nicht spezifiziert für &gt; 80/min</p> </td> </tr> 
+<tr><td><p>Auflösung</p> </td> 
+<td><p>1,0 </p> </td> </tr> 
+<tr><td><p>Erkennungskriterien</p> </td> 
+<td><p>Adaptive Schwelle</p> </td> </tr> 
+<tr><td><p><b>Gesamt-Ansprechzeit</b> </p> </td> 
+<td colspan="2"><p>Weniger als die Summe aus Messverzögerung und Anstiegszeit plus 1 Sekunde</p> </td> </tr> </tbody> </table> </table-container> 
+ 
+<p>Die Genauigkeitsangaben gelten für STP (mbar, kPa) und NTP (l/min).</p> 
+<p>Die Ansprechzeit des Messsystems und der Pumpendurchfluss beeinflussen die Durchflussmessung. Die Genauigkeitsangaben beziehen sich auf den stationären Durchfluss.</p> 
+<p>Für H<sub>2</sub>O, D<sub>2</sub>O, N<sub>2</sub>O und andere Flüssigkeiten gelten die Genauigkeitsspezifikationen für eine Hubfrequenz unter 60/min bei einem I:O-Verhältnis von 1:1.</p> 
+<p>Der Einfluss der Hubfrequenz und des Verhältnisses Ansaugzeit:Förderzeit (I:O) auf die Genauigkeit der stationären Durchflusswerte wurde anhand der gemessenen Druckgradienten in einem simulierten Rohrkreislauf mit rechteckiger Druckkurve bestimmt.</p> 
+<p>Der stationäre Durchfluss von H<sub>2</sub>O, N<sub>2</sub>O und anderen Flüssigkeiten wird zum Zeitpunkt der maximalen H<sub>2</sub>O-Konzentration in der Förderphase gemessen. Diese Zeit wird für jeden Hub individuell bestimmt.</p> 
+<p>Die stationäre D<sub>2</sub>O-Konzentration wird als minimale Konzentration während der Förderphase gemessen.</p> 
+<p>Die maximale Abtastfrequenz, mit der Durchflusskurven von der Pumpe angezeigt werden können, liegt bei einer Abtastung pro 32 ms. Die tatsächlich angezeigte Abtastfrequenz ist von der an der Pumpe eingestellten Kurvengeschwindigkeit abhängig.</p> 
+<subheading>Druckkorrektur</subheading> 
+<p>Für H<sub>2</sub>O kann die Druckkorrektur auf  oder  eingestellt werden.</p> 
+<p><meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000001">Sparmodus</meta-ref>: q [l/min] = k [%] * (p_in – p_H<sub>2</sub>O)/100. Diese Maßeinheit entspricht der folgenden Einstellung: Umgebungstemperatur und -druck, Standard (NTP)</p> 
+<p><meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000002">Turbomodus</meta-ref>: q [l/min] = k [%] * p_in/100</p> 
+<p>Dabei gilt: q = Durchfluss, k = Korrekturfaktor, p_in = Druck im Rohrkreislauf und p_H<sub>2</sub>O = 21 mbar, Dampfdruck des Wassers am Einlass (23 °C, 100% rel. LF).</p> 
+<p>Für alle anderen Flüssigkeiten (außer H<sub>2</sub>O) sind die angegebenen Messwerte Standardwerte.</p> </content></tmsnode><tmsnode id="200000000001" xml:space="preserve"><title>D0:UI_PUMP_MODE_SEL_ITM0</title><metalist><meta name="custom.acme.device.ui.title" xml:space="preserve">Sparmodus</meta></metalist></tmsnode><tmsnode id="200000000002" xml:space="preserve"><title>D0:UI_PUMP_MODE_SEL_ITM1</title><metalist><meta name="custom.acme.device.ui.title" xml:space="preserve">Turbomodus</meta></metalist></tmsnode></tms>

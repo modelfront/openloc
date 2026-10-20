@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 300" width="700" height="300" role="img" aria-labelledby="t d">
+  <title id="t">The order pre-translation fills segments in</title>
+  <desc id="d">Exact memory matches are confirmed, fuzzy matches and machine translation are left at Pretranslated, and nothing overwrites an existing translation.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+    <style>
+      .n { font: 600 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b7280; }
+      .l { font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2937; }
+      .s { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #4b5563; }
+      .st { font: 600 12px system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .arw { stroke: #6b7280; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    </style>
+  </defs>
+
+  <rect width="700" height="300" fill="#ffffff"/>
+
+  <text class="s" x="20" y="26">Every segment with no translation yet, in this order:</text>
+
+  <!-- step 1 -->
+  <circle cx="34" cy="66" r="13" fill="#e5e7eb"/>
+  <text class="n" x="34" y="71" text-anchor="middle">1</text>
+  <rect x="60" y="44" width="330" height="44" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="l" x="76" y="62">Translation memory — exact match</text>
+  <text class="s" x="76" y="79">identical source text, no penalty</text>
+  <path class="arw" d="M390,66 H436"/>
+  <rect x="440" y="44" width="240" height="44" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="st" x="560" y="62" text-anchor="middle" fill="#1e40af">Approved</text>
+  <text class="s" x="560" y="79" text-anchor="middle" fill="#1e40af">confirmed for you</text>
+
+  <!-- step 2 -->
+  <circle cx="34" cy="146" r="13" fill="#e5e7eb"/>
+  <text class="n" x="34" y="151" text-anchor="middle">2</text>
+  <rect x="60" y="124" width="330" height="44" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="l" x="76" y="142">Translation memory — fuzzy match</text>
+  <text class="s" x="76" y="159">similar enough to pass the threshold</text>
+  <path class="arw" d="M390,146 H436"/>
+  <rect x="440" y="124" width="240" height="44" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="st" x="560" y="142" text-anchor="middle" fill="#374151">Pretranslated</text>
+  <text class="s" x="560" y="159" text-anchor="middle" fill="#374151">a person checks it</text>
+
+  <!-- step 3 -->
+  <circle cx="34" cy="226" r="13" fill="#e5e7eb"/>
+  <text class="n" x="34" y="231" text-anchor="middle">3</text>
+  <rect x="60" y="204" width="330" height="44" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="l" x="76" y="222">Machine translation</text>
+  <text class="s" x="76" y="239">only what the memory could not fill</text>
+  <path class="arw" d="M390,226 H436"/>
+  <rect x="440" y="204" width="240" height="44" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="st" x="560" y="222" text-anchor="middle" fill="#374151">Pretranslated</text>
+  <text class="s" x="560" y="239" text-anchor="middle" fill="#374151">a person checks it</text>
+
+  <text class="s" x="20" y="284">A step never overwrites a translation an earlier step already put there.</text>
+</svg>

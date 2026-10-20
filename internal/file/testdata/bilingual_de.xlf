@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file original="manual.docx" source-language="en-US" target-language="de-DE" datatype="plaintext">
+    <body>
+      <trans-unit id="1">
+        <source>Operating instructions</source>
+        <target state="translated">Betriebsanleitung</target>
+      </trans-unit>
+      <trans-unit id="2">
+        <source>Read before use.</source>
+        <target state="translated">Vor Gebrauch lesen.</target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

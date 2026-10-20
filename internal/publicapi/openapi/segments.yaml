@@ -1,0 +1,415 @@
+paths:
+  /jobs/{jobID}/segments:
+    parameters:
+    - $ref: '#/components/parameters/JobID'
+    get:
+      operationId: listSegments
+      summary: List a job's segments
+      description: Source text with its translation in the job's language, in document order. A Linguist
+        may read jobs assigned to them.
+      tags:
+      - Segments
+      x-roles: &id001
+      - owner
+      - admin
+      - project_manager
+      - linguist
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - name: limit
+        in: query
+        description: Page size. Defaults to 50; the maximum is 200.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/SegmentStatus'
+      - name: q
+        in: query
+        description: Text search in the source and the translation.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: One page of segments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Segment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/{translationID}/draft:
+    parameters: &id002
+    - &id003
+      $ref: '#/components/parameters/JobID'
+    - &id004
+      $ref: '#/components/parameters/TranslationID'
+    put:
+      operationId: saveSegmentDraft
+      summary: Save a draft translation
+      description: Saves text without confirming it. The segment goes back to `needs_review`.
+      tags:
+      - Segments
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SegmentWrite'
+      responses:
+        '200':
+          description: The segment after the save.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/{translationID}/confirm:
+    parameters: *id002
+    post:
+      operationId: confirmSegment
+      summary: Confirm a translation
+      description: Approves the segment, as Ctrl+Enter does in the editor, and saves it to the project's
+        writable translation memories. Without `text`, confirms the translation as it stands.
+      tags:
+      - Segments
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SegmentWrite'
+      responses:
+        '200':
+          description: The segment after the confirm.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/{translationID}/comments:
+    parameters: *id002
+    get:
+      operationId: listComments
+      summary: List a segment's comments
+      description: Oldest first.
+      tags:
+      - Comments
+      x-roles: *id001
+      responses:
+        '200':
+          description: Every comment.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Comment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: addComment
+      summary: Comment on a segment
+      tags:
+      - Comments
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              properties:
+                content:
+                  type: string
+                  description: 1 to 5000 characters.
+      responses:
+        '201':
+          description: The new comment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/{translationID}/comments/{commentID}:
+    parameters:
+    - *id003
+    - *id004
+    - $ref: '#/components/parameters/CommentID'
+    delete:
+      operationId: deleteComment
+      summary: Delete a comment
+      description: Your own comment, or one an AI step wrote.
+      tags:
+      - Comments
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    SegmentStatus:
+      type: string
+      enum:
+      - needs_review
+      - auto_approved
+      - approved
+      description: '`needs_review`: waiting for a person. `auto_approved`: approved by quality estimation.
+        `approved`: confirmed by a person. Both belong to the current workflow step: when the next
+        step starts, every unlocked `approved` and `auto_approved` segment goes back to `needs_review`,
+        and when a step is rejected, the reopened step gets back the statuses it ended with, except
+        segments a later step rewrote, which come back as `needs_review`. `previous_step` keeps the
+        earlier result.'
+    Segment:
+      type: object
+      required:
+      - id
+      - position
+      - source_text
+      - target_text
+      - status
+      - origin
+      - tm_match_percent
+      - updated_at
+      - previous_step
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Segment id. Use it in the segment routes.
+        position:
+          type: integer
+          description: Position in the document, from 0.
+        source_text:
+          type: string
+        target_text:
+          type: string
+          nullable: true
+          description: The translation; null when there is none yet.
+        status:
+          $ref: '#/components/schemas/SegmentStatus'
+        origin:
+          type: string
+          enum:
+          - tm
+          - mt
+          - ape
+          - file_import
+          nullable: true
+          description: Where the translation came from.
+        tm_match_percent:
+          type: integer
+          nullable: true
+          description: The memory match score, for a translation from translation memory.
+        updated_at:
+          type: string
+          format: date-time
+          description: Send it back as `expected_updated_at` to save only if nobody changed the segment
+            since.
+        previous_step:
+          allOf:
+          - $ref: '#/components/schemas/StepOutcome'
+          nullable: true
+          description: How the last finished workflow step left the segment; null before any step has
+            finished.
+    StepOutcome:
+      type: object
+      required:
+      - step_name
+      - step_order
+      - step_type
+      - round
+      - end_reason
+      - status
+      - ai_outcome
+      - edited
+      - ended_at
+      properties:
+        step_name:
+          type: string
+        step_order:
+          type: integer
+          description: Position of the step in the workflow, from 0.
+        step_type:
+          type: string
+          enum:
+          - human
+          - hybrid
+          - ai
+          - pretranslate
+        round:
+          type: integer
+          description: Which pass through the step, from 1. A step rejected back to runs again as the
+            next round.
+        end_reason:
+          type: string
+          enum:
+          - completed
+          - rejected
+          description: '`rejected`: the step was sent back to the one before it.'
+        status:
+          $ref: '#/components/schemas/SegmentStatus'
+        ai_outcome:
+          type: string
+          enum:
+          - approved
+          - ape_approved
+          - ape_needs_review
+          - rejected
+          nullable: true
+          description: The quality estimation verdict produced in this step, if any.
+        edited:
+          type: boolean
+          description: A person changed the text during the step.
+        ended_at:
+          type: string
+          format: date-time
+    SegmentWrite:
+      type: object
+      properties:
+        text:
+          type: string
+          description: The translation.
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: The segment's `updated_at` as you read it. When set, the write fails with 409 if
+            the segment changed since.
+    SegmentState:
+      type: object
+      required:
+      - id
+      - target_text
+      - status
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        target_text:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/SegmentStatus'
+        updated_at:
+          type: string
+          format: date-time
+          description: The new version.
+    Comment:
+      type: object
+      required:
+      - id
+      - content
+      - author_id
+      - author_name
+      - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        content:
+          type: string
+        author_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Null for a comment an AI step wrote.
+        author_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time

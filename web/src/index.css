@@ -1,0 +1,532 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./styles/shadcn.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/source-serif-4/standard.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Prevent horizontal scroll on all pages */
+html, body { overflow-x: hidden; }
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.546 0.245 264);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.623 0.214 259.815);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@theme inline {
+  --font-display: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
+  --font-sans: 'Inter Variable', 'Helvetica Neue', Helvetica, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* Shared control height for all single-line inputs (text fields, comboboxes,
+     date pickers). Matches the language-combobox height so every form control
+     lines up. Use via `h-input`. */
+  --spacing-input: 30px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  h1 {
+    @apply font-display;
+  }
+}
+
+/* --- TipTap Segment Editor --- */
+/* Source and translation share one geometry. Inactive, both texts sit in a
+   lightly padded preview. Active, each sits in a bordered + padded box (the
+   dashed source box, the editor) pulled out into the cell padding by exactly
+   the difference — so the two columns line up and activating a row changes
+   neither its height nor where its text is. The controls floating on the
+   editor's border share its background. Every number lives here; SegmentRow
+   only names the classes. */
+:root {
+  --seg-editor-pad-x: 0.5rem;
+  --seg-editor-pad-y: 0.25rem;
+  --seg-preview-pad-x: 0.25rem;
+  --seg-preview-pad-y: 0.125rem;
+  --seg-box-inset-x: calc(var(--seg-editor-pad-x) + 1px);
+  --seg-box-inset-y: calc(var(--seg-editor-pad-y) + 1px);
+  --seg-box-pull-x: calc(var(--seg-preview-pad-x) - var(--seg-box-inset-x));
+  --seg-box-pull-y: calc(var(--seg-preview-pad-y) - var(--seg-box-inset-y));
+  --seg-editor-bg: white;
+  --seg-editor-bg-readonly: #f9fafb;
+}
+.dark {
+  --seg-editor-bg: #111827;
+  --seg-editor-bg-readonly: #030712;
+}
+/* Inactive source and translation text. */
+.segment-preview {
+  padding: var(--seg-preview-pad-y) var(--seg-preview-pad-x);
+}
+/* Active source box: same padding and border as the editor. */
+.segment-source-box {
+  padding: var(--seg-editor-pad-y) var(--seg-editor-pad-x);
+  margin: var(--seg-box-pull-y) var(--seg-box-pull-x);
+}
+/* Wraps the editor. No top pull when a banner or the missing-tags bar sits
+   above it, so it can't cover them. */
+.segment-editor-frame {
+  margin: 0 var(--seg-box-pull-x) var(--seg-box-pull-y);
+}
+.segment-editor-frame:first-child {
+  margin-top: var(--seg-box-pull-y);
+}
+.segment-editor .ProseMirror {
+  outline: none;
+  min-height: 1.5em;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  padding: var(--seg-editor-pad-y) var(--seg-editor-pad-x);
+  width: 100%;
+  border: 1px dashed;
+  border-radius: 0.25rem;
+}
+.segment-editor .ProseMirror p {
+  margin: 0;
+}
+/* Whitespace markers — overlay symbols on actual characters to preserve word-wrapping.
+   Uses currentColor (same as text) with opacity for visibility in both light and dark modes.
+   .ws-dot  = regular/unicode spaces (·)
+   .ws-tab  = tab character (→)
+   .ws-nbsp = non-breaking space (°)
+   .ws-zw   = zero-width/invisible characters (◆)
+   .ws-shy  = soft hyphen (¬) */
+.ws-dot, .ws-tab, .ws-nbsp, .ws-zw, .ws-shy {
+  position: relative;
+}
+.ws-dot::after {
+  content: '·';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: currentColor;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.ws-tab::after {
+  content: '→';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: currentColor;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.ws-nbsp::after {
+  content: '°';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: currentColor;
+  opacity: 0.8;
+  font-weight: bold;
+  pointer-events: none;
+}
+/* Paragraph break / hard break (¶) in the TipTap editor.
+   Read-only mode already renders ¶ via WhitespaceText; this class styles
+   the widget decorations the TipTap WhitespaceMarkers extension emits so
+   edit mode matches. hardBreak (Shift+Enter) shows the same ¶ symbol as a
+   paragraph break — see tiptap-whitespace.ts for the rationale. */
+.ws-pilcrow {
+  display: inline;
+  opacity: 0.5;
+  pointer-events: none;
+  user-select: none;
+  font-weight: normal;
+  color: currentColor;
+}
+.dark .ws-pilcrow {
+  opacity: 0.6;
+}
+
+/* Dark mode: higher opacity since text is already lighter */
+.dark .ws-dot::after, .dark .ws-tab::after, .dark .ws-nbsp::after, .dark .ws-zw::after, .dark .ws-shy::after { opacity: 0.9; }
+
+.ws-zw {
+  display: inline-block;
+  width: 0.4em;
+  background: currentColor;
+  opacity: 0.15;
+  border-radius: 1px;
+  vertical-align: baseline;
+}
+.ws-zw::after {
+  content: '◆';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: currentColor;
+  opacity: 0.8;
+  font-size: 0.5em;
+  pointer-events: none;
+}
+.ws-shy {
+  position: relative;
+}
+.ws-shy::after {
+  content: '¬';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: currentColor;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+/* Placeholder */
+.segment-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+/* Light mode. The border is the active source box's (SegmentRow
+   `segment-source-box`), so the two read as one frame. */
+.segment-editor .ProseMirror {
+  border-color: var(--color-gray-300);
+  background: var(--seg-editor-bg);
+  color: #111827;
+}
+/* Dark mode */
+.dark .segment-editor .ProseMirror {
+  border-color: var(--color-gray-700);
+  background: var(--seg-editor-bg);
+  color: #f3f4f6;
+}
+/* Read-only mode */
+.segment-editor.segment-editor-readonly .ProseMirror {
+  border-color: #e5e7eb;
+  background: var(--seg-editor-bg-readonly);
+  color: #6b7280;
+  cursor: default;
+}
+.dark .segment-editor.segment-editor-readonly .ProseMirror {
+  border-color: #374151;
+  background: var(--seg-editor-bg-readonly);
+  color: #9ca3af;
+}
+
+/* --- XLIFF Tag Chips --- */
+.xliff-tag {
+  display: inline;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: #1d4ed8;
+  user-select: none;
+  cursor: default;
+  vertical-align: baseline;
+}
+.xliff-tag[data-tag-type="bpt"] { background: #dbeafe; border-color: #93c5fd; }
+.xliff-tag[data-tag-type="ept"] { background: #dbeafe; border-color: #93c5fd; }
+/* Selected atom node — highlight so user knows the tag is selected (not invisible cursor) */
+.xliff-tag.ProseMirror-selectednode { outline: 2px solid #3b82f6; border-radius: 4px; }
+.xliff-tag[data-tag-type="ph"]  { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+.xliff-tag[data-tag-type="x"]   { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+.xliff-tag[data-tag-type="g"]   { background: #dcfce7; border-color: #86efac; color: #166534; }
+.dark .xliff-tag { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+.dark .xliff-tag[data-tag-type="ph"],
+.dark .xliff-tag[data-tag-type="x"] { background: #451a03; border-color: #d97706; color: #fcd34d; }
+.dark .xliff-tag[data-tag-type="g"] { background: #052e16; border-color: #22c55e; color: #86efac; }
+
+/* --- Spell Check Underlines --- */
+.spellcheck-error {
+  text-decoration: wavy underline red;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+/* Token text field (components/ai/TokenTextField.tsx) — the system-prompt
+   instruction editor. ProseMirror needs real CSS for two things Tailwind
+   cannot reach: the placeholder, which is a ::before on a node the editor
+   owns, and the paragraph margin the browser adds by default. Scoped like
+   .segment-editor above rather than global, so the CAT editor keeps its own. */
+.token-field .ProseMirror p {
+  margin: 0;
+}
+.token-field .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-muted-foreground);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+/* UI guide popover (lib/guide.ts). driver.js renders its own popover DOM and
+   documents popoverClass as the theming hook; these rules map it onto the app
+   tokens so it follows light and dark mode. */
+/* The card reads as a guide on top of the page, not as part of it: a blue
+   top edge, a light blue tint, a "Guided tour" label and a lifted shadow. */
+.driver-popover.openloc-guide {
+  --guide-card: color-mix(in oklab, var(--primary) 7%, var(--popover));
+  background: var(--guide-card);
+  color: var(--popover-foreground);
+  border: 1px solid color-mix(in oklab, var(--primary) 30%, var(--border));
+  border-top: 4px solid var(--primary);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.45);
+  font-family: inherit;
+}
+.driver-popover.openloc-guide .openloc-guide-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--primary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.driver-popover.openloc-guide .driver-popover-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.driver-popover.openloc-guide .driver-popover-description {
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+}
+/* A large arrow in the card's blue, so it stands out on the dimmed page. */
+.driver-popover.openloc-guide .driver-popover-arrow { border-width: 11px; }
+.openloc-guide .driver-popover-arrow-side-left { border-left-color: var(--primary); }
+.openloc-guide .driver-popover-arrow-side-right { border-right-color: var(--primary); }
+.openloc-guide .driver-popover-arrow-side-top { border-top-color: var(--primary); }
+.openloc-guide .driver-popover-arrow-side-bottom { border-bottom-color: var(--primary); }
+/* The arrow on the card's top edge starts above the 4px top bar, not inside
+   it, so it shows as large as the arrows on the other edges. */
+.driver-popover.openloc-guide .driver-popover-arrow-side-bottom { bottom: calc(100% + 4px); }
+.driver-popover.openloc-guide .driver-popover-footer button {
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-shadow: none;
+  font-size: 0.75rem;
+}
+/* "End the tour?", asked in the card after a click on the dimmed page. */
+.driver-popover.openloc-guide .openloc-guide-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin-top: 15px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+/* The question pushes the buttons right; when the row is too narrow, the
+   buttons move below it together. */
+.driver-popover.openloc-guide .openloc-guide-confirm span { margin-right: auto; }
+.driver-popover.openloc-guide .openloc-guide-confirm button {
+  padding: 2px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+.driver-popover.openloc-guide .openloc-guide-confirm button:last-child {
+  background: var(--destructive);
+  border-color: var(--destructive);
+  color: var(--primary-foreground);
+}
+.driver-popover.openloc-guide .driver-popover-footer .driver-popover-next-btn {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+.driver-popover.openloc-guide .openloc-guide-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.driver-popover.openloc-guide .openloc-guide-replies button {
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-shadow: none;
+  font-size: 0.75rem;
+}
+.driver-popover.openloc-guide .openloc-guide-voice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.driver-popover.openloc-guide .openloc-guide-voice button {
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+.driver-popover.openloc-guide .openloc-guide-voice button[aria-pressed='true'] {
+  border-color: var(--primary);
+}
+.driver-popover.openloc-guide .openloc-guide-voice-hint {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.driver-popover.openloc-guide .openloc-guide-replies button:hover {
+  border-color: var(--primary);
+}
+
+/* Option C: a guide avatar at the card's top left, as if someone is showing
+   the way. The card's text moves right to make room for it. */
+/* Wider by the avatar's room, so the text keeps its width. */
+.driver-popover.openloc-guide { padding-left: 60px; max-width: 345px; }
+.driver-popover.openloc-guide .openloc-guide-avatar {
+  position: absolute;
+  top: 16px;
+  left: 14px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 20%, transparent);
+}
+.driver-popover.openloc-guide .openloc-guide-avatar svg { width: 18px; height: 18px; }
+
+/* drawAttention() (lib/attention.ts): a ring in the primary colour pulses
+   around the element it lands on, back to back, as many times and as fast as
+   the helper says through --attention-pulses / --attention-pulse-ms. Reduced
+   motion gets a steady ring for the same time instead. */
+@keyframes attention-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-primary) 70%, transparent); }
+  100% { box-shadow: 0 0 0 10px color-mix(in oklch, var(--color-primary) 0%, transparent); }
+}
+[data-attention] {
+  animation: attention-pulse var(--attention-pulse-ms, 700ms) ease-out var(--attention-pulses, 3);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-attention] {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 60%, transparent);
+  }
+}

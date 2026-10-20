@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE tms SYSTEM "Tms.dtd"[]>
+<tms name="E2E Flow Sensor Addendum" source="en-US" target="de-DE" export-version="2" file-hash="E2ETESTFIXTUREHASH0123456789ABCD">
+<!--TMS Settings
+Test Export: false
+Recursive: true
+-->
+<tmsnode id="100000000001" xml:space="preserve"><title>E2E Flow Sensor Addendum</title></tmsnode><tmsnode id="100000000002" xml:space="preserve"><title>ManualType</title><content>
+<p>Addendum to the Instructions for Use</p></content></tmsnode><tmsnode id="100000000003" xml:space="preserve"><title>Revised Information</title><content>
+<p>The F7<sup>m</sup> Flow Sensor complies with the standard.</p>
+<p>Please store this addendum with your pump documentation. Keep it for future reference.</p>
+<table-container type="text-width"><table type="fixed"><tbody><tr><td><p><b>General specifications</b> </p> </td>
+<td><p>Sample flow rate</p> </td>
+<td><p>200 ml/min ±20 ml/min</p> </td> </tr>
+<tr><td><p>Sensor start-up delay</p> </td>
+<td><p>&lt;5 seconds</p> </td>
+<td><p>15 seconds for first cycle<br />20 seconds for second cycle</p> </td> </tr> </tbody> </table> </table-container>
+<subheading>Pump Mode</subheading>
+<p>For H<sub>2</sub>O, the flow mode can be set to <meta-ref type="static" name="custom.ui.title" linkid="datanode_100000000004">Eco</meta-ref> or Boost.</p></content></tmsnode><tmsnode id="100000000004" xml:space="preserve"><title>D0:UI_PUMP_MODE_ITM0</title><metalist><meta name="custom.ui.title" xml:space="preserve">Eco</meta></metalist></tmsnode></tms>

@@ -1,0 +1,203 @@
+paths:
+  /projects:
+    get:
+      operationId: listProjects
+      summary: List projects
+      description: Newest first.
+      tags: [Projects]
+      x-roles: [owner, admin, project_manager]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ProjectStatus" }
+        - name: source
+          in: query
+          description: Source language code, for example `en`.
+          schema: { type: string }
+        - name: target
+          in: query
+          description: Projects that have this target language.
+          schema: { type: string }
+        - name: q
+          in: query
+          description: Text search in the project name.
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of projects.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      operationId: createProject
+      summary: Create a project
+      description: |
+        Creates a live project. Upload files to it next; each file gets one job
+        per target language. Pass `template_id` to apply one of your templates.
+        Customer and domain are labels: set them with
+        `PUT /projects/{projectID}/labels` after create. A body with
+        `customer_id`, `client` or `domain` is refused with `400`.
+      tags: [Projects]
+      x-roles: [owner, admin, project_manager]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectCreate" }
+      responses:
+        "201":
+          description: The new project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /projects/{projectID}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      operationId: getProject
+      summary: Get a project
+      tags: [Projects]
+      x-roles: [owner, admin, project_manager]
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    patch:
+      operationId: updateProject
+      summary: Update a project
+      description: Send only the fields to change. Languages cannot be changed after create.
+      tags: [Projects]
+      x-roles: [owner, admin, project_manager]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectUpdate" }
+      responses:
+        "200":
+          description: The updated project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      operationId: deleteProject
+      summary: Delete a project
+      description: |
+        Deletes the project with its files, jobs and translations. Owner and
+        Admin only, except a draft project, which a Project manager may delete too.
+      tags: [Projects]
+      x-roles: [owner, admin, project_manager]
+      x-handler-check: true
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+components:
+  schemas:
+    ProjectStatus:
+      type: string
+      description: "`draft` projects are made in the app's New project form."
+      enum: [draft, in_progress, completed, on_hold]
+      example: in_progress
+    Project:
+      type: object
+      required: [id, name, description, status, source_language, target_languages, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64, description: "Project id. Use it in every project path." }
+        name: { type: string, description: "Project name." }
+        description: { type: string, description: "Free text shown on the project page." }
+        status: { $ref: "#/components/schemas/ProjectStatus" }
+        source_language: { type: string, description: "Source language code, for example `en`." }
+        target_languages:
+          type: array
+          items: { type: string }
+        template_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The template the project was created from.
+        deadline: { type: string, format: date-time, nullable: true, description: "When the project is due." }
+        created_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: The user who created the project.
+        created_at: { type: string, format: date-time, description: "When the project was created." }
+        updated_at: { type: string, format: date-time, description: "When the project last changed." }
+    ProjectCreate:
+      type: object
+      required: [name, source_language, target_languages]
+      properties:
+        name: { type: string, description: "Project name." }
+        description: { type: string, description: "Free text shown on the project page." }
+        source_language: { type: string, example: en, description: "Source language code, for example `en`." }
+        target_languages:
+          type: array
+          minItems: 1
+          items: { type: string }
+          example: [de, fr]
+        deadline: { type: string, format: date-time, description: "When the project is due." }
+        template_id:
+          type: integer
+          format: int64
+          description: Apply this template's settings, memories, glossaries and workflow.
+        workflow_id:
+          type: integer
+          format: int64
+          description: Copy this workflow onto the project. Overrides the template's workflow.
+    ProjectUpdate:
+      type: object
+      properties:
+        name: { type: string, description: "Project name." }
+        description: { type: string, description: "Free text shown on the project page." }
+        status:
+          type: string
+          enum: [in_progress, completed, on_hold]
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: "`null` clears it."

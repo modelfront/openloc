@@ -1,0 +1,267 @@
+paths:
+  /members:
+    get:
+      operationId: listMembers
+      summary: List members
+      tags:
+      - Members
+      x-roles: &id002
+      - owner
+      - admin
+      - project_manager
+      parameters:
+      - name: include_inactive
+        in: query
+        description: Include deactivated members.
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Every member.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Member'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /members/{userID}:
+    parameters:
+    - $ref: '#/components/parameters/UserID'
+    patch:
+      operationId: changeMemberRole
+      summary: Change a member's role
+      description: Only an owner may grant or change the owner role, and the last owner or admin cannot
+        be demoted.
+      tags:
+      - Members
+      x-roles: &id001
+      - owner
+      - admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - role
+              properties:
+                role:
+                  $ref: '#/components/schemas/Role'
+      responses:
+        '200':
+          description: The member.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Member'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: removeMember
+      summary: Remove a member
+      description: The last owner or admin cannot be removed.
+      tags:
+      - Members
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /invites:
+    get:
+      operationId: listInvites
+      summary: List invites
+      description: |
+        Newest first. Lists only the invites you may handle: nobody sees an
+        invite for a role above their own, and a Project manager sees Linguist
+        invites only.
+      tags:
+      - Members
+      x-roles: *id002
+      responses:
+        '200':
+          description: The invites you may handle.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Invite'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createInvite
+      summary: Invite a member
+      description: Emails a join link. Nobody invites a role above their own, and a Project manager invites Linguists only.
+      tags:
+      - Members
+      x-roles: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum:
+                  - admin
+                  - project_manager
+                  - linguist
+                  description: Defaults to linguist.
+      responses:
+        '201':
+          description: The invite.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Invite'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /invites/{inviteID}:
+    parameters:
+    - $ref: '#/components/parameters/InviteID'
+    delete:
+      operationId: revokeInvite
+      summary: Revoke an invite
+      description: An invite for a role you may not handle answers `404`, like a missing one.
+      tags:
+      - Members
+      x-roles: *id002
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    Member:
+      type: object
+      required:
+      - id
+      - name
+      - email
+      - role
+      - active
+      - joined_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: The user id.
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        active:
+          type: boolean
+        joined_at:
+          type: string
+          format: date-time
+    Invite:
+      type: object
+      required:
+      - id
+      - email
+      - role
+      - status
+      - expires_at
+      - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - expired
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
