@@ -1,0 +1,422 @@
+paths:
+  /tms:
+    get:
+      operationId: listTMs
+      summary: List translation memories
+      tags:
+      - Translation memories
+      x-roles: &id001
+      - owner
+      - admin
+      - project_manager
+      responses:
+        '200':
+          description: Every translation memory.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/TM'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createTM
+      summary: Create a translation memory
+      tags:
+      - Translation memories
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              - source_language
+              - target_languages
+              properties:
+                name:
+                  type: string
+                source_language:
+                  type: string
+                  example: en
+                target_languages:
+                  type: array
+                  items:
+                    type: string
+                  description: At least one.
+      responses:
+        '201':
+          description: The new translation memory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TM'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /tms/{tmID}:
+    parameters: &id002
+    - $ref: '#/components/parameters/TMID'
+    get:
+      operationId: getTM
+      summary: Get a translation memory
+      tags:
+      - Translation memories
+      x-roles: *id001
+      responses:
+        '200':
+          description: The translation memory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TM'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      operationId: renameTM
+      summary: Rename a translation memory
+      tags:
+      - Translation memories
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: The renamed translation memory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TM'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteTM
+      summary: Delete a translation memory
+      description: Refused with 409 while a project, template or TM profile uses it.
+      tags:
+      - Translation memories
+      x-roles:
+      - owner
+      - admin
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /tms/{tmID}/entries:
+    parameters: *id002
+    get:
+      operationId: listTMEntries
+      summary: List or search entries
+      description: With `q`, returns the entries whose source is close to it, each with a `score`.
+      tags:
+      - Translation memories
+      x-roles: *id001
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: source_language
+        in: query
+        schema:
+          type: string
+      - name: target_language
+        in: query
+        schema:
+          type: string
+      - name: q
+        in: query
+        description: Text to search for in the source.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/TMEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /tms/{tmID}/imports:
+    parameters: *id002
+    post:
+      operationId: importTMX
+      summary: Import a TMX file
+      description: Starts the import and answers at once. Follow its progress in the imports list. The
+        maximum size is 4 GB.
+      tags:
+      - Translation memories
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: The import, started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TMImport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      operationId: listTMImports
+      summary: List imports
+      description: Newest first, with their progress.
+      tags:
+      - Translation memories
+      x-roles: *id001
+      responses:
+        '200':
+          description: Every import of this memory.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/TMImport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /tms/{tmID}/export:
+    parameters: *id002
+    get:
+      operationId: exportTMX
+      summary: Download as TMX
+      description: Every entry as a TMX file. 404 when the memory is empty.
+      tags:
+      - Translation memories
+      x-roles: *id001
+      responses:
+        '200':
+          description: The TMX file.
+          content:
+            application/xml:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    TM:
+      type: object
+      required:
+      - id
+      - name
+      - source_language
+      - target_languages
+      - entry_count
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        source_language:
+          type: string
+          nullable: true
+        target_languages:
+          type: array
+          items:
+            type: string
+        entry_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TMEntry:
+      type: object
+      required:
+      - id
+      - source_language
+      - target_language
+      - source_text
+      - target_text
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        source_language:
+          type: string
+        target_language:
+          type: string
+        source_text:
+          type: string
+        target_text:
+          type: string
+        score:
+          type: number
+          description: How close the source is to the search text, 0 to 1. Only on a search.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TMImport:
+      type: object
+      required:
+      - id
+      - file_name
+      - status
+      - total_units
+      - imported
+      - skipped
+      - error_message
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        file_name:
+          type: string
+        status:
+          type: string
+          description: For example `processing`, `completed` or `failed`.
+        total_units:
+          type: integer
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

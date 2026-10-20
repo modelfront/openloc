@@ -1,0 +1,61 @@
+# The browser suites, e2e and journeys, run by hand only (Actions → E2E → Run
+# workflow): each boots the whole dev stack and takes most of an hour. As in
+# ci.yml, each run: step is one `make ci-<target>`, so they run locally the
+# same way.
+name: E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            e2e/package-lock.json
+      - run: make ci-e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e
+          path: |
+            e2e/check-results
+            e2e/test-results
+          retention-days: 7
+
+  journeys:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            e2e/package-lock.json
+      - run: make ci-journeys
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: journeys
+          path: |
+            e2e/check-results
+            e2e/test-results
+            e2e/journey-results.json
+          retention-days: 7

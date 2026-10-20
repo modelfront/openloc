@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 266" width="700" height="266" role="img" aria-labelledby="t d">
+  <title id="t">What is copied and what stays linked</title>
+  <desc id="d">A template and a workflow are copied into a project once, so later edits do not reach it. A TM profile stays linked, so edits do reach every follower.</desc>
+  <defs>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+    <marker id="v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/>
+    </marker>
+    <style>
+      .l { font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2937; }
+      .s { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b7280; }
+      .e { font: 600 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #4b5563; }
+      .ev { font: 600 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #7c3aed; }
+      .arw { stroke: #6b7280; stroke-width: 1.5; fill: none; marker-end: url(#g); }
+      .arwv { stroke: #7c3aed; stroke-width: 2; fill: none; marker-end: url(#v); }
+    </style>
+  </defs>
+
+  <rect width="700" height="266" fill="#ffffff"/>
+
+  <!-- sources -->
+  <rect x="20" y="28" width="190" height="50" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="l" x="34" y="49">Template</text>
+  <text class="s" x="34" y="66">settings + workflow steps</text>
+
+  <rect x="20" y="106" width="190" height="50" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5"/>
+  <text class="l" x="34" y="127">Workflow (library)</text>
+  <text class="s" x="34" y="144">an ordered list of steps</text>
+
+  <rect x="20" y="196" width="190" height="50" rx="8" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="2"/>
+  <text class="l" x="34" y="217" fill="#5b21b6">TM profile</text>
+  <text class="s" x="34" y="234" fill="#6d28d9">memory list + match scoring</text>
+
+  <!-- project -->
+  <rect x="470" y="96" width="200" height="76" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="l" x="570" y="126" text-anchor="middle">Your project</text>
+  <text class="s" x="570" y="145" text-anchor="middle">has its own copy of the</text>
+  <text class="s" x="570" y="160" text-anchor="middle">settings and steps</text>
+
+  <!-- copy arrows -->
+  <path class="arw" d="M210,53 C320,53 350,110 464,120"/>
+  <text class="e" x="348" y="58" text-anchor="middle">copied once, at project creation</text>
+
+  <path class="arw" d="M210,131 H464"/>
+  <text class="e" x="340" y="124" text-anchor="middle">steps copied when you pick it</text>
+
+  <!-- live link -->
+  <path class="arwv" d="M210,221 C330,221 360,180 464,152"/>
+  <text class="ev" x="362" y="242" text-anchor="middle">stays linked — edits reach the project</text>
+</svg>

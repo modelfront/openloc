@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tbx style="dca" type="TBX-Basic" xml:lang="en" xmlns="urn:iso:std:iso:30042:ed-2">
+  <tbxHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Sample TBX-Basic v3 file for import tests.</p>
+      </sourceDesc>
+    </fileDesc>
+  </tbxHeader>
+  <text>
+    <body>
+      <conceptEntry id="c1">
+        <descrip type="subjectField">software</descrip>
+        <langSec xml:lang="en">
+          <termSec>
+            <term>e-mail</term>
+            <termNote type="partOfSpeech">noun</termNote>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="fr">
+          <termSec>
+            <term>courriel</term>
+            <termNote type="partOfSpeech">noun</termNote>
+            <termNote type="administrativeStatus">preferredTerm-admn-sts</termNote>
+          </termSec>
+          <termSec>
+            <term>mail</term>
+            <termNote type="administrativeStatus">deprecatedTerm-admn-sts</termNote>
+          </termSec>
+        </langSec>
+      </conceptEntry>
+      <conceptEntry id="c2">
+        <langSec xml:lang="en">
+          <termSec>
+            <term>federated database</term>
+            <descrip type="definition">A database that maps multiple autonomous databases into one.</descrip>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="fr">
+          <termSec>
+            <term>base de données fédérée</term>
+            <descrip type="subjectField">database</descrip>
+          </termSec>
+        </langSec>
+      </conceptEntry>
+      <conceptEntry id="c3">
+        <langSec xml:lang="en">
+          <termSec>
+            <term>orphan term</term>
+          </termSec>
+        </langSec>
+        <langSec xml:lang="de">
+          <termSec>
+            <term>Waisenbegriff</term>
+          </termSec>
+        </langSec>
+      </conceptEntry>
+    </body>
+  </text>
+</tbx>

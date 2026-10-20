@@ -1,0 +1,567 @@
+paths:
+  /templates:
+    get:
+      operationId: listTemplates
+      summary: List templates
+      description: Newest first. Pass a template's id as `template_id` when you create a project.
+      tags:
+      - Templates
+      x-roles: &id001
+      - owner
+      - admin
+      - project_manager
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: q
+        in: query
+        description: Text search in the name.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: One page of templates.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /templates/{templateID}:
+    parameters:
+    - $ref: '#/components/parameters/TemplateID'
+    get:
+      operationId: getTemplate
+      summary: Get a template
+      tags:
+      - Templates
+      x-roles: *id001
+      responses:
+        '200':
+          description: The template.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteTemplate
+      summary: Delete a template
+      description: Projects made from it keep their setup.
+      tags:
+      - Templates
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /templates/{templateID}/duplicate:
+    parameters:
+    - $ref: '#/components/parameters/TemplateID'
+    post:
+      operationId: duplicateTemplate
+      summary: Copy a template
+      description: Makes "Copy of …" with the same setup.
+      tags:
+      - Templates
+      x-roles: *id001
+      responses:
+        '201':
+          description: The copy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /workflows:
+    get:
+      operationId: listWorkflows
+      summary: List workflows
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '200':
+          description: Every workflow.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Workflow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createWorkflow
+      summary: Create a workflow
+      tags:
+      - Workflows
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowInput'
+      responses:
+        '201':
+          description: The new workflow.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Workflow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /workflows/{workflowID}:
+    parameters:
+    - $ref: '#/components/parameters/WorkflowID'
+    get:
+      operationId: getWorkflow
+      summary: Get a workflow
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '200':
+          description: The workflow.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Workflow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      operationId: replaceWorkflow
+      summary: Replace a workflow
+      description: Renames it and replaces its steps. Projects that copied it keep their own steps.
+      tags:
+      - Workflows
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowInput'
+      responses:
+        '200':
+          description: The workflow.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Workflow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteWorkflow
+      summary: Delete a workflow
+      description: Projects that copied it keep their own steps.
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /workflow-steps:
+    get:
+      operationId: listWorkflowSteps
+      summary: List workflow steps
+      description: The step library workflows are built from.
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '200':
+          description: Every step.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/StepDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createWorkflowStep
+      summary: Create a workflow step
+      tags:
+      - Workflows
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StepDefinitionInput'
+      responses:
+        '201':
+          description: The new step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StepDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /workflow-steps/{stepDefinitionID}:
+    parameters:
+    - $ref: '#/components/parameters/StepDefinitionID'
+    get:
+      operationId: getWorkflowStep
+      summary: Get a workflow step
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '200':
+          description: The step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StepDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      operationId: replaceWorkflowStep
+      summary: Replace a workflow step
+      description: Running projects keep the values they copied.
+      tags:
+      - Workflows
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StepDefinitionInput'
+      responses:
+        '200':
+          description: The step.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StepDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteWorkflowStep
+      summary: Delete a workflow step
+      description: Refused with 409 while a workflow uses it.
+      tags:
+      - Workflows
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    Template:
+      type: object
+      required:
+      - id
+      - name
+      - project_name
+      - source_language
+      - target_languages
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        project_name:
+          type: string
+          nullable: true
+          description: Default name for a project made from it.
+        source_language:
+          type: string
+          nullable: true
+        target_languages:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    LibraryStep:
+      type: object
+      required:
+      - step_definition_id
+      - name
+      - type
+      - default_assignee_id
+      properties:
+        step_definition_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        type: &id002
+          type: string
+          enum:
+          - human
+          - hybrid
+          - ai
+          description: '`human`: a person works the step. `ai`: an AI engine works it alone. `hybrid`:
+            the AI engine runs, then a person.'
+        default_assignee_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Who gets the step by default.
+    Workflow:
+      type: object
+      required:
+      - id
+      - name
+      - steps
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryStep'
+          description: In order.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WorkflowInput:
+      type: object
+      required:
+      - name
+      - steps
+      properties:
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            type: object
+            required:
+            - step_definition_id
+            properties:
+              step_definition_id:
+                type: integer
+                format: int64
+              default_assignee_id:
+                type: integer
+                format: int64
+                nullable: true
+          description: 1 to 9 steps, in order.
+    StepDefinition:
+      type: object
+      required:
+      - id
+      - name
+      - type
+      - ai_router_id
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        type: *id002
+        ai_router_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The AI router an `ai` or `hybrid` step runs.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    StepDefinitionInput:
+      type: object
+      required:
+      - name
+      - type
+      properties:
+        name:
+          type: string
+        type: *id002
+        ai_router_id:
+          type: integer
+          format: int64
+          description: Required for `ai` and `hybrid`; not allowed for `human`.

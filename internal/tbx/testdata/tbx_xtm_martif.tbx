@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE martif SYSTEM "TBXCoreStructV02.dtd">
+<martif type="TBX-Basic" xml:lang="en">
+  <martifHeader>
+    <fileDesc><sourceDesc><p>XTM-dialect sample: type="status"/type="domain".</p></sourceDesc></fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry>
+        <descrip type="definition">A connector pin.</descrip>
+        <descrip type="domain">Electrical system;Work object</descrip>
+        <langSet xml:lang="en-GB">
+          <ntig>
+            <termGrp>
+              <term>pin</term>
+              <termNote type="partOfSpeech">noun</termNote>
+              <termNote type="status">VALID</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="es-ES">
+          <ntig>
+            <termGrp>
+              <term>clavija</term>
+              <termNote type="status">FORBIDDEN</termNote>
+            </termGrp>
+          </ntig>
+          <ntig>
+            <termGrp>
+              <term>pin</term>
+              <termNote type="remarks">ISO 8092 uses "pin".</termNote>
+              <termNote type="status">VALID</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

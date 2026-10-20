@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="Trados Studio" creationtoolversion="17.0" segtype="sentence" o-tmf="SDL TM8" adminlang="en-US" srclang="en-US" datatype="xml"/>
+  <body>
+    <tu tuid="1" creationdate="20260301T101500Z" creationid="translator1">
+      <tuv xml:lang="en-US"><seg>Tom &amp; Jerry</seg></tuv>
+      <tuv xml:lang="de-DE"><seg>Tom &amp; Jerry</seg></tuv>
+    </tu>
+    <tu tuid="2" creationdate="20260301T101600Z" creationid="translator1">
+      <tuv xml:lang="en-US"><seg>Use a &lt; b and say &quot;yes&quot;</seg></tuv>
+      <tuv xml:lang="de-DE"><seg>Verwenden Sie a &lt; b und sagen Sie &#x201E;ja&#x201C;</seg></tuv>
+    </tu>
+    <tu tuid="3" creationdate="20260301T101700Z" creationid="translator1">
+      <tuv xml:lang="en-US"><seg>Press <bpt i="1">&lt;b&gt;</bpt>OK &amp; go<ept i="1">&lt;/b&gt;</ept></seg></tuv>
+      <tuv xml:lang="de-DE"><seg>Drücken Sie<ph x="1">&#xA0;</ph><bpt i="1">&lt;b&gt;</bpt>OK &amp; los<ept i="1">&lt;/b&gt;</ept></seg></tuv>
+    </tu>
+  </body>
+</tmx>

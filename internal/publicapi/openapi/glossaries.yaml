@@ -1,0 +1,501 @@
+paths:
+  /glossaries:
+    get:
+      operationId: listGlossaries
+      summary: List glossaries
+      tags:
+      - Glossaries
+      x-roles: &id001
+      - owner
+      - admin
+      - project_manager
+      responses:
+        '200':
+          description: Every glossary.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Glossary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createGlossary
+      summary: Create a glossary
+      tags:
+      - Glossaries
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              - source_language
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                source_language:
+                  type: string
+                  example: en
+      responses:
+        '201':
+          description: The new, empty glossary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Glossary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /glossaries/{glossaryID}:
+    parameters: &id002
+    - &id003
+      $ref: '#/components/parameters/GlossaryID'
+    get:
+      operationId: getGlossary
+      summary: Get a glossary
+      tags:
+      - Glossaries
+      x-roles: *id001
+      responses:
+        '200':
+          description: The glossary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Glossary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      operationId: updateGlossary
+      summary: Update a glossary
+      description: Send only the fields to change.
+      tags:
+      - Glossaries
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: The updated glossary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Glossary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteGlossary
+      summary: Delete a glossary
+      description: Deletes the glossary with its concepts.
+      tags:
+      - Glossaries
+      x-roles:
+      - owner
+      - admin
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /glossaries/{glossaryID}/concepts:
+    parameters: *id002
+    get:
+      operationId: listConcepts
+      summary: List concepts
+      tags:
+      - Glossaries
+      x-roles: *id001
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: q
+        in: query
+        description: Text search in the terms.
+        schema:
+          type: string
+      - name: language
+        in: query
+        description: Only concepts with a term in this language. Repeat for several.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: One page of concepts.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Concept'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createConcept
+      summary: Add a concept
+      description: One meaning with its terms in any number of languages.
+      tags:
+      - Glossaries
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - terms
+              properties:
+                definition:
+                  type: string
+                domain:
+                  type: string
+                terms:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TermInput'
+                  description: At least one.
+      responses:
+        '201':
+          description: The new concept.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Concept'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /glossaries/{glossaryID}/concepts/{conceptID}:
+    parameters:
+    - *id003
+    - $ref: '#/components/parameters/ConceptID'
+    delete:
+      operationId: deleteConcept
+      summary: Delete a concept
+      description: Deletes the concept with its terms.
+      tags:
+      - Glossaries
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /glossaries/{glossaryID}/imports:
+    parameters: *id002
+    post:
+      operationId: importGlossary
+      summary: Import TBX or CSV
+      description: Adds the concepts of the file. The format comes from `format`, else from the file extension.
+        TBX up to 256 MB; CSV up to 10 MB, with `source_language` and `target_language` when the file
+        has no language columns.
+      tags:
+      - Glossaries
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                format:
+                  type: string
+                  enum:
+                  - tbx
+                  - csv
+                source_language:
+                  type: string
+                target_language:
+                  type: string
+      responses:
+        '200':
+          description: What the import added.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: object
+                    required:
+                    - imported
+                    - terms
+                    - skipped
+                    properties:
+                      imported:
+                        type: integer
+                        description: Concepts added.
+                      terms:
+                        type: integer
+                        description: Terms added, for TBX.
+                      skipped:
+                        type: integer
+                        description: Entries left out because they were empty or already there.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /glossaries/{glossaryID}/export:
+    parameters: *id002
+    get:
+      operationId: exportGlossary
+      summary: Download a glossary
+      description: '`format=tbx` (the default) gives TBX-Basic; `format=csv` gives one row per term pair.'
+      tags:
+      - Glossaries
+      x-roles: *id001
+      parameters:
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - tbx
+          - csv
+          default: tbx
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/xml:
+              schema:
+                type: string
+                format: binary
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    Glossary:
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - source_language
+      - target_languages
+      - concept_count
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+        source_language:
+          type: string
+        target_languages:
+          type: array
+          items:
+            type: string
+          description: The languages its terms are in.
+        concept_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TermStatus:
+      type: string
+      enum:
+      - approved
+      - pending
+      - forbidden
+      description: '`forbidden` marks a term not to use.'
+    TermInput:
+      type: object
+      required:
+      - language
+      - text
+      properties:
+        language:
+          type: string
+          example: de
+        text:
+          type: string
+        status:
+          $ref: '#/components/schemas/TermStatus'
+        part_of_speech:
+          type: string
+        notes:
+          type: string
+    Term:
+      type: object
+      required:
+      - id
+      - language
+      - text
+      - status
+      - part_of_speech
+      - notes
+      properties:
+        id:
+          type: integer
+          format: int64
+        language:
+          type: string
+        text:
+          type: string
+        status:
+          $ref: '#/components/schemas/TermStatus'
+        part_of_speech:
+          type: string
+        notes:
+          type: string
+    Concept:
+      type: object
+      required:
+      - id
+      - definition
+      - domain
+      - terms
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        definition:
+          type: string
+        domain:
+          type: string
+        terms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Term'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

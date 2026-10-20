@@ -1,0 +1,28 @@
+# Parser sidecar dependencies. After editing, run `make sidecar-lock` to update
+# uv.lock (exact versions + hashes); `make sidecar-lock UPGRADE=1` bumps every pin.
+[project]
+name = "parser-sidecar"
+version = "0.0.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.34.0",
+  "python-multipart>=0.0.18",
+  "python-docx>=1.1.0",
+  "pdfminer.six==20260107",
+  "pypdfium2==5.13.0",
+  "pytesseract>=0.3.13",
+  "Pillow>=12.3.0",
+]
+
+# Test-only; never installed in the production image.
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.28.0",
+  "reportlab>=4.0.0",
+]
+
+[tool.uv]
+# A service, not a library: install the dependencies, never build the project.
+package = false

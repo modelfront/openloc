@@ -1,0 +1,15 @@
+{
+  "id": "mockqe",
+  "name": "Mock QE",
+  "version": "1.0.0",
+  "api_version": 1,
+  "description": "Test extension for QE and APE.",
+  "capabilities": ["qe", "ape"],
+  "settings": [
+    { "key": "token", "label": "API token", "secret": true },
+    { "key": "base_url", "label": "Endpoint" }
+  ],
+  "allowed_hosts": ["{settings.base_url}"],
+  "limits": { "batch_size": 2 },
+  "entry": "extension.wasm"
+}

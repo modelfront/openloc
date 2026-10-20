@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openloc": {
+      "type": "http",
+      "url": "https://app.openloc.com/mcp"
+    }
+  }
+}

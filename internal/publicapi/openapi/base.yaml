@@ -1,0 +1,235 @@
+openapi: 3.0.3
+info:
+  title: OpenLoc API
+  version: "1"
+  description: |
+    The customer API. Every request carries an access key as a bearer token;
+    the key acts as its owner, with the owner's role, in one organization.
+    Fields may be added to any response; ignore the ones you do not know.
+servers:
+  - url: /api/v1
+security:
+  - accessKey: []
+tags:
+  - name: Projects
+  - name: Files
+  - name: Jobs
+  - name: Segments
+  - name: Comments
+  - name: Translation memories
+  - name: Glossaries
+  - name: Templates
+  - name: Workflows
+  - name: Labels
+  - name: Members
+  - name: AI
+  - name: Spec
+paths:
+  /openapi.json:
+    get:
+      operationId: getOpenAPISpec
+      summary: Get this specification
+      tags: [Spec]
+      # The reference does not list this one; the sidebar links the file.
+      x-hidden: true
+      x-roles: [owner, admin, project_manager, linguist]
+      responses:
+        "200":
+          description: The OpenAPI document, as JSON.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+components:
+  securitySchemes:
+    accessKey:
+      type: http
+      scheme: bearer
+      description: An access key from **AI settings → Access keys**.
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: The `cursor` from the previous page. Omit for the first page.
+      schema: { type: integer, format: int64, minimum: 0 }
+    Limit:
+      name: limit
+      in: query
+      description: Page size. Defaults to 50; the maximum is 100.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+    ProjectID:
+      name: projectID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    FileID:
+      name: fileID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    JobID:
+      name: jobID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    TranslationID:
+      name: translationID
+      in: path
+      required: true
+      description: The segment id (`id` in the segment list).
+      schema: { type: integer, format: int64 }
+    CommentID:
+      name: commentID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    TMID:
+      name: tmID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    GlossaryID:
+      name: glossaryID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    ConceptID:
+      name: conceptID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    TemplateID:
+      name: templateID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    WorkflowID:
+      name: workflowID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    StepDefinitionID:
+      name: stepDefinitionID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    LabelID:
+      name: labelID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    ValueID:
+      name: valueID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    UserID:
+      name: userID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    InviteID:
+      name: inviteID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    PromptID:
+      name: promptID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    EngineID:
+      name: engineID
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+  schemas:
+    QABlocked:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          required: [qa_issues]
+          properties:
+            qa_issues:
+              type: array
+              description: The checks that failed.
+              items:
+                type: object
+                required: [check_type, severity, message, ignored]
+                properties:
+                  check_type: { type: string, description: "The QA rule that found it, for example `tag_checks`." }
+                  severity: { type: string, description: "`error` blocks the action; a warning does not." }
+                  message: { type: string, description: "What is wrong, for people. May change." }
+                  ignored: { type: boolean, description: "Someone chose to ignore this finding." }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable code, for your code to check.
+            message:
+              type: string
+              description: Human-readable text. May change.
+            field:
+              type: string
+              description: The request field that was wrong, when there is one.
+    PageInfo:
+      type: object
+      required: [cursor, has_more]
+      properties:
+        cursor:
+          type: integer
+          format: int64
+          description: Send back as `cursor` to get the next page. 0 when there is none.
+        has_more:
+          type: boolean
+    Role:
+      type: string
+      enum: [owner, admin, project_manager, linguist]
+  responses:
+    BadRequest:
+      description: The request is wrong; `message` says what to fix.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: The access key is missing, expired or revoked.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Your role may not call this endpoint, or the key is read only (`read_only_key`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: The item does not exist in your organization.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: Quality checks block the action (`QAErrorsBlocked`); `qa_issues` lists them.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QABlocked" }
+    Conflict:
+      description: The item changed since you read it, or its state does not allow the action.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests for this key (`rate_limited`). Wait for the seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

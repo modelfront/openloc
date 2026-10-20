@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" data-theme-favicon />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenLoc</title>
+    <!-- Colors the page before the app code loads: the light/dark class and
+         the palette last used in this browser. Storage keys match
+         src/lib/palettes.ts (THEME_KEY, TOKENS_KEY). -->
+    <script>
+      (function () {
+        try {
+          var el = document.documentElement
+          var theme = localStorage.getItem('openloc-theme')
+          var mode = theme === 'light' || theme === 'dark'
+            ? theme
+            : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          el.classList.add(mode)
+          el.style.colorScheme = mode
+          var tokens = JSON.parse(localStorage.getItem('openloc-palette-tokens') || '{}')[mode] || {}
+          for (var k in tokens) el.style.setProperty(k, tokens[k])
+        } catch (e) { /* storage blocked: the app applies the colors once it loads */ }
+      })()
+    </script>
+    <style>
+      html { background-color: var(--background); }
+      html.dark { background-color: var(--background, oklch(0.145 0 0)); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

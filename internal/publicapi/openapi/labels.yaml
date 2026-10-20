@@ -1,0 +1,307 @@
+paths:
+  /labels:
+    get:
+      operationId: listLabels
+      summary: List labels
+      description: Every label with its values. Customer and Domain are built in.
+      tags:
+      - Labels
+      x-roles: &id001
+      - owner
+      - admin
+      - project_manager
+      responses:
+        '200':
+          description: Every label.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Label'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createLabel
+      summary: Create a label
+      tags:
+      - Labels
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                values:
+                  type: array
+                  items:
+                    type: string
+                  description: First values.
+      responses:
+        '201':
+          description: The new label.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Label'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /labels/{labelID}:
+    parameters:
+    - $ref: '#/components/parameters/LabelID'
+    delete:
+      operationId: deleteLabel
+      summary: Delete a label
+      description: Refused with 409 for a built-in label or while a project uses it.
+      tags:
+      - Labels
+      x-roles: &id002
+      - owner
+      - admin
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /labels/{labelID}/values:
+    parameters:
+    - $ref: '#/components/parameters/LabelID'
+    post:
+      operationId: addLabelValue
+      summary: Add a value
+      tags:
+      - Labels
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - value
+              properties:
+                value:
+                  type: string
+      responses:
+        '201':
+          description: The new value.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/LabelValue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /labels/{labelID}/values/{valueID}:
+    parameters:
+    - $ref: '#/components/parameters/LabelID'
+    - $ref: '#/components/parameters/ValueID'
+    delete:
+      operationId: deleteLabelValue
+      summary: Delete a value
+      description: Also removes the value from every project and template that uses it.
+      tags:
+      - Labels
+      x-roles: *id002
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /projects/{projectID}/labels:
+    parameters:
+    - $ref: '#/components/parameters/ProjectID'
+    get:
+      operationId: listProjectLabels
+      summary: Get a project's labels
+      description: Includes its customer and domain.
+      tags:
+      - Labels
+      x-roles: *id001
+      responses:
+        '200':
+          description: The project's label values.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ProjectLabel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      operationId: setProjectLabels
+      summary: Set a project's labels
+      description: Replaces the project's label values, at most one per label. An empty list clears them.
+        Set the customer with a value of the Customer label.
+      tags:
+      - Labels
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - value_ids
+              properties:
+                value_ids:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+                  description: Label value ids.
+      responses:
+        '200':
+          description: The project's label values.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ProjectLabel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    LabelValue:
+      type: object
+      required:
+      - id
+      - value
+      properties:
+        id:
+          type: integer
+          format: int64
+        value:
+          type: string
+    Label:
+      type: object
+      required:
+      - id
+      - name
+      - key
+      - values
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        key:
+          type: string
+          enum:
+          - customer
+          - domain
+          nullable: true
+          description: '`customer` or `domain` for the built-in labels; null for your own.'
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelValue'
+    ProjectLabel:
+      type: object
+      required:
+      - label_id
+      - label_name
+      - value_id
+      - value
+      properties:
+        label_id:
+          type: integer
+          format: int64
+        label_name:
+          type: string
+        value_id:
+          type: integer
+          format: int64
+        value:
+          type: string

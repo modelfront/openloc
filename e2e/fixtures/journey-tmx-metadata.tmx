@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="Trados Studio" creationtoolversion="2024"
+          datatype="plaintext" segtype="sentence" adminlang="en" srclang="en"/>
+  <body>
+    <!-- Entry with full metadata — all 5 attrs -->
+    <tu tuid="meta-001" creationdate="20250615T093000Z" creationid="translator_a" changedate="20250620T141500Z" changeid="reviewer_b">
+      <tuv xml:lang="en"><seg>Welcome to the application</seg></tuv>
+      <tuv xml:lang="es"><seg>Bienvenido a la aplicación</seg></tuv>
+    </tu>
+    <!-- Same source, DIFFERENT target — multi-translation -->
+    <tu tuid="meta-002" creationdate="20250701T080000Z" creationid="translator_c" changedate="20250705T120000Z" changeid="translator_c">
+      <tuv xml:lang="en"><seg>Welcome to the application</seg></tuv>
+      <tuv xml:lang="es"><seg>Bienvenida a la aplicación</seg></tuv>
+    </tu>
+    <!-- Entry with only creation metadata (no change attrs) -->
+    <tu tuid="meta-003" creationdate="20250610T100000Z" creationid="translator_a">
+      <tuv xml:lang="en"><seg>Your session has expired</seg></tuv>
+      <tuv xml:lang="es"><seg>Su sesión ha caducado</seg></tuv>
+    </tu>
+    <!-- Entry with special characters -->
+    <tu tuid="meta-004" creationdate="20250612T110000Z" creationid="translator_a" changedate="20250613T090000Z" changeid="reviewer_b">
+      <tuv xml:lang="en"><seg>Price: $99.99 — 20% off!</seg></tuv>
+      <tuv xml:lang="es"><seg>Precio: $99.99 — ¡20% de descuento!</seg></tuv>
+    </tu>
+  </body>
+</tmx>

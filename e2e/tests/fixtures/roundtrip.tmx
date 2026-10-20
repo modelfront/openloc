@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="test" creationtoolversion="1.0" datatype="plaintext" segtype="sentence" adminlang="en" srclang="en"/>
+  <body>
+    <tu tuid="tu-001" creationdate="20260115T120000Z" creationid="translator1" changedate="20260320T140000Z" changeid="reviewer1">
+      <tuv xml:lang="en"><seg>Hello world</seg></tuv>
+      <tuv xml:lang="es"><seg>Hola mundo</seg></tuv>
+    </tu>
+    <tu tuid="tu-002" creationdate="20260116T090000Z" creationid="translator2">
+      <tuv xml:lang="en"><seg>Hello world</seg></tuv>
+      <tuv xml:lang="es"><seg>Hola a todos</seg></tuv>
+    </tu>
+    <tu tuid="tu-003" creationdate="20260117T100000Z" creationid="translator1">
+      <tuv xml:lang="en"><seg>Goodbye</seg></tuv>
+      <tuv xml:lang="es"><seg>Adiós</seg></tuv>
+    </tu>
+    <tu tuid="tu-004">
+      <tuv xml:lang="en"><seg>Hello world</seg></tuv>
+      <tuv xml:lang="es"><seg>Hola mundo</seg></tuv>
+    </tu>
+  </body>
+</tmx>

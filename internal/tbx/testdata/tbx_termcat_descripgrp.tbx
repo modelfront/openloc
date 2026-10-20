@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE martif SYSTEM "TBXcoreStructV02.dtd">
+<martif type="TBX" xml:lang="en">
+  <martifHeader>
+    <fileDesc><sourceDesc><p>Termcat-dialect sample: multilingual, definition in descripGrp on a non-first langSet.</p></sourceDesc></fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="tgl-0001">
+        <descrip type="subjectField">Esports &gt; Esports d'aventura</descrip>
+        <langSet xml:lang="fr">
+          <ntig>
+            <termGrp>
+              <term>parachutisme ascensionnel</term>
+              <termNote type="partOfSpeech">n m</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="ca">
+          <descripGrp>
+            <descrip type="definition">Activitat consistent a elevar-se amb un paracaigudes estirat per una embarcació.</descrip>
+          </descripGrp>
+          <ntig>
+            <termGrp>
+              <term>vol nàutic</term>
+              <termNote type="partOfSpeech">n m</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="en">
+          <ntig>
+            <termGrp>
+              <term>parasailing</term>
+              <termNote type="partOfSpeech">n</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="es">
+          <ntig>
+            <termGrp>
+              <term>parasailing</term>
+            </termGrp>
+          </ntig>
+        </langSet>
+      </termEntry>
+      <termEntry id="tgl-0002">
+        <descrip type="subjectField">Esports &gt; Escalada</descrip>
+        <langSet xml:lang="ca">
+          <descripGrp>
+            <descrip type="definition">Corda dinàmica emprada en escalada.</descrip>
+          </descripGrp>
+          <ntig>
+            <termGrp>
+              <term>corda dinàmica</term>
+              <termNote type="partOfSpeech">n f</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+        <langSet xml:lang="en">
+          <ntig>
+            <termGrp>
+              <term>dynamic rope</term>
+              <termNote type="partOfSpeech">n</termNote>
+            </termGrp>
+          </ntig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

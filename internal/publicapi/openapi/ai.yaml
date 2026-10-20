@@ -1,0 +1,420 @@
+paths:
+  /ai/prompts:
+    get:
+      operationId: listAIPrompts
+      summary: List AI prompts
+      description: Built-in prompts first.
+      tags:
+      - AI
+      x-roles: &id002
+      - owner
+      - admin
+      - project_manager
+      responses:
+        '200':
+          description: Every prompt.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/AIPrompt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createAIPrompt
+      summary: Create an AI prompt
+      tags:
+      - AI
+      x-roles: &id001
+      - owner
+      - admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIPromptInput'
+      responses:
+        '201':
+          description: The new prompt.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AIPrompt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /ai/prompts/{promptID}:
+    parameters:
+    - $ref: '#/components/parameters/PromptID'
+    put:
+      operationId: replaceAIPrompt
+      summary: Replace an AI prompt
+      description: Built-in prompts are read-only, and the mode cannot change.
+      tags:
+      - AI
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIPromptInput'
+      responses:
+        '200':
+          description: The prompt.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AIPrompt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteAIPrompt
+      summary: Delete an AI prompt
+      description: Refused with 409 for a built-in prompt or while an engine uses it.
+      tags:
+      - AI
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /ai/engines:
+    get:
+      operationId: listAIEngines
+      summary: List AI engines
+      tags:
+      - AI
+      x-roles: *id002
+      responses:
+        '200':
+          description: Every engine.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/AIEngine'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createAIEngine
+      summary: Create an AI engine
+      description: 'One provider row: the connection (`token_id`, from **AI settings**), the model and,
+        for an LLM, the system prompt.'
+      tags:
+      - AI
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIEngineInput'
+      responses:
+        '201':
+          description: The new engine.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AIEngine'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /ai/engines/{engineID}:
+    parameters:
+    - $ref: '#/components/parameters/EngineID'
+    put:
+      operationId: replaceAIEngine
+      summary: Replace an AI engine
+      description: Replaces the name, state and provider row. The purpose is fixed at creation.
+      tags:
+      - AI
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIEngineInput'
+      responses:
+        '200':
+          description: The engine.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AIEngine'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteAIEngine
+      summary: Delete an AI engine
+      description: Refused with 409 while a router uses it.
+      tags:
+      - AI
+      x-roles: *id001
+      responses:
+        '204':
+          description: Done.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  schemas:
+    AIPrompt:
+      type: object
+      required:
+      - id
+      - name
+      - mode
+      - prompt_text
+      - segment_context
+      - language_additions
+      - built_in
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        mode: &id003
+          type: string
+          enum:
+          - qe
+          - qe_ape
+          - ape
+          - mt
+          description: 'What the engine returns: `qe` a quality verdict, `qe_ape` a verdict and a fix,
+            `ape` a fix, `mt` a translation. Fixed at creation.'
+        prompt_text:
+          type: string
+        segment_context:
+          type: array
+          items:
+            type: string
+          description: Context sent with each segment.
+        language_additions:
+          type: array
+          items: &id004
+            type: object
+            required:
+            - target_languages
+            - text
+            properties:
+              target_languages:
+                type: array
+                items:
+                  type: string
+              text:
+                type: string
+                description: Added to the prompt for these target languages.
+        built_in:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AIPromptInput:
+      type: object
+      required:
+      - name
+      - mode
+      - prompt_text
+      properties:
+        name:
+          type: string
+        mode: *id003
+        prompt_text:
+          type: string
+        segment_context:
+          type: array
+          items:
+            type: string
+        language_additions:
+          type: array
+          items: *id004
+    AIEngineRow:
+      type: object
+      required:
+      - source_language
+      - target_languages
+      - token_id
+      - model
+      - system_prompt_id
+      - bad_output_action
+      properties:
+        source_language:
+          type: string
+        target_languages:
+          type: array
+          items:
+            type: string
+        token_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The provider connection. The key itself is never returned.
+        model:
+          type: string
+        system_prompt_id:
+          type: integer
+          format: int64
+          nullable: true
+        bad_output_action:
+          type: string
+          nullable: true
+    AIEngine:
+      type: object
+      required:
+      - id
+      - name
+      - purpose
+      - enabled
+      - rows
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        purpose:
+          type: string
+          enum:
+          - mt
+          - qe_ape
+        enabled:
+          type: boolean
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIEngineRow'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AIEngineInput:
+      type: object
+      required:
+      - name
+      - token_id
+      properties:
+        name:
+          type: string
+        purpose:
+          type: string
+          enum:
+          - mt
+          - qe_ape
+          description: Defaults to qe_ape. Ignored on replace.
+        enabled:
+          type: boolean
+        token_id:
+          type: integer
+          format: int64
+          description: A connection from AI settings.
+        model:
+          type: string
+        system_prompt_id:
+          type: integer
+          format: int64
+          description: Required for an LLM connection.
+        bad_output_action:
+          type: string
+          description: What to do when the LLM answer is unusable; required for an LLM connection.
+        settings:
+          type: object
+          description: Provider settings, for example temperature.

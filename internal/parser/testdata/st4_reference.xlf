@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file original="Test_T_0_Acme_AF7_Pump_Addendum_en-US_to_de-DE.xml_en-US_de-DE.sdlxliff" source-language="en-us" target-language="de" datatype="plaintext">
+    <body>
+      <trans-unit id="844baf1e-d36b-4845-a566-766d4bba1da6">
+        <source>T.0 Acme AF7 Pump Addendum</source>
+        <target state="needs-review-translation">T.0 Acme AF7 Pump Addendum</target>
+      </trans-unit>
+      <trans-unit id="51e6e0ba-ed72-46c8-a18b-0f6b3893351d">
+        <source>ManualType</source>
+        <target state="needs-review-translation">Typ der Hand</target>
+      </trans-unit>
+      <trans-unit id="3f7aa2e6-967a-4c9e-8385-6aaa44e6346f">
+        <source>Addendum to the Instructions for Use</source>
+        <target state="final">Nachtrag zur Gebrauchsanweisung</target>
+      </trans-unit>
+      <trans-unit id="bc64aaee-8138-4b7a-abcc-6f9699c18073">
+        <source>Version</source>
+        <target state="needs-review-translation">Version</target>
+      </trans-unit>
+      <trans-unit id="d06ca184-30b5-469a-8fb9-570ad2edf110">
+        <source>Revision T.0</source>
+        <target state="needs-review-translation">Rev. B.0</target>
+      </trans-unit>
+      <trans-unit id="26acc8be-84c9-4032-89ab-07cf7ef5589c">
+        <source>PublishDate</source>
+        <target state="needs-review-translation">Veröffentlichen Sie</target>
+      </trans-unit>
+      <trans-unit id="40a17d85-9ba0-411e-bf00-109687781920">
+        <source>2026-03</source>
+        <target state="needs-review-translation">2026-03</target>
+      </trans-unit>
+      <trans-unit id="446bad66-a0ce-4eed-8a68-d5103741ea20">
+        <source>CE</source>
+        <target state="needs-review-translation">CE-KENNZEICHNUNG</target>
+      </trans-unit>
+      <trans-unit id="0910598c-8e04-4632-86b2-be0484f90504">
+        <source>1234</source>
+        <target state="needs-review-translation">1234</target>
+      </trans-unit>
+      <trans-unit id="026a8563-7267-42c7-b928-01b642431d88">
+        <source>Published/PrintedIn</source>
+        <target state="needs-review-translation">Veröffentlicht/PrintedIn</target>
+      </trans-unit>
+      <trans-unit id="a069ee50-28f3-45bc-a2cf-11503dbbf906">
+        <source>Springfield 2026-09</source>
+        <target state="needs-review-translation">Die Zeit der Zeit</target>
+      </trans-unit>
+      <trans-unit id="4c52b61d-a7b0-4255-974b-359e09e666c8">
+        <source>2</source>
+        <target state="final">2</target>
+      </trans-unit>
+      <trans-unit id="66412b9e-a7ad-4ce4-b164-e39b015566b6">
+        <source>Barcodetype</source>
+        <target state="needs-review-translation">Barcode</target>
+      </trans-unit>
+      <trans-unit id="9decb7fb-8523-4f6e-af0e-77b32543ab8e">
+        <source>1</source>
+        <target state="final">1</target>
+      </trans-unit>
+      <trans-unit id="cadde443-5b00-4c2b-a739-24d47e878226">
+        <source>SideBar</source>
+        <target state="needs-review-translation">Seite nicht gefunden</target>
+      </trans-unit>
+      <trans-unit id="402792f3-d5c4-4b52-838d-24a797b1ee22">
+        <source>2</source>
+        <target state="final">2</target>
+      </trans-unit>
+      <trans-unit id="24b2f1f1-12e4-487f-825f-3beb420e8334">
+        <source>BarcodePosition</source>
+        <target state="needs-review-translation">BarcodePosition</target>
+      </trans-unit>
+      <trans-unit id="02937251-b537-4aec-adc0-3e3c6f3090aa">
+        <source>2</source>
+        <target state="final">2</target>
+      </trans-unit>
+      <trans-unit id="c1ce0eb6-3620-495e-9256-02ee1a906173">
+        <source>BackCover_PartNo</source>
+        <target state="needs-review-translation">BackCover_PartNo</target>
+      </trans-unit>
+      <trans-unit id="c6b2c2ee-9df9-4e4a-952a-cd6170031caf">
+        <source>3</source>
+        <target state="final">3</target>
+      </trans-unit>
+      <trans-unit id="6e1449bb-5429-4a0d-b23e-6c9340a1b583">
+        <source>ReferenceNumber / PartNo</source>
+        <target state="needs-review-translation">ReferenzAnzahl / PartNo</target>
+      </trans-unit>
+      <trans-unit id="6aa45955-238e-48ee-90ec-0d63e7323d4c">
+        <source>100000123456</source>
+        <target state="needs-review-translation">100000123456</target>
+      </trans-unit>
+      <trans-unit id="a03de38b-b1f4-4589-988b-a3e0a946e7de">
+        <source>Addendum to the Instructions for Use</source>
+        <target state="final">Nachtrag zur Gebrauchsanweisung</target>
+      </trans-unit>
+      <trans-unit id="8c6f6e74-4d8f-49eb-b454-8aabb670a225">
+        <source>This addendum provides additional information for the Water Pump Revision T.xx Instructions for Use for the following pumps:</source>
+        <target state="needs-review-translation">Dieser Nachtrag enthält zusätzliche Informationen zur Gebrauchsanweisung der AquaFlow Wasserpumpe Rev. L für folgende Pumpen:</target>
+      </trans-unit>
+      <trans-unit id="3b63202e-aa5a-46f2-8c4e-2360581c967d">
+        <source>AquaFlow AF400-550</source>
+        <target state="needs-review-translation">AquaFlow AF400-550</target>
+      </trans-unit>
+      <trans-unit id="576dac97-7dbd-4bdc-b1f1-02858cad6224">
+        <source>AquaFlow AF750/AF850</source>
+        <target state="needs-review-translation">AquaFlow AF750/AF850</target>
+      </trans-unit>
+      <trans-unit id="9be0af18-e4a3-4e38-bf2a-3363d3637c25">
+        <source>Acme Water Pump 6000 Series (WP 6100, WP 6300, WP 6500)</source>
+        <target state="needs-review-translation">Acme Wasserpumpe 6000 Serie (WP 6100, WP 6300, WP 6500)</target>
+      </trans-unit>
+      <trans-unit id="ff8d1f04-7130-4237-b630-066fe36b7584">
+        <source>Please store this addendum with your pump documentation.</source>
+        <target state="needs-review-translation">Legen Sie ihn bitte mit der Pumpendokumentation ab.</target>
+      </trans-unit>
+      <trans-unit id="4cb9073d-0540-4e5d-814e-8c6db4975586:29">
+        <source>Revised Information:</source>
+        <target state="needs-review-translation">Überarbeitete Informationen:</target>
+      </trans-unit>
+      <trans-unit id="4cb9073d-0540-4e5d-814e-8c6db4975586:30">
+        <source>F7m Flow Sensor Specifications</source>
+        <target state="needs-review-translation">Spezifikationen – Durchflusssensor F7m</target>
+      </trans-unit>
+      <trans-unit id="e33923c7-c41f-49ab-87ca-9b5d0b21ca4e">
+        <source>The F7<g id="1">m</g> Flow Sensor (100234) complies with ISO 4064-2-55:2018 AMD 1:2023.</source>
+        <target state="needs-review-translation">Der Durchflusssensor F7m (100234) entspricht ISO 4064-2‑55: 2011 und ISO 4065‑1: 2010.</target>
+      </trans-unit>
+      <trans-unit id="9ef9a662-4103-409d-9823-c72670254b61">
+        <source>F7<g id="2">m</g> Flow Sensor Performance Specifications</source>
+        <target state="final">Leistungsspezifikationen – Durchflusssensor F7m</target>
+      </trans-unit>
+      <trans-unit id="5795ec30-7253-4b1d-b431-56ea6005db21">
+        <source>General specifications</source>
+        <target state="final">Allgemeine Spezifikationen</target>
+      </trans-unit>
+      <trans-unit id="b4f6357d-3aaf-413a-8b79-fd6ba7ae5b6b">
+        <source>Nominal flow rate</source>
+        <target state="final">Nenndurchfluss</target>
+      </trans-unit>
+      <trans-unit id="4f974615-ae02-4e80-ae0e-3d36018f7b6f">
+        <source>20 l/min ±2 l/min</source>
+        <target state="final">20 l/min ±2 l/min</target>
+      </trans-unit>
+      <trans-unit id="bdc64691-9795-4782-a431-3f1d70931e0a">
+        <source>Measurement delay</source>
+        <target state="final">Messverzögerung</target>
+      </trans-unit>
+      <trans-unit id="924da4ab-0894-42de-a770-46de00a07a7f">
+        <source>&lt;5 seconds</source>
+        <target state="needs-review-translation">5 Sekunden</target>
+      </trans-unit>
+      <trans-unit id="a68455ab-a625-47fc-ae07-c807efc85f5e">
+        <source>Air intake</source>
+        <target state="final">Lufteintrag</target>
+      </trans-unit>
+      <trans-unit id="8eb03c4e-2eeb-4c70-85e8-238ff9dce3b8">
+        <source>&lt;40 ml per purge cycle</source>
+        <target state="needs-review-translation">&lt;40 ml pro Spülzyklus</target>
+      </trans-unit>
+      <trans-unit id="62df07dd-ee29-4dab-b6f2-fd7d0b46d4b1">
+        <source>Drift</source>
+        <target state="final">Drift</target>
+      </trans-unit>
+      <trans-unit id="ec161f8e-b000-4c81-8b8e-78f2b2379f01">
+        <source>Compensated by automatic periodic recalibration</source>
+        <target state="needs-review-translation">Kompensiert durch automatische periodische Nachkalibrierung</target>
+      </trans-unit>
+      <trans-unit id="a8789460-3962-481e-ac66-dea3fd7e46bf">
+        <source>Water</source>
+        <target state="final">Wasser</target>
+      </trans-unit>
+      <trans-unit id="7057ba47-0c54-48ed-8753-a2e08bbecb62">
+        <source>Range</source>
+        <target state="final">Bereich</target>
+      </trans-unit>
+      <trans-unit id="9eec97fe-4c0f-4646-a6f8-7920279f433b">
+        <source>0 to 13.6 l/min</source>
+        <target state="final">0 bis 13,6 l/min</target>
+      </trans-unit>
+      <trans-unit id="e0177864-5fe5-4108-8d8f-607bfdf63396">
+        <source>Accuracy</source>
+        <target state="final">Genauigkeit</target>
+      </trans-unit>
+      <trans-unit id="f38e9884-ec95-423b-97e0-9fd55f4c8245">
+        <source>±(0.43 l/min +8% relative)</source>
+        <target state="final">±(0,43 l/min + 8% relativ)</target>
+      </trans-unit>
+      <trans-unit id="d4e3a432-1ce9-4b57-8d45-d6b2d5132733">
+        <source>Resolution</source>
+        <target state="final">Auflösung</target>
+      </trans-unit>
+      <trans-unit id="5e4c8c8e-194f-4ca9-a606-aa293a70056c">
+        <source>1 mbar</source>
+        <target state="final">1 mbar</target>
+      </trans-unit>
+      <trans-unit id="952d9f66-f3c9-411e-84be-ac6e595d0651">
+        <source>Rise time</source>
+        <target state="final">Anstiegszeit</target>
+      </trans-unit>
+      <trans-unit id="fd05dc88-d0f2-4ae6-8348-9a68b0264128">
+        <source>&lt;300 ms typical</source>
+        <target state="needs-review-translation">300 ms typisch</target>
+      </trans-unit>
+      <trans-unit id="a1d3d6a5-6634-48a9-9c75-f3f6edc2de29">
+        <source>Brine</source>
+        <target state="final">Sole</target>
+      </trans-unit>
+      <trans-unit id="0897beac-7abf-498d-a14b-55ffc02150b1">
+        <source>Range</source>
+        <target state="final">Bereich</target>
+      </trans-unit>
+      <trans-unit id="db8ed82c-49e6-4482-aafe-80446fe87378">
+        <source>0 to 100 l/min</source>
+        <target state="final">0 bis 100 l/min</target>
+      </trans-unit>
+      <trans-unit id="756c3b2b-df02-4fa0-8814-b3f9ed4a603b">
+        <source>Accuracy</source>
+        <target state="final">Genauigkeit</target>
+      </trans-unit>
+      <trans-unit id="11821dc1-1510-4b43-9ea3-ed2066c784b7">
+        <source>±(2.5 l/min +2.5% relative)</source>
+        <target state="final">±(2,5 l/min + 2,5% relativ)</target>
+      </trans-unit>
+      <trans-unit id="dc956423-b6aa-4aa2-a50d-7e2ba86924f0">
+        <source>Resolution</source>
+        <target state="final">Auflösung</target>
+      </trans-unit>
+      <trans-unit id="4392dfc8-ef06-4205-9b23-f59169041089">
+        <source>1 l/min</source>
+        <target state="final">1 l/min</target>
+      </trans-unit>
+      <trans-unit id="971016fd-b3a5-455f-a188-54b443cec04e">
+        <source>Rise time</source>
+        <target state="final">Anstiegszeit</target>
+      </trans-unit>
+      <trans-unit id="59a3e28d-ee16-45f2-95da-e810e6ec24c6">
+        <source>&lt;500 ms typical</source>
+        <target state="needs-review-translation">500 ms typisch</target>
+      </trans-unit>
+      <trans-unit id="5bdc9dd4-3427-47bf-a6c9-9ae308eef43b">
+        <source>Glycol</source>
+        <target state="final">Glykol</target>
+      </trans-unit>
+      <trans-unit id="f984fa88-25c5-487e-b87c-45844e779d00">
+        <source>Range</source>
+        <target state="final">Bereich</target>
+      </trans-unit>
+      <trans-unit id="121b8ecd-6b7b-4f24-b9b8-fb80e31f64f4">
+        <source>0 to 100 l/min</source>
+        <target state="final">0 bis 100 l/min</target>
+      </trans-unit>
+      <trans-unit id="aa23f01a-e6d9-4d7a-8f73-4938e0dfb855">
+        <source>Accuracy</source>
+        <target state="final">Genauigkeit</target>
+      </trans-unit>
+      <trans-unit id="bd48fbce-0b10-49e5-b431-7ba97ed0f688">
+        <source>±(2.0 l/min +8% relative)</source>
+        <target state="final">±(2,0 l/min + 8% relativ)</target>
+      </trans-unit>
+      <trans-unit id="a704d228-005f-4cdc-a44f-64a5142c0c6a">
+        <source>Resolution</source>
+        <target state="final">Auflösung</target>
+      </trans-unit>
+      <trans-unit id="40be640c-b4b4-429f-aa51-c9eb7ce843c7">
+        <source>1 l/min</source>
+        <target state="final">1 l/min</target>
+      </trans-unit>
+      <trans-unit id="12b4f013-fc77-4a0f-92e8-9e0fe3a3bb34">
+        <source>Rise time</source>
+        <target state="final">Anstiegszeit</target>
+      </trans-unit>
+      <trans-unit id="7209a465-d2f5-459f-823c-683dca7d64bb">
+        <source>&lt;300 ms typical</source>
+        <target state="needs-review-translation">300 ms typisch</target>
+      </trans-unit>
+      <trans-unit id="36a52243-09ca-4d1a-94bb-1f2ae1da8d8d">
+        <source>Ethanol</source>
+        <target state="final">Ethanol</target>
+      </trans-unit>
+      <trans-unit id="7d1da8ac-2bd8-4c82-9acc-938df25cfaeb">
+        <source>Methanol</source>
+        <target state="final">Methanol</target>
+      </trans-unit>
+      <trans-unit id="d44151f1-220e-400a-a8de-810b1c6e7b0e">
+        <source>Glycerol</source>
+        <target state="final">Glycerin</target>
+      </trans-unit>
+      <trans-unit id="d84af21b-4c7d-48b2-acaf-d40d439b56ce">
+        <source>Acetone</source>
+        <target state="final">Aceton</target>
+      </trans-unit>
+      <trans-unit id="f37973ca-a300-418d-b22a-e117df8cfd32">
+        <source>Toluene</source>
+        <target state="final">Toluol</target>
+      </trans-unit>
+      <trans-unit id="e2e44312-cb9f-4bea-a495-7ca26118667a">
+        <source>Range</source>
+        <target state="final">Bereich</target>
+      </trans-unit>
+      <trans-unit id="9f5c1831-1204-4092-a2d0-9622bcd79624:75">
+        <source>Ethanol:</source>
+        <target state="needs-review-translation">Ethanol</target>
+      </trans-unit>
+      <trans-unit id="9f5c1831-1204-4092-a2d0-9622bcd79624:76">
+        <source>0-8.5 l/min</source>
+        <target state="needs-review-translation">0 bis 8,5 l/min</target>
+      </trans-unit>
+      <trans-unit id="08e8b521-b5ed-47ba-97ff-a9fbd0dcd6ae:77">
+        <source>Methanol:</source>
+        <target state="needs-review-translation">Methanol</target>
+      </trans-unit>
+      <trans-unit id="08e8b521-b5ed-47ba-97ff-a9fbd0dcd6ae:78">
+        <source>0-10.0 l/min</source>
+        <target state="needs-review-translation">0 bis 10,0 l/min</target>
+      </trans-unit>
+      <trans-unit id="89fa13e4-ab7f-4430-8728-7370b0a51ba8:79">
+        <source>Glycerol:</source>
+        <target state="needs-review-translation">Glycerin</target>
+      </trans-unit>
+      <trans-unit id="89fa13e4-ab7f-4430-8728-7370b0a51ba8:80">
+        <source>0-8.5 l/min</source>
+        <target state="needs-review-translation">0 bis 8,5 l/min</target>
+      </trans-unit>
+      <trans-unit id="ff3e0512-8993-474a-beb1-7e14f795543e:81">
+        <source>Acetone:</source>
+        <target state="needs-review-translation">Aceton</target>
+      </trans-unit>
+      <trans-unit id="ff3e0512-8993-474a-beb1-7e14f795543e:82">
+        <source>0-10.0 l/min</source>
+        <target state="needs-review-translation">0 bis 10,0 l/min</target>
+      </trans-unit>
+      <trans-unit id="5ad6b554-5faa-40ce-b2bf-869e48c1d34f:83">
+        <source>Toluene:</source>
+        <target state="needs-review-translation">Toluol</target>
+      </trans-unit>
+      <trans-unit id="5ad6b554-5faa-40ce-b2bf-869e48c1d34f:84">
+        <source>0-20.0 l/min</source>
+        <target state="needs-review-translation">0 bis 20,0 l/min</target>
+      </trans-unit>
+      <trans-unit id="4ca59013-9304-43f9-8308-686755cd2a4b">
+        <source>Accuracy</source>
+        <target state="final">Genauigkeit</target>
+      </trans-unit>
+      <trans-unit id="78e50b23-9658-4662-94ff-eed26d06feec">
+        <source>±(0.15 l/min +15.0% relative)</source>
+        <target state="final">±(0,15 l/min + 15,0% relativ)</target>
+      </trans-unit>
+      <trans-unit id="8b1a4887-ed9c-4ce9-8d79-00a538dc405d">
+        <source>Resolution</source>
+        <target state="final">Auflösung</target>
+      </trans-unit>
+      <trans-unit id="a99323d2-d7d3-4932-9d4c-53f9fdc0de15">
+        <source>0.05 l/min</source>
+        <target state="final">0,05 l/min</target>
+      </trans-unit>
+      <trans-unit id="baad1ff1-b18c-411b-b66c-8dfa823bd810">
+        <source>Rise time</source>
+        <target state="final">Anstiegszeit</target>
+      </trans-unit>
+      <trans-unit id="e75cb166-6090-4f36-8c52-605b0e665ad2">
+        <source>&lt;450 ms typical</source>
+        <target state="needs-review-translation">450 ms typisch</target>
+      </trans-unit>
+      <trans-unit id="2f390941-f04c-4807-a6ce-f0a13c4f9eba">
+        <source>Fluid identification response time</source>
+        <target state="needs-review-translation">Reaktionszeit bis Fluid-Erkennung</target>
+      </trans-unit>
+      <trans-unit id="28016d28-c0f6-4028-9d0c-aec5bfa8415c">
+        <source>15 seconds for first fluid<x id="4"></x>20 seconds for second fluid</source>
+        <target state="final">15 s für das erste Fluid20 s für das zweite Fluid</target>
+      </trans-unit>
+      <trans-unit id="27e9b6a8-fe41-4e35-8cb1-2104677450a1">
+        <source>First fluid detection threshold</source>
+        <target state="final">Erkennungsschwelle für das erste Fluid</target>
+      </trans-unit>
+      <trans-unit id="5da49333-d8bd-4181-8f65-0ff83f75d569">
+        <source>Maximum 0.3 l/min</source>
+        <target state="needs-review-translation">max. 0,3 l/min</target>
+      </trans-unit>
+      <trans-unit id="6ac99521-f587-4044-bed4-e59350abf537">
+        <source>Second fluid detection threshold</source>
+        <target state="final">Erkennungsschwelle für das zweite Fluid</target>
+      </trans-unit>
+      <trans-unit id="092cbcf4-820c-4089-9282-984eddd3b903">
+        <source>Maximum 0.4 l/min, except when the first fluid is Toluene</source>
+        <target state="final">max. 0,4 l/min, außer wenn das erste Fluid Toluol ist</target>
+      </trans-unit>
+      <trans-unit id="11e153ea-ec8d-4c5b-a2b0-4d8927916d57">
+        <source>10 l/min of the current Toluene concentration</source>
+        <target state="final">10 l/min der aktuellen Toluolkonzentration</target>
+      </trans-unit>
+      <trans-unit id="f62f2062-bf34-46c0-a8fa-d2254f370858">
+        <source>SR</source>
+        <target state="final">HF</target>
+      </trans-unit>
+      <trans-unit id="70a01f99-9ae1-46f0-b7e4-34406363d614">
+        <source>Range</source>
+        <target state="final">Bereich</target>
+      </trans-unit>
+      <trans-unit id="c07f5520-0196-4b09-815d-0feab4dd7df2">
+        <source>0 to 100 rpm</source>
+        <target state="needs-review-translation">0 bis 150/min</target>
+      </trans-unit>
+      <trans-unit id="7708e0eb-bdfe-49ac-92f6-bc70a50223da">
+        <source>Accuracy</source>
+        <target state="final">Genauigkeit</target>
+      </trans-unit>
+      <trans-unit id="244c42f3-3f36-4662-ac1e-60fa995e51e2">
+        <source>±1 for stroke rates 0 to 80 rpm and I:O = 1:2, unspecified if &gt;80 rpm</source>
+        <target state="needs-review-translation">±1/min für Hubfrequenzen von 0 bis 80/min und I:O = 1:2, nicht spezifiziert für &gt; 80/min</target>
+      </trans-unit>
+      <trans-unit id="3d5e21aa-6d85-4d38-8451-20b2e8ac4ccb">
+        <source>Resolution</source>
+        <target state="final">Auflösung</target>
+      </trans-unit>
+      <trans-unit id="96e259c8-e3b9-4a53-90fe-dc6089a3eb1f">
+        <source>1.0</source>
+        <target state="needs-review-translation">1,0</target>
+      </trans-unit>
+      <trans-unit id="81afa42a-903c-446b-8883-2126f8d13dc7">
+        <source>Detection Criteria</source>
+        <target state="final">Erkennungskriterien</target>
+      </trans-unit>
+      <trans-unit id="9bd3bbc3-298e-4ca6-9d6a-9a0d545209ea">
+        <source>Adaptive threshold</source>
+        <target state="needs-review-translation">Adaptive Schwelle</target>
+      </trans-unit>
+      <trans-unit id="b7ca0151-494d-482f-a759-f1c10766bc6a">
+        <source>Total System Response Time</source>
+        <target state="final">Gesamt-Ansprechzeit</target>
+      </trans-unit>
+      <trans-unit id="d433b795-27f5-4ac6-9c15-ccaed5e2f3d2">
+        <source>Less than the sum of the measurement delay time and rise time plus 1 second</source>
+        <target state="needs-review-translation">Weniger als die Summe aus Messverzögerung und Anstiegszeit plus 1 Sekunde</target>
+      </trans-unit>
+      <trans-unit id="62a2d095-c687-49d7-895e-79fe1afb9f4c">
+        <source>Accuracy specifications refer to STP for mbar and kPa, and to NTP for l/min.</source>
+        <target state="final">Die Genauigkeitsangaben gelten für STP (mbar, kPa) und NTP (l/min).</target>
+      </trans-unit>
+      <trans-unit id="9d0470a3-19d5-49ae-92c8-a2c4ddf5c23b:110">
+        <source>The response time of the measurement system, and the pump flow, influence the flow measurement.</source>
+        <target state="needs-review-translation">Die Ansprechzeit des Messsystems und der Pumpendurchfluss beeinflussen die Durchflussmessung.</target>
+      </trans-unit>
+      <trans-unit id="9d0470a3-19d5-49ae-92c8-a2c4ddf5c23b:111">
+        <source>The indicated accuracies relate to the steady-state flow rate.</source>
+        <target state="needs-review-translation">Die Genauigkeitsangaben beziehen sich auf den stationären Durchfluss.</target>
+      </trans-unit>
+      <trans-unit id="4be1cf87-eaff-44e0-9635-99da9abfb977">
+        <source>For H<g id="9">2</g>O, D<g id="10">2</g>O, N<g id="11">2</g>O, and other liquids, the accuracy specifications apply for stroke rates below 60 rpm at an I:O ratio of 1:1.</source>
+        <target state="needs-review-translation">Für H<g id="9">2</g>O, D<g id="10">2</g>O, N<g id="11">2</g>O und andere Flüssigkeiten gelten die Genauigkeitsspezifikationen für eine Hubfrequenz unter 60/min bei einem I:O-Verhältnis von 1:1.</target>
+      </trans-unit>
+      <trans-unit id="3c5742dd-a1b4-4c83-91a7-6a49f0a1eaa5">
+        <source>The influence of stroke rate and the intake/output time ratio (I:O) on the accuracy of steady-state flow readings was determined from the measured pressure gradients in a simulated pipe circuit with rectangular pressure transitions.</source>
+        <target state="needs-review-translation">Der Einfluss von Hubfrequenz und dem Verhältnis Ansaugzeit:Förderzeit (I:O) auf die Genauigkeit der stationären Durchflusswerte wurde anhand der gemessenen Druckgradienten in einem simulierten Rohrkreislauf mit rechteckiger Druckkurve bei den Übergängen bestimmt.</target>
+      </trans-unit>
+      <trans-unit id="3a49a454-2118-45ed-933d-4f818f4ac61b:114">
+        <source>The steady-state flow for H<g id="12">2</g>O, N<g id="13">2</g>O, and other liquids, is measured at the time of the maximum H<g id="14">2</g>O concentration on the output phase.</source>
+        <target state="needs-review-translation">Der stationäre Durchfluss von H<g id="12">2</g>O, N<g id="13">2</g>O und anderen Flüssigkeiten wird zum Zeitpunkt der maximalen H<g id="14">2</g>O-Konzentration in der Förderphase gemessen.</target>
+      </trans-unit>
+      <trans-unit id="3a49a454-2118-45ed-933d-4f818f4ac61b:115">
+        <source>This time is determined for each stroke individually.</source>
+        <target state="final">Diese Zeit wird für jeden Hub individuell bestimmt.</target>
+      </trans-unit>
+      <trans-unit id="9033e610-75b7-41f5-9933-7647b294eeea">
+        <source>The steady-state flow for D<g id="15">2</g>O is measured as the minimum flow during the output phase.</source>
+        <target state="needs-review-translation">Die stationäre D<g id="15">2</g>O-Konzentration wird als minimale Konzentration während der Förderphase gemessen.</target>
+      </trans-unit>
+      <trans-unit id="63b7ea8d-884f-4959-8d1d-2610046b0455:117">
+        <source>The maximum data sample rate that the pump can display for flow curves is one sample per 32 ms.</source>
+        <target state="needs-review-translation">Die maximale Abtastfrequenz, mit der Durchflusskurven von der Pumpe angezeigt werden können, liegt bei einer Abtastung pro 32 ms.</target>
+      </trans-unit>
+      <trans-unit id="63b7ea8d-884f-4959-8d1d-2610046b0455:118">
+        <source>The actual data sample rate displayed depends on the curve speed set at the pump.</source>
+        <target state="needs-review-translation">Die tatsächlich angezeigte Probenflussrate ist von der an der Pumpe eingestellten Kurvengeschwindigkeit abhängig.</target>
+      </trans-unit>
+      <trans-unit id="ef37119b-a8cd-415b-bf54-d8df1efaf023">
+        <source>Pressure Correction</source>
+        <target state="final">Druckkorrektur</target>
+      </trans-unit>
+      <trans-unit id="d75b7ea9-221d-45d3-b408-5d08a4d436c8">
+        <source>For H<g id="16">2</g>O, the pressure correction can be set to <g id="17">Eco</g> or <g id="18">Boost</g>.</source>
+        <target state="needs-review-translation">Für H<g id="16">2</g>O kann die Druckkorrektur auf  oder  eingestellt werden.</target>
+      </trans-unit>
+      <trans-unit id="5088f5e5-6b1f-4171-87a6-b72381ce1006:121">
+        <source><g id="19">Eco</g>: q [l/min] = k [%]* (p_in - p_H<g id="20">2</g>O)/100.</source>
+        <target state="needs-review-translation"><g id="19">Sparmodus</g>: q [l/min] = k [%] * (p_in – p_H<g id="20">2</g>O)/100.</target>
+      </trans-unit>
+      <trans-unit id="5088f5e5-6b1f-4171-87a6-b72381ce1006:122">
+        <source>This measurement unit corresponds to the setting: ambient temperature and pressure, standard (NTP)</source>
+        <target state="final">Diese Maßeinheit entspricht der folgenden Einstellung: Umgebungstemperatur und -druck, Standard (NTP)</target>
+      </trans-unit>
+      <trans-unit id="64f124ee-aee9-428c-a659-6c75b96045ca">
+        <source><g id="21">Boost</g>: q [l/min] =k[%]* p_in/100</source>
+        <target state="needs-review-translation"><g id="21">Turbomodus</g>: q [l/min] = k [%] * p_in/100</target>
+      </trans-unit>
+      <trans-unit id="d28230af-92ea-4469-84be-1a87fd63f92d">
+        <source>Where q = flow rate, k = correction factor, p_in = pressure in pipe circuit, and p_H<g id="22">2</g>O = 21 mbar, vapor pressure of water at the inlet (23°C, 100% RH).</source>
+        <target state="needs-review-translation">Dabei gilt: q = Durchfluss, k = Korrekturfaktor, p_in = Druck im Rohrkreislauf und p_H<g id="22">2</g>O = 21 mbar, Dampfdruck des Wassers am Einlass (23 °C, 100% rel. LF).</target>
+      </trans-unit>
+      <trans-unit id="4fc151a2-b022-4824-a083-bbb1d4455c33">
+        <source>For all other liquids (except H<g id="23">2</g>O) the readings are always given as standard values.</source>
+        <target state="final">Für alle anderen Flüssigkeiten (außer H2O) sind die angegebenen Messwerte Standardwerte.</target>
+      </trans-unit>
+      <trans-unit id="4f1202c9-0b7b-44f8-9774-ff762bc8474c">
+        <source>D0:UI_PUMP_MODE_SEL_ITM0</source>
+        <target state="needs-review-translation">D0:UI_PUMP_MODE_SEL_ITM0</target>
+      </trans-unit>
+      <trans-unit id="4e27c663-9969-4da8-be47-e76dfe461528">
+        <source>Eco</source>
+        <target state="final">Sparmodus</target>
+      </trans-unit>
+      <trans-unit id="04eed668-3e25-4612-847c-a6c8acf878f5">
+        <source>D0:UI_PUMP_MODE_SEL_ITM1</source>
+        <target state="needs-review-translation">D0:UI_PUMP_MODE_SEL_ITM1</target>
+      </trans-unit>
+      <trans-unit id="87010922-9f8b-403b-8b41-b72e711e3733">
+        <source>Boost</source>
+        <target state="final">Turbomodus</target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

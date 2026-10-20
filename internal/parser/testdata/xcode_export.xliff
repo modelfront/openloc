@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.2" xsi:schemaLocation="urn:oasis:names:tc:xliff:document:1.2 http://docs.oasis-open.org/xliff/v1.2/os/xliff-core-1.2-strict.xsd">
+  <file original="Example/en.lproj/Localizable.strings" source-language="en" target-language="de" datatype="plaintext">
+    <header>
+      <tool tool-id="com.apple.dt.xcode" tool-name="Xcode" tool-version="16.0" build-num="16A242d"/>
+    </header>
+    <body>
+      <trans-unit id="Terms &amp; Conditions" xml:space="preserve">
+        <source>Terms &amp; Conditions</source>
+        <note>Settings row title</note>
+      </trans-unit>
+      <trans-unit id="Title" xml:space="preserve">
+        <source>Welcome</source>
+        <note>Home screen title</note>
+      </trans-unit>
+      <trans-unit id="Say &quot;Hi&quot;" xml:space="preserve">
+        <source>Say "Hi"</source>
+        <note/>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="Example/en.lproj/InfoPlist.strings" source-language="en" target-language="de" datatype="plaintext">
+    <header>
+      <tool tool-id="com.apple.dt.xcode" tool-name="Xcode" tool-version="16.0" build-num="16A242d"/>
+    </header>
+    <body>
+      <trans-unit id="Title" xml:space="preserve">
+        <source>Example App</source>
+        <note>Bundle display name</note>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

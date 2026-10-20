@@ -1,0 +1,38 @@
+{
+  "name": "openloc",
+  "version": "0.1.0",
+  "description": "Translation management: projects, jobs, translation memory, terminology, QA and analytics from ChatGPT or Codex.",
+  "author": {
+    "name": "ModelFront",
+    "email": "support@modelfront.com",
+    "url": "https://modelfront.com"
+  },
+  "homepage": "https://app.openloc.com",
+  "keywords": ["translation", "localization", "tms", "translation-memory", "terminology"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OpenLoc",
+    "shortDescription": "Your translation projects, TMs, terminology and QA — in chat",
+    "longDescription": "OpenLoc is ModelFront's translation management system. Connect it to list and create projects, track job deadlines, search translation memories, manage terminology, read QA reports, and chart operational metrics like MT-engine usage or words processed per linguist — all with your organization's own data, scoped to what your account can see. Read-only or read-and-write access is chosen at connect time.",
+    "developerName": "ModelFront",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://modelfront.com",
+    "privacyPolicyURL": "https://modelfront.com/privacy",
+    "termsOfServiceURL": "https://modelfront.com/terms",
+    "defaultPrompt": [
+      "Use OpenLoc to list my overdue translation jobs.",
+      "Use OpenLoc to chart MT engine usage for German over the last 2 months.",
+      "Use OpenLoc to create a project for the new product launch, English into German and French."
+    ],
+    "brandColor": "#4F46E5",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-1.png",
+      "./assets/screenshot-2.png",
+      "./assets/screenshot-3.png"
+    ]
+  }
+}

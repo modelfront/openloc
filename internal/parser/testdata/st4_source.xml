@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE tms SYSTEM "Tms.dtd"[]>
+<tms name="T.0 Acme AF7 Pump Addendum" source="en-US" target="de-DE" source-culture="en-US" target-culture="de-DE" user="test@test.com" date="08/13/2026 14:59:15" version="ST4.ClientBase.TMS, Version=14.0.3.0, Culture=neutral, PublicKeyToken=201f642519e2a688" export-version="2" test="false" guid="3f2a9c10-5b7e-4d21-9a8e-1c0d4e6f7a21" commit-date="2026-08-13T14:59:21Z" commit-version="10000001" file-hash="0F1E2D3C4B5A69788796A5B4C3D2E1F0">
+<!--TMS Settings
+Test Export: false
+
+Advanced Mode: 
+Target File: C:\Export\de–DE\T_0_Acme_AF7_Pump_Addendum_en–US_to_de–DE.xml
+Filter: All
+Source Aspect: en-US [en-US] (100001)
+Target Aspect: de-DE [de-DE] (100002)
+Context Node(s): 100000000001 
+Variant Filter: 
+Skip Forbidden Nodes: true
+Resource Treatment: both
+Graphic Selection: trans.Text
+Export Original Graphic: false
+Export Context: false
+Context in Target Language if Available: false
+Export Fragment Titles: false
+Export Resource Titles: false
+Export DocumentStructure Titles: true
+Export Group Titles: false
+Recursive: true
+Index/Glossary Sorting: false
+Remove Page Breaks: true
+COTI Export: false
+-->
+<tmsnode id="100000000001" xml:space="preserve"><title>T.0 Acme AF7 Pump Addendum</title></tmsnode><tmsnode id="100000000002" xml:space="preserve"><title>ManualType</title><content>
+<p>Addendum to the Instructions for Use</p></content></tmsnode><tmsnode id="100000000003" xml:space="preserve"><title>Version</title><content>
+<p>Revision T.0</p></content></tmsnode><tmsnode id="100000000004" xml:space="preserve"><title>PublishDate</title><content>
+<p>2026-03</p></content></tmsnode><tmsnode id="100000000005" xml:space="preserve"><title>CE</title><content>
+<p>1234</p></content></tmsnode><tmsnode id="100000000006" xml:space="preserve"><title>Published/PrintedIn</title><content> 
+<p>Springfield 2026-09</p> 
+<p>2</p></content></tmsnode><tmsnode id="100000000007" xml:space="preserve"><title>Barcodetype</title><content>
+<p>1</p> </content></tmsnode><tmsnode id="100000000008" xml:space="preserve"><title>SideBar</title><content> 
+<p>2</p></content></tmsnode><tmsnode id="100000000009" xml:space="preserve"><title>BarcodePosition</title><content> 
+<p>2</p></content></tmsnode><tmsnode id="100000000010" xml:space="preserve"><title>BackCover_PartNo</title><content> 
+<p>3</p></content></tmsnode><tmsnode id="100000000011" xml:space="preserve"><title>ReferenceNumber / PartNo</title><content>
+<p>100000123456</p></content></tmsnode><tmsnode id="100000000012" xml:space="preserve"><title>Addendum to the Instructions for Use</title><content>
+<p>This addendum provides additional information for the Water Pump Revision T.xx Instructions for Use for the following pumps:</p> 
+<ul type="disc"><li><p>AquaFlow AF400-550</p></li><li><p>AquaFlow AF750/AF850</p></li><li><p>Acme Water Pump 6000 Series (WP 6100, WP 6300, WP 6500)</p></li> 
+</ul>
+<p>Please store this addendum with your pump documentation.</p></content></tmsnode><tmsnode id="100000000013" xml:space="preserve"><title>Revised Information: F7m Flow Sensor Specifications</title><content> 
+<p>The F7<sup>m</sup> Flow Sensor (100234) complies with ISO 4064-2-55:2018 AMD 1:2023.</p> 
+<table-container type="text-width" frame="framed" keep-together="no"><table type="fixed" hsdl-percent="33.3 33.3 33.3"><thead><tr><th colspan="3"><p>F7<sup>m</sup> Flow Sensor Performance Specifications</p> </th> </tr> </thead> 
+<tbody><tr><td rowspan="4"><p><b>General specifications</b> </p> </td> 
+<td><p>Nominal flow rate</p> </td> 
+<td><p>20 l/min ±2 l/min</p> </td> </tr> 
+<tr><td><p>Measurement delay</p> </td> 
+<td><p>&lt;5 seconds</p> </td> </tr> 
+<tr><td><p>Air intake</p> </td> 
+<td><p>&lt;40 ml per purge cycle</p> </td> </tr> 
+<tr><td><p>Drift</p></td><td><p>Compensated by automatic periodic recalibration</p></td></tr> 
+<tr><td rowspan="4"><p><b>Water</b> </p> </td> 
+<td><p>Range</p> </td> 
+<td><p>0 to 13.6 l/min</p> </td> </tr> 
+<tr><td><p>Accuracy</p> </td> 
+<td><p>±(0.43 l/min +8% relative)</p> </td> </tr> 
+<tr><td><p>Resolution</p> </td> 
+<td><p>1 mbar</p> </td> </tr> 
+<tr><td><p>Rise time</p> </td> 
+<td><p>&lt;300 ms typical</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>Brine</b> </p> </td> 
+<td><p>Range</p> </td> 
+<td><p>0 to 100 l/min</p> </td> </tr> 
+<tr><td><p>Accuracy</p> </td> 
+<td><p>±(2.5 l/min +2.5% relative)</p> </td> </tr> 
+<tr><td><p>Resolution</p> </td> 
+<td><p>1 l/min </p> </td> </tr> 
+<tr><td><p>Rise time</p> </td> 
+<td><p>&lt;500 ms typical</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>Glycol</b> </p> </td> 
+<td><p>Range</p> </td> 
+<td><p>0 to 100 l/min</p> </td> </tr> 
+<tr><td><p>Accuracy</p> </td> 
+<td><p>±(2.0 l/min +8% relative)</p> </td> </tr> 
+<tr><td><p>Resolution</p> </td> 
+<td><p>1 l/min </p> </td> </tr> 
+<tr><td><p>Rise time</p> </td> 
+<td><p>&lt;300 ms typical</p> </td> </tr> 
+<tr><td rowspan="7"><p><b>Ethanol</b> </p> 
+<p><b>Methanol</b> </p> 
+<p><b>Glycerol</b> </p> 
+<p><b>Acetone</b> </p> 
+<p><b>Toluene</b> </p> </td> 
+<td><p>Range</p> </td> 
+<td><p>Ethanol: 0-8.5 l/min</p> 
+<p>Methanol: 0-10.0 l/min</p> 
+<p>Glycerol: 0-8.5 l/min</p> 
+<p>Acetone: 0-10.0 l/min</p> 
+<p>Toluene: 0-20.0 l/min</p> </td> </tr> 
+<tr><td><p>Accuracy</p> </td> 
+<td><p>±(0.15 l/min +15.0% relative)</p> </td> </tr> 
+<tr><td><p>Resolution</p> </td> 
+<td><p>0.05 l/min</p> </td> </tr> 
+<tr><td><p>Rise time</p> </td> 
+<td><p>&lt;450 ms typical</p> </td> </tr> 
+<tr><td><p>Fluid identification response time</p> </td> 
+<td><p>15 seconds for first fluid<br />20 seconds for second fluid</p> </td> </tr> 
+<tr><td><p>First fluid detection threshold</p> </td> 
+<td><p>Maximum 0.3 l/min</p> </td> </tr> 
+<tr><td><p>Second fluid detection threshold</p> </td> 
+<td><p>Maximum 0.4 l/min, except when the first fluid is Toluene<br /><br /></p> 
+<p>10 l/min of the current Toluene concentration</p> </td> </tr> 
+<tr><td rowspan="4"><p><b>SR</b> </p> </td> 
+<td><p>Range</p> </td> 
+<td><p>0 to 100 rpm</p> </td> </tr> 
+<tr><td><p>Accuracy</p> </td> 
+<td><p>±1 for stroke rates 0 to 80 rpm and I:O = 1:2, unspecified if &gt;80 rpm</p> </td> </tr> 
+<tr><td><p>Resolution</p> </td> 
+<td><p>1.0 </p> </td> </tr> 
+<tr><td><p>Detection Criteria</p> </td> 
+<td><p>Adaptive threshold</p> </td> </tr> 
+<tr><td><p><b>Total System Response Time</b> </p> </td> 
+<td colspan="2"><p>Less than the sum of the measurement delay time and rise time plus 1 second</p> </td> </tr> </tbody> </table> </table-container> 
+ 
+<p>Accuracy specifications refer to STP for mbar and kPa, and to NTP for l/min.</p> 
+<p>The response time of the measurement system, and the pump flow, influence the flow measurement. The indicated accuracies relate to the steady-state flow rate.</p> 
+<p>For H<sub>2</sub>O, D<sub>2</sub>O, N<sub>2</sub>O, and other liquids, the accuracy specifications apply for stroke rates below 60 rpm at an I:O ratio of 1:1.</p> 
+<p>The influence of stroke rate and the intake/output time ratio (I:O) on the accuracy of steady-state flow readings was determined from the measured pressure gradients in a simulated pipe circuit with rectangular pressure transitions.</p> 
+<p>The steady-state flow for H<sub>2</sub>O, N<sub>2</sub>O, and other liquids, is measured at the time of the maximum H<sub>2</sub>O concentration on the output phase. This time is determined for each stroke individually.</p> 
+<p>The steady-state flow for D<sub>2</sub>O is measured as the minimum flow during the output phase.</p> 
+<p>The maximum data sample rate that the pump can display for flow curves is one sample per 32 ms. The actual data sample rate displayed depends on the curve speed set at the pump.</p> 
+<subheading>Pressure Correction</subheading> 
+<p>For H<sub>2</sub>O, the pressure correction can be set to <meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000001">Eco</meta-ref> or <meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000002">Boost</meta-ref>.</p> 
+<p><meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000001">Eco</meta-ref>: q [l/min] = k [%]* (p_in - p_H<sub>2</sub>O)/100. This measurement unit corresponds to the setting: ambient temperature and pressure, standard (NTP)</p> 
+<p><meta-ref type="static" name="custom.acme.device.ui.title" linkid="datanode_1001_200000000002">Boost</meta-ref>: q [l/min] =k[%]* p_in/100</p> 
+<p>Where q = flow rate, k = correction factor, p_in = pressure in pipe circuit, and p_H<sub>2</sub>O = 21 mbar, vapor pressure of water at the inlet (23°C, 100% RH).</p> 
+<p>For all other liquids (except H<sub>2</sub>O) the readings are always given as standard values.</p> </content></tmsnode><tmsnode id="200000000001" xml:space="preserve"><title>D0:UI_PUMP_MODE_SEL_ITM0</title><metalist><meta name="custom.acme.device.ui.title" xml:space="preserve">Eco</meta></metalist></tmsnode><tmsnode id="200000000002" xml:space="preserve"><title>D0:UI_PUMP_MODE_SEL_ITM1</title><metalist><meta name="custom.acme.device.ui.title" xml:space="preserve">Boost</meta></metalist></tmsnode></tms>

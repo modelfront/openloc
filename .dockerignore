@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+web/dist/
+web/node_modules/
+
+# Dev tooling
+.claude/
+.env
+.env.*
+e2e/
+docs/
+
+# Python sidecar test artifacts (code needed for docparser build)
+sidecars/parser/tests/
+sidecars/parser/__pycache__/
+sidecars/parser/.pytest_cache/
+sidecars/parser/.venv/
+
+# Test fixtures / temp
+*.test
+*.spec.ts
+__pycache__/
+.pytest_cache/
+test-results/

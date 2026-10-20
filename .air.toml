@@ -1,0 +1,25 @@
+# air - live reload for Go apps
+# https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/server ./cmd/server"
+  bin = "./tmp/server"
+  delay = 500
+  # e2e + test-results: air watches every directory under root, whatever its
+  # files, and Playwright creates a directory per failed test, so watching them
+  # uses up the system's file descriptors.
+  exclude_dir = ["tmp", "bin", "web", "node_modules", "vendor", "e2e", "test-results", "docs"]
+  exclude_regex = ["_test\\.go$"]
+  # md + png: the help pages under internal/productdocs/content are go:embed'ed,
+  # so editing one must rebuild the binary for the change to show at /docs.
+  include_ext = ["go", "sql", "yaml", "md", "png", "svg"]
+  kill_delay = 500
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

@@ -1,0 +1,90 @@
+packages:
+  - path: "openloc/internal/database/sqlcgen"
+    output_path: "web/src/types/generated.ts"
+    type_mappings:
+      "pgtype.Timestamptz": "string"
+      "pgtype.Text": "string | null"
+      "pgtype.Int8": "number | null"
+      "pgtype.Float8": "number | null"
+      "pgtype.Bool": "boolean | null"
+      "pgtype.UUID": "string | null"
+      "pgtype.Numeric": "number | null"
+      # files.xlsx_layout; web/src/api narrows it to XLSXLayout.
+      "json.RawMessage": "unknown"
+    # A column sqlc cannot type (a CASE or COALESCE over mixed types) is a Go
+    # interface{}; on the wire it is whatever JSON the driver produced.
+    fallback_type: "unknown"
+    # Skip Null* wrapper types and Scan/Value methods — they're Go-only plumbing.
+    # db.go and querier.go hold only the Go database interfaces.
+    exclude_files:
+      - "copyfrom.go"
+      - "db.go"
+      - "querier.go"
+    include_types:
+      # Core domain models
+      - "AiPrompt"
+      - "AiEngine"
+      - "AiRouter"
+      - "AiRouterRule"
+      - "SegmentPrompt"
+      - "Customer"
+      - "File"
+      - "Job"
+      - "Language"
+      - "MtEngine"
+      - "MtRouter"
+      - "MtRouterRule"
+      - "Project"
+      - "Segment"
+      - "Template"
+      - "TemplateMtAssignment"
+      - "TemplateTmAssignment"
+      - "TmCollection"
+      - "TmProfile"
+      - "Translation"
+      - "TranslationMemory"
+      - "Tenant"
+      - "User"
+      - "UserLanguagePair"
+      - "Invite"
+      # Workflow libraries
+      - "StepDefinition"
+      - "Workflow"
+      - "WorkflowDefinitionStep"
+      - "WorkflowStep"
+      - "JobStepAssignment"
+      # Enums
+      - "FileFormat"
+      - "JobStatus"
+      - "PipelineStatus"
+      - "PredictOutcome"
+      - "ProjectStatus"
+      - "TranslationOrigin"
+      - "TranslationStatus"
+  # Dev-only LLM/extension debug feed (GET /api/debug/llm/calls → /debug/llm page).
+  # Only llmdebug.go (Entry + Kind consts) is exported — the ring, store,
+  # reader, pruner, handler and ctx plumbing are Go-only.
+  #
+  # include_files, NOT exclude_files: with an exclusion list every new file in
+  # the package is exported by default, and that is exactly what happened when
+  # store.go/prune.go/reader.go were added — 100 lines of
+  # server internals landed in the frontend bundle. An allowlist fails closed.
+  - path: "openloc/internal/llmdebug"
+    output_path: "web/src/types/llmdebug.ts"
+    type_mappings:
+      "time.Time": "string"
+    include_files:
+      - "llmdebug.go"
+  # In-app user documentation (GET /api/docs → /docs page). Only the wire
+  # shapes in types.go are exported; the index, parser and handler stay Go-only.
+  - path: "openloc/internal/productdocs"
+    output_path: "web/src/types/productdocs.ts"
+    include_files:
+      - "types.go"
+  # QA result DTO shared by the per-translation and per-job QA endpoints.
+  # Allowlist a single file (see llmdebug note above) so checker internals
+  # never leak into the bundle.
+  - path: "openloc/internal/qa"
+    output_path: "web/src/types/qa.ts"
+    include_files:
+      - "dto.go"
