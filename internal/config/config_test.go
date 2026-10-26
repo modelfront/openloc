@@ -227,6 +227,17 @@ func TestLoad_TrustedProxyHops(t *testing.T) {
 	}
 }
 
+func TestLoad_MaxUploadMBDefaultsAndValidates(t *testing.T) {
+	if got := Load().MaxUploadMB; got != 200 {
+		t.Errorf("MAX_UPLOAD_MB unset: got %d, want 200", got)
+	}
+	t.Setenv("ENV", "development")
+	t.Setenv("MAX_UPLOAD_MB", "0")
+	if err := Load().Validate(); err == nil || !strings.Contains(err.Error(), "MAX_UPLOAD_MB") {
+		t.Errorf("Validate with MAX_UPLOAD_MB=0 = %v, want a MAX_UPLOAD_MB error", err)
+	}
+}
+
 // Outside development the JWT secret must be a real one: not the built-in
 // default, not the env.example placeholder, and at least 32 bytes.
 func TestValidate_RejectsWeakJWTSecretOutsideDevelopment(t *testing.T) {

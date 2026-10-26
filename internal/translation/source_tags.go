@@ -5,7 +5,8 @@ import (
 	"fmt"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/common"
 	"openloc/internal/ptr"
 	"openloc/internal/qa"
 )
@@ -21,15 +22,15 @@ const SourceTagsCheckType = "tag_not_in_source"
 // as the export reads it, so the check refuses exactly what the export writes
 // as text. A file whose strings are plain text has no tags to check.
 func foreignTagIssues(file db.File, sourceText string, sourceRich *string, text string, rich *string) []qa.Issue {
-	if !file.InlineHtml || !parser.InlineHTMLFormat(string(file.Format)) {
+	if !file.InlineHtml || !parsers.InlineHTMLFormat(string(file.Format)) {
 		return nil
 	}
 	source := sourceText
 	if r := ptr.Deref(sourceRich); r != "" {
-		source = parser.XLIFFInlineToHTML(r)
+		source = common.XLIFFInlineToHTML(r)
 	}
 	var issues []qa.Issue
-	for _, tag := range parser.ForeignTags(parser.TextFormatTranslation(text, ptr.Deref(rich), true), source) {
+	for _, tag := range common.ForeignTags(parsers.TextFormatTranslation(text, ptr.Deref(rich), true), source) {
 		issues = append(issues, qa.Issue{
 			CheckType: SourceTagsCheckType,
 			Severity:  "error",

@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/file"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 	"openloc/internal/testutil"
 )
 
@@ -816,7 +816,7 @@ func TestIntegrationReimportXLIFF_TxAtomicity_FKViolationRollsBackAll(t *testing
 	_, err := file.ReimportXLIFF(context.Background(), pool, file.ReimportXLIFFRequest{
 		FileID:         fx.FileID,
 		TargetLanguage: "fr",
-		IncomingSegments: []parser.Segment{
+		IncomingSegments: []common.Segment{
 			{Key: "u1", Target: "Bonjour"},
 			{Key: "u2", Target: "Au revoir"},
 			{Key: "u3", Target: "Monde"},
@@ -1157,7 +1157,7 @@ func TestIntegrationReimportXLIFF_HoldTakenDuringImportSkipsTheRow(t *testing.T)
 	res, err := file.ReimportXLIFF(ctx, pool, file.ReimportXLIFFRequest{
 		FileID: fx.FileID, TargetLanguage: "fr", EditedBy: fx.AdminID,
 		ProjectID: fx.ProjectID, TenantID: fx.TenantID, FileName: "test.xliff", ActorEmail: "admin@test.com",
-		IncomingSegments: []parser.Segment{
+		IncomingSegments: []common.Segment{
 			{Key: "u1", Text: "Hello", Target: "NewValue"},
 			{Key: "u2", Text: "Goodbye", Target: "Au revoir"},
 		},

@@ -6,7 +6,7 @@ import (
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/file"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 	"openloc/internal/testutil"
 )
 
@@ -28,7 +28,7 @@ func TestIntegrationReimportXLIFF_QueuesBehindStepChange(t *testing.T) {
 	testutil.SeedWorkflow(t, q, fx.SettingsProfileID, job.ID,
 		testutil.WorkflowStepSpec{Name: "Translation", Status: "in_progress", Assignee: &fx.AdminID})
 
-	incoming := []parser.Segment{
+	incoming := []common.Segment{
 		{Key: "u1", Text: "One", Target: "Un"},
 		{Key: "u2", Text: "Two", Target: "Deux"},
 		{Key: "u3", Text: "Three", Target: "Trois"},

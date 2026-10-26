@@ -5,7 +5,7 @@ import type { FileRecord } from './projects'
  * The column layout of an Excel workbook without language codes in row 1:
  * the sheets to translate and, per sheet, the columns that hold the text.
  * Translations go back into their own cells. Mirrors
- * `internal/parser/xlsx_layout.go`.
+ * `internal/parsers/xlsx/xlsx_layout.go`.
  */
 export interface XLSXSheetLayout {
   name: string

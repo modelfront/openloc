@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 	"openloc/internal/testutil"
 )
 
@@ -128,7 +128,7 @@ func TestIntegrationUploadXLSX_TaggedTargetCellImportsAsTags(t *testing.T) {
 	cell := "Bonjour <b>monde</b>"
 	got := importedTargets(t, []string{"en", "fr", "de"},
 		[]string{"Hello <b>world</b>", cell, "Hallo"}, []string{"fr", "de"})
-	plain, rich := parser.DetectInlineTags(cell)
+	plain, rich := common.DetectInlineTags(cell)
 	if want := plain + " | " + rich + " | file_import"; rich == "" || got["fr"] != want {
 		t.Errorf("fr = %q, want %q", got["fr"], want)
 	}

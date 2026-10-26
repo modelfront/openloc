@@ -1,6 +1,6 @@
 // Helpers for choosing what to translate in an Excel workbook without
 // language codes in row 1. The backend repeats the checks
-// (internal/parser/xlsx_layout.go).
+// (internal/parsers/xlsx/xlsx_layout.go).
 
 import { ApiError, type XLSXColumnInfo, type XLSXInspection, type XLSXLayout, type XLSXSheetInfo } from '@/api'
 

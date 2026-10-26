@@ -34,7 +34,7 @@ import (
 	"openloc/internal/llmdebug"
 	"openloc/internal/logging"
 	notif "openloc/internal/notification"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 	"openloc/internal/pglisten"
 	"openloc/internal/pipeline"
 	"openloc/internal/productdocs"
@@ -132,7 +132,7 @@ func main() {
 		log.Printf("Warning: could not ensure S3 bucket: %v", err)
 	}
 
-	parser.SidecarURL = cfg.ParserSidecarURL
+	common.SidecarURL = cfg.ParserSidecarURL
 	log.Printf("Parser sidecar URL: %s", cfg.ParserSidecarURL)
 
 	// --- Async worker (asynq) ---
@@ -592,6 +592,7 @@ func main() {
 		AISecretsKey:                 cfg.AISecretsKey,
 		AICatalog:                    aiCatalog,
 		SpellcheckLTURL:              cfg.SpellcheckLTURL,
+		MaxUploadBytes:               int64(cfg.MaxUploadMB) << 20,
 		LLMDebugRing:                 llmDebugRing,
 		LLMDebugRecorder:             llmDebugRecorder,
 		LLMDebugReader:               llmDebugReader,

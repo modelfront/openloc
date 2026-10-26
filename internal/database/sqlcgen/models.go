@@ -73,6 +73,7 @@ const (
 	FileFormatXlsx         FileFormat = "xlsx"
 	FileFormatXml          FileFormat = "xml"
 	FileFormatPptx         FileFormat = "pptx"
+	FileFormatXliff2       FileFormat = "xliff2"
 )
 
 func (e *FileFormat) Scan(src interface{}) error {

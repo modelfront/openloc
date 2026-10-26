@@ -33,7 +33,7 @@ paths:
       summary: Upload a file
       description: |
         Adds a document to the project and makes one job per target language.
-        The format is detected from the file. The maximum size is 50 MB.
+        The format is detected from the file. The maximum size is 200 MB.
       tags: [Files]
       x-roles: [owner, admin, project_manager]
       requestBody:

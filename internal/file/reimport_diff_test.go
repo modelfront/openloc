@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 )
 
 // rowsFromFixtures builds DB rows for the diff function. Keeps tests legible
@@ -53,7 +53,7 @@ func TestComputeReimportDiff_HappyPath_TwoUpdates(t *testing.T) {
 		rowSpec{key: "u1", status: db.TranslationStatusNeedsReview},
 		rowSpec{key: "u2", status: db.TranslationStatusNeedsReview, activeText: "Old MT"},
 	)
-	incoming := []parser.Segment{
+	incoming := []common.Segment{
 		{Key: "u1", Target: "Hello"},
 		{Key: "u2", Target: "Bonjour"},
 	}
@@ -75,7 +75,7 @@ func TestComputeReimportDiff_HappyPath_TwoUpdates(t *testing.T) {
 
 func TestComputeReimportDiff_NoChange_DetectedFromActiveText(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusApproved, activeText: "Hello"})
-	incoming := []parser.Segment{{Key: "u1", Target: "Hello"}}
+	incoming := []common.Segment{{Key: "u1", Target: "Hello"}}
 
 	result, plan := computeReimportDiff(rows, incoming, false)
 
@@ -93,7 +93,7 @@ func TestComputeReimportDiff_NoChange_DetectedFromActiveText(t *testing.T) {
 func TestComputeReimportDiff_EmptyIncomingTargetIsNoop(t *testing.T) {
 	// R4: an empty <target/> in the upload is NOT a wipe.
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusApproved, activeText: "Existing translation"})
-	incoming := []parser.Segment{{Key: "u1", Target: ""}}
+	incoming := []common.Segment{{Key: "u1", Target: ""}}
 
 	result, plan := computeReimportDiff(rows, incoming, true) // even with force=true
 
@@ -107,7 +107,7 @@ func TestComputeReimportDiff_EmptyIncomingTargetIsNoop(t *testing.T) {
 
 func TestComputeReimportDiff_LockedAlwaysSkipped_EvenWithForce(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusNeedsReview, locked: true})
-	incoming := []parser.Segment{{Key: "u1", Target: "New"}}
+	incoming := []common.Segment{{Key: "u1", Target: "New"}}
 
 	result, plan := computeReimportDiff(rows, incoming, true)
 
@@ -124,7 +124,7 @@ func TestComputeReimportDiff_LockedAlwaysSkipped_EvenWithForce(t *testing.T) {
 
 func TestComputeReimportDiff_ApprovedSetsForceRequired(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusApproved, activeText: "Old"})
-	incoming := []parser.Segment{{Key: "u1", Target: "New"}}
+	incoming := []common.Segment{{Key: "u1", Target: "New"}}
 
 	result, plan := computeReimportDiff(rows, incoming, false)
 
@@ -144,7 +144,7 @@ func TestComputeReimportDiff_ApprovedSetsForceRequired(t *testing.T) {
 
 func TestComputeReimportDiff_ApprovedUpdatedWithForce(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusApproved, activeText: "Old"})
-	incoming := []parser.Segment{{Key: "u1", Target: "New"}}
+	incoming := []common.Segment{{Key: "u1", Target: "New"}}
 
 	result, plan := computeReimportDiff(rows, incoming, true)
 
@@ -164,7 +164,7 @@ func TestComputeReimportDiff_ApprovedUpdatedWithForce(t *testing.T) {
 
 func TestComputeReimportDiff_ExtraInUpload_Counted(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "u1", status: db.TranslationStatusNeedsReview})
-	incoming := []parser.Segment{
+	incoming := []common.Segment{
 		{Key: "u1", Target: "Hello"},
 		{Key: "u2", Target: "Goodbye"},
 		{Key: "u3", Target: "Salut"},
@@ -188,7 +188,7 @@ func TestComputeReimportDiff_MissingFromUpload_Counted(t *testing.T) {
 		rowSpec{key: "u2", status: db.TranslationStatusNeedsReview},
 		rowSpec{key: "u3", status: db.TranslationStatusNeedsReview},
 	)
-	incoming := []parser.Segment{{Key: "u1", Target: "Hello"}}
+	incoming := []common.Segment{{Key: "u1", Target: "Hello"}}
 
 	result, _ := computeReimportDiff(rows, incoming, false)
 
@@ -209,7 +209,7 @@ func TestComputeReimportDiff_RichTextChange_DetectedEvenIfPlainIdentical(t *test
 		activeText: "Hello world",
 		activeRich: `Hello <ph id="1"/>world`,
 	})
-	incoming := []parser.Segment{{
+	incoming := []common.Segment{{
 		Key:            "u1",
 		Target:         "Hello world",
 		TargetRichText: `Hello world<ph id="1"/>`,
@@ -235,7 +235,7 @@ func TestComputeReimportDiff_RichTextSame_NoChange(t *testing.T) {
 		activeText: "Hello world",
 		activeRich: `Hello <ph id="1"/>world`,
 	})
-	incoming := []parser.Segment{{
+	incoming := []common.Segment{{
 		Key:            "u1",
 		Target:         "Hello world",
 		TargetRichText: `Hello <ph id="1"/>world`,
@@ -252,7 +252,7 @@ func TestComputeReimportDiff_RichTextSame_NoChange(t *testing.T) {
 // missing and the incoming segment is extra, even with the same source text.
 func TestComputeReimportDiff_KeyMismatch_MissingAndExtra(t *testing.T) {
 	rows := rowsFromFixtures(rowSpec{key: "old-id", status: db.TranslationStatusNeedsReview})
-	incoming := []parser.Segment{{Key: "new-id", Text: "Hello", Target: "Bonjour"}}
+	incoming := []common.Segment{{Key: "new-id", Text: "Hello", Target: "Bonjour"}}
 
 	result, plan := computeReimportDiff(rows, incoming, false)
 
@@ -276,7 +276,7 @@ func TestComputeReimportDiff_RichTextEncodingOnly_NoChange(t *testing.T) {
 		activeText: "Tom & Jerry bold",
 		activeRich: `Tom & Jerry <ph id="1"><br/></ph><bpt id="2"><b></bpt>bold<ept id="2"></b></ept>`,
 	})
-	incoming := []parser.Segment{{
+	incoming := []common.Segment{{
 		Key:            "u1",
 		Target:         "Tom & Jerry bold",
 		TargetRichText: `Tom & Jerry <ph id="1">&lt;br/&gt;</ph><bpt id="2">&lt;b&gt;</bpt>bold<ept id="2">&lt;/b&gt;</ept>`,
@@ -299,7 +299,7 @@ func TestComputeReimportDiff_RichTextOpaqueContentChange_Detected(t *testing.T) 
 		activeText: "Hi",
 		activeRich: `Hi<ph id="1"><br/></ph>`,
 	})
-	incoming := []parser.Segment{{
+	incoming := []common.Segment{{
 		Key:            "u1",
 		Target:         "Hi",
 		TargetRichText: `Hi<ph id="1">&lt;hr/&gt;</ph>`,

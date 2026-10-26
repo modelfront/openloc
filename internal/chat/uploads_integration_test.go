@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -82,6 +83,17 @@ func TestIntegrationChatUploadIsOwnerScoped(t *testing.T) {
 		t.Error("an expired upload was still readable")
 	}
 
+}
+
+// The limit is the configured one, not a fixed 50 MB: a file past it is refused
+// and the message names the limit.
+func TestIntegrationChatUploadRefusesPastTheConfiguredLimit(t *testing.T) {
+	f := newChatFixture(t, nil)
+	f.handler.SetMaxUploadBytes(2 << 20)
+	rec := f.upload(t, f.ownerA, f.tenantA.ID, "big.tbx", bytes.Repeat([]byte("x"), 3<<20))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "max 2 MB") {
+		t.Fatalf("upload past the limit: %d %s, want 400 naming max 2 MB", rec.Code, rec.Body.String())
+	}
 }
 
 // A stored file whose row cannot be written is removed again: without a row

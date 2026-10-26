@@ -76,18 +76,18 @@ func (b *directBackend) files() (*file.Handler, error) {
 
 // readUpload reads an assistant upload whole, refusing one past the project
 // upload limit.
-func (b *directBackend) readUpload(ctx context.Context, uploadID string) (db.ChatUpload, []byte, error) {
+func (b *directBackend) readUpload(ctx context.Context, uploadID string, limit int64) (db.ChatUpload, []byte, error) {
 	row, body, err := b.openUpload(ctx, uploadID)
 	if err != nil {
 		return db.ChatUpload{}, nil, err
 	}
 	defer body.Close()
-	content, err := io.ReadAll(io.LimitReader(body, file.MaxUploadSize+1))
+	content, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return db.ChatUpload{}, nil, fmt.Errorf("read upload: %w", err)
 	}
-	if len(content) > file.MaxUploadSize {
-		return db.ChatUpload{}, nil, invalidf("the file is larger than the 50 MB upload limit")
+	if int64(len(content)) > limit {
+		return db.ChatUpload{}, nil, invalidf("the file is larger than the %d MB upload limit", limit>>20)
 	}
 	return row, content, nil
 }
@@ -101,7 +101,7 @@ func (b *directBackend) AttachUploadedFile(ctx context.Context, in AttachUploade
 	if err != nil {
 		return AttachedFileOut{}, err
 	}
-	upload, content, err := b.readUpload(ctx, in.UploadID)
+	upload, content, err := b.readUpload(ctx, in.UploadID, fh.MaxUploadBytes())
 	if err != nil {
 		return AttachedFileOut{}, err
 	}
@@ -130,7 +130,7 @@ func (b *directBackend) reimport(ctx context.Context, in ReimportXLIFFIn, dryRun
 	if err != nil {
 		return file.ReimportTarget{}, nil, serviceErr(err, "resolve re-import")
 	}
-	upload, content, err := b.readUpload(ctx, in.UploadID)
+	upload, content, err := b.readUpload(ctx, in.UploadID, fh.MaxUploadBytes())
 	if err != nil {
 		return file.ReimportTarget{}, nil, err
 	}

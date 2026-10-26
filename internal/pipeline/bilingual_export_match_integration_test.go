@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/xliff"
 	"openloc/internal/pipeline"
 	"openloc/internal/ptr"
 	"openloc/internal/testutil"
@@ -122,7 +122,7 @@ func TestIntegration_BilingualExport_PreTranslationMatch(t *testing.T) {
 	}
 
 	// The file still parses to the segments' own source and target.
-	segs, err := parser.XLIFF{}.Parse(data)
+	segs, err := xliff.XLIFF{}.Parse(data)
 	if err != nil {
 		t.Fatalf("parse export: %v", err)
 	}

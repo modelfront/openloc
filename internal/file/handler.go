@@ -10,7 +10,7 @@ import (
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/xlsx"
 	"openloc/internal/pipeline"
 	projectsvc "openloc/internal/project"
 	"openloc/internal/projectevents"
@@ -19,7 +19,13 @@ import (
 
 const segmentBatchSize = 500 // 500 rows * 5 cols = 2500 params (PG limit: 65535)
 
-const MaxUploadSize = 50 << 20 // 50 MB
+// DefaultMaxUploadBytes is the upload limit when none is configured. The server
+// sets the real one from MAX_UPLOAD_MB (see SetMaxUploadBytes).
+const DefaultMaxUploadBytes = 200 << 20
+
+// UploadMemThreshold is how much of a multipart upload is kept in RAM. A larger
+// file part is written to a temp file, which net/http removes after the request.
+const UploadMemThreshold = 32 << 20
 
 // TaskEnqueuer enqueues pipeline tasks for async background processing.
 type TaskEnqueuer interface {
@@ -41,13 +47,26 @@ type Handler struct {
 	aiEnqueuer       AIStepEnqueuer    // nil if async processing is not available
 	analysisEnqueuer analysis.Enqueuer // nil skips auto-analysis-on-upload
 	guard            *taskedit.Guard   // checks XLIFF re-import against the job's current task
+	maxUploadBytes   int64
 }
 
 // NewHandler takes the store as an interface so a nil *Storage never becomes a
 // non-nil BlobStore holding nil — callers pass an untyped nil for "no storage".
 func NewHandler(q db.Querier, pool *pgxpool.Pool, s BlobStore, enqueuer TaskEnqueuer) *Handler {
-	return &Handler{queries: q, pool: pool, storage: s, enqueuer: enqueuer, guard: taskedit.New(q, pool)}
+	return &Handler{queries: q, pool: pool, storage: s, enqueuer: enqueuer, guard: taskedit.New(q, pool), maxUploadBytes: DefaultMaxUploadBytes}
 }
+
+// SetMaxUploadBytes sets the most one upload request may carry. Zero keeps
+// DefaultMaxUploadBytes.
+func (h *Handler) SetMaxUploadBytes(n int64) {
+	if n > 0 {
+		h.maxUploadBytes = n
+	}
+}
+
+// MaxUploadBytes is the upload limit. The chat and MCP attach paths use the same
+// value, so a file that fits here also fits there.
+func (h *Handler) MaxUploadBytes() int64 { return h.maxUploadBytes }
 
 // SetAIStepEnqueuer wires the QE+APE predict-on-start enqueuer for the upload
 // path. Optional — nil skips the auto-predict on first-step AI.
@@ -84,9 +103,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) (IngestResult, 
 	if !ok {
 		return IngestResult{}, false
 	}
-	var layout *parser.XLSXLayout
+	var layout *xlsx.XLSXLayout
 	if raw := r.FormValue("xlsx_layout"); raw != "" {
-		l, err := parser.ParseXLSXLayout([]byte(raw))
+		l, err := xlsx.ParseXLSXLayout([]byte(raw))
 		if err != nil {
 			httputil.BadRequest(w, layoutMessage(err))
 			return IngestResult{}, false
@@ -278,8 +297,8 @@ func (h *Handler) readUpload(w http.ResponseWriter, r *http.Request) (upload, bo
 		return upload{}, false
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize)
-	if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+	if err := r.ParseMultipartForm(UploadMemThreshold); err != nil {
 		httputil.BadRequest(w, "file too large or invalid multipart form")
 		return upload{}, false
 	}

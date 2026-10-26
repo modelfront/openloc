@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
 )
 
 // A block split into sentences exports through the same path as an approved
@@ -22,7 +22,7 @@ func TestExportJoinsSentenceSegments(t *testing.T) {
 		{"html", "<p>Open <b>this</b>. Then <i>close</i> it.</p>", "<p>Abra <b>esto</b>. Then <i>close</i> it.</p>", true},
 	}
 	for _, c := range cases {
-		p, err := parser.GetParserFor(c.format, c.inlineHTML)
+		p, err := parsers.GetParserFor(c.format, c.inlineHTML)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -34,7 +34,7 @@ func TestExportJoinsSentenceSegments(t *testing.T) {
 		key, text, rich := segs[0].Key, "Abra esto.", strings.Replace(segs[0].RichText, ">this<", ">esto<", 1)
 		rich = strings.Replace(rich, "Open ", "Abra ", 1)
 		rows := []db.ListApprovedForExportRow{{SegmentKey: &key, ActiveText: &text, ActiveRichText: &rich, SourceText: segs[0].Text}}
-		ep, err := exportParser(c.format, parser.ParseOptions{InlineHTML: c.inlineHTML}, []byte(c.source), rows)
+		ep, err := exportParser(c.format, parsers.ParseOptions{InlineHTML: c.inlineHTML}, []byte(c.source), rows)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.1" srcLang="en" trgLang="de">
+  <file id="f1" original="messages.json">
+    <unit id="greeting" name="greeting">
+      <segment>
+        <source>Hello</source>
+        <target>Hallo</target>
+      </segment>
+    </unit>
+    <unit id="farewell">
+      <segment id="s1" state="initial">
+        <source>Goodbye</source>
+      </segment>
+    </unit>
+    <unit id="skip-me" translate="no">
+      <segment>
+        <source>Do not translate</source>
+      </segment>
+    </unit>
+    <unit id="empty">
+      <segment>
+        <source></source>
+      </segment>
+    </unit>
+    <unit id="multi">
+      <segment id="a">
+        <source>First sentence.</source>
+      </segment>
+      <ignorable>
+        <source> </source>
+      </ignorable>
+      <segment id="b">
+        <source>Second sentence.</source>
+        <target>Zweiter Satz.</target>
+      </segment>
+    </unit>
+  </file>
+</xliff>

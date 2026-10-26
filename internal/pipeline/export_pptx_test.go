@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
-	pt "openloc/internal/parser/pptxtest"
+	"openloc/internal/parsers/pptx"
+	pt "openloc/internal/parsers/pptx/pptxtest"
 )
 
 // A PowerPoint export writes the stored rich text, so a chip brings back its
@@ -20,7 +20,7 @@ func TestExportFile_PPTXChipsLanguageAndFormatting(t *testing.T) {
 		pt.R(`lang="en-US" b="1"`, "Save"),
 		pt.R(`lang="en-US"`, " now"),
 	))}}})
-	segs, err := parser.PPTX{}.Parse(upload)
+	segs, err := pptx.PPTX{}.Parse(upload)
 	if err != nil {
 		t.Fatal(err)
 	}

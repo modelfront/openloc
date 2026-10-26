@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"openloc/internal/parser/pptxtest"
+	"openloc/internal/parsers/pptx/pptxtest"
 	"openloc/internal/testutil"
 )
 

@@ -8,7 +8,11 @@ import (
 	"strings"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/android_xml"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/html"
+	"openloc/internal/parsers/xliff"
 	"openloc/internal/ptr"
 )
 
@@ -55,7 +59,7 @@ func (s *Service) downloadOriginal(ctx context.Context, storagePath string) ([]b
 // ExportFile reconstructs the translated file for one target language. A
 // parser whose export depends on the job's languages (an XLSX workbook with a
 // column per language, a PowerPoint deck that marks translated text with the
-// target language) implements parser.LangAwareReconstructor and is told the
+// target language) implements common.LangAwareReconstructor and is told the
 // project's source language and the target; every other parser uses
 // Reconstruct.
 //
@@ -80,24 +84,24 @@ func (s *Service) ExportFile(ctx context.Context, tenantID, fileID int64, target
 		return nil, "", fmt.Errorf("list translations: %w", err)
 	}
 
-	layout, err := parser.FileXLSXLayout(file.XlsxLayout)
+	layout, err := parsers.FileXLSXLayout(file.XlsxLayout)
 	if err != nil {
 		return nil, "", fmt.Errorf("read stored xlsx layout: %w", err)
 	}
-	p, err := exportParser(string(file.Format), parser.ParseOptions{InlineHTML: file.InlineHtml, XLSXLayout: layout}, original, rows)
+	p, err := exportParser(string(file.Format), parsers.ParseOptions{InlineHTML: file.InlineHtml, XLSXLayout: layout}, original, rows)
 	if err != nil {
 		return nil, "", fmt.Errorf("get parser: %w", err)
 	}
 
 	translations := exportTranslations(rows, string(file.Format), file.InlineHtml)
 	var result []byte
-	if lp, ok := p.(parser.LangAwareReconstructor); ok {
+	if lp, ok := p.(common.LangAwareReconstructor); ok {
 		var project db.Project
 		project, err = s.queries.GetProject(ctx, db.GetProjectParams{ID: file.ProjectID, TenantID: tenantID})
 		if err != nil {
 			return nil, "", fmt.Errorf("get project: %w", err)
 		}
-		langs := parser.ExportLangs{Source: project.SourceLanguage, Target: targetLang}
+		langs := common.ExportLangs{Source: project.SourceLanguage, Target: targetLang}
 		result, err = lp.ReconstructForLang(ctx, original, translations, langs)
 	} else {
 		result, err = p.Reconstruct(original, translations)
@@ -110,10 +114,10 @@ func (s *Service) ExportFile(ctx context.Context, tenantID, fileID int64, target
 }
 
 // UserExportMessage returns the message to show when an export failed for a
-// reason the user can fix (see parser.ExportError). ok is false for every
+// reason the user can fix (see common.ExportError). ok is false for every
 // other error, which handlers log and answer with a generic 500.
 func UserExportMessage(err error) (msg string, ok bool) {
-	var ee *parser.ExportError
+	var ee *common.ExportError
 	if errors.As(err, &ee) {
 		return ee.Msg, true
 	}
@@ -126,18 +130,18 @@ func UserExportMessage(err error) (msg string, ok bool) {
 // stored escapes are decoded before they are written. An HTML file gets its
 // segments' stored source, which says how each stored translation
 // numbers its tags.
-func exportParser(format string, opts parser.ParseOptions, original []byte, rows []db.ListApprovedForExportRow) (parser.Parser, error) {
+func exportParser(format string, opts parsers.ParseOptions, original []byte, rows []db.ListApprovedForExportRow) (common.Parser, error) {
 	if format == "html" {
-		stored := make(map[string]parser.StoredSource, len(rows))
+		stored := make(map[string]html.StoredSource, len(rows))
 		for _, r := range rows {
 			if r.SegmentKey != nil {
-				stored[*r.SegmentKey] = parser.StoredSource{Text: r.SourceText, RichText: ptr.Deref(r.SourceRichText)}
+				stored[*r.SegmentKey] = html.StoredSource{Text: r.SourceText, RichText: ptr.Deref(r.SourceRichText)}
 			}
 		}
-		return parser.HTMLWithStoredSource(stored), nil
+		return html.HTMLWithStoredSource(stored), nil
 	}
 	if format != "android_xml" {
-		return parser.GetParserWith(format, opts)
+		return parsers.GetParserWith(format, opts)
 	}
 	stored := make(map[string]string, len(rows))
 	for _, r := range rows {
@@ -145,16 +149,16 @@ func exportParser(format string, opts parser.ParseOptions, original []byte, rows
 			stored[*r.SegmentKey] = r.SourceText
 		}
 	}
-	raw, err := parser.AndroidStoredRaw(original, stored)
+	raw, err := android_xml.AndroidStoredRaw(original, stored)
 	if err != nil {
 		return nil, err
 	}
-	return parser.AndroidXML{RawText: raw}, nil
+	return android_xml.AndroidXML{RawText: raw}, nil
 }
 
 // exportTranslations picks, per segment key, the text Reconstruct writes for
 // a file of this format: the rich text (inline tags) for tag-aware formats,
-// parser.TextFormatTranslation for JSON, PO, TXT and XLSX, else the plain
+// parsers.TextFormatTranslation for JSON, PO, TXT and XLSX, else the plain
 // text, with HTML formatting stripped where the format has none. inlineHTML
 // is the file's "Strings contain HTML" mode.
 //
@@ -163,10 +167,10 @@ func exportParser(format string, opts parser.ParseOptions, original []byte, rows
 // its formatting on its chip, so <strong>/<em> are dropped rather than written
 // out as escaped characters.
 func exportTranslations(rows []db.ListApprovedForExportRow, format string, inlineHTML bool) map[string]string {
-	textFormat := parser.InlineHTMLFormat(format)
+	textFormat := parsers.InlineHTMLFormat(format)
 	preserveHTML := format == "html" || format == "android_xml"
 	stripRichFormatting := format == "xml" || format == "pptx"
-	isXLIFF := format == "xliff" || format == "mqxliff" || format == "sdlxliff"
+	isXLIFF := format == "xliff" || format == "xliff2" || format == "mqxliff" || format == "sdlxliff"
 	isHTML := format == "html"
 	isDOCX := format == "docx"
 	isPPTX := format == "pptx"
@@ -180,7 +184,7 @@ func exportTranslations(rows []db.ListApprovedForExportRow, format string, inlin
 		}
 		if textFormat {
 			if row.ActiveText != nil {
-				translations[*row.SegmentKey] = parser.TextFormatTranslation(*row.ActiveText, ptr.Deref(row.ActiveRichText), inlineHTML)
+				translations[*row.SegmentKey] = parsers.TextFormatTranslation(*row.ActiveText, ptr.Deref(row.ActiveRichText), inlineHTML)
 			}
 			continue
 		}
@@ -191,7 +195,7 @@ func exportTranslations(rows []db.ListApprovedForExportRow, format string, inlin
 			if row.ActiveRichText != nil && *row.ActiveRichText != "" {
 				rich := *row.ActiveRichText
 				if stripRichFormatting {
-					rich = parser.StripFormattingTags(rich)
+					rich = html.StripFormattingTags(rich)
 				}
 				translations[*row.SegmentKey] = rich
 				continue
@@ -199,8 +203,8 @@ func exportTranslations(rows []db.ListApprovedForExportRow, format string, inlin
 		}
 		if row.ActiveText != nil {
 			text := *row.ActiveText
-			if !preserveHTML && parser.HasHTMLFormatting(text) {
-				text = parser.StripHTMLFormatting(text)
+			if !preserveHTML && html.HasHTMLFormatting(text) {
+				text = html.StripHTMLFormatting(text)
 			}
 			translations[*row.SegmentKey] = text
 		}
@@ -220,7 +224,7 @@ func exportTranslations(rows []db.ListApprovedForExportRow, format string, inlin
 // end-to-end.
 //
 // We deliberately use a separate query (ListAllForBilingualExport) and a
-// separate code path (parser.SerializeBilingualXLIFF) instead of reusing
+// separate code path (xliff.SerializeBilingualXLIFF) instead of reusing
 // the source-format-mirror export, because:
 //  1. Bilingual export needs ALL segments (incl. untranslated), not just
 //     approved/auto_approved.
@@ -248,7 +252,7 @@ func (s *Service) ExportBilingualXLIFF(ctx context.Context, tenantID, fileID int
 		return nil, "", fmt.Errorf("list segments for bilingual export: %w", err)
 	}
 
-	segments := make([]parser.BilingualSegment, 0, len(rows))
+	segments := make([]xliff.BilingualSegment, 0, len(rows))
 	for _, row := range rows {
 		// Every segment carries a key (set by the parser at upload time).
 		// Fail loudly on a missing one: a silently dropped row could not be
@@ -256,7 +260,7 @@ func (s *Service) ExportBilingualXLIFF(ctx context.Context, tenantID, fileID int
 		if row.SegmentKey == nil || *row.SegmentKey == "" {
 			return nil, "", fmt.Errorf("segment %d has nil/empty segment_key — bilingual export aborted to prevent silent round-trip loss", row.SegmentID)
 		}
-		seg := parser.BilingualSegment{
+		seg := xliff.BilingualSegment{
 			Key:        *row.SegmentKey,
 			SourceText: row.SourceText,
 		}
@@ -303,7 +307,7 @@ func (s *Service) ExportBilingualXLIFF(ctx context.Context, tenantID, fileID int
 			seg.MatchPercent = &p
 		}
 		if row.MatchSourceText != nil && row.MatchTargetText != nil {
-			seg.Match = &parser.TMMatch{SourceText: *row.MatchSourceText, TargetText: *row.MatchTargetText}
+			seg.Match = &xliff.TMMatch{SourceText: *row.MatchSourceText, TargetText: *row.MatchTargetText}
 		}
 
 		segments = append(segments, seg)
@@ -312,7 +316,7 @@ func (s *Service) ExportBilingualXLIFF(ctx context.Context, tenantID, fileID int
 	// `original` (required XLIFF 1.2 <file> attribute) carries the source
 	// document's name so the recipient tool — memoQ rejects files lacking it —
 	// can identify the file in the bilingual package.
-	out, err := parser.SerializeBilingualXLIFF(file.Name, sourceLang, targetLang, segments)
+	out, err := xliff.SerializeBilingualXLIFF(file.Name, sourceLang, targetLang, segments)
 	if err != nil {
 		return nil, "", fmt.Errorf("serialize bilingual XLIFF: %w", err)
 	}

@@ -17,7 +17,9 @@ import (
 	"openloc/internal/httputil"
 	"openloc/internal/langcode"
 	"openloc/internal/logging"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/xliff"
 	"openloc/internal/taskedit"
 )
 
@@ -113,11 +115,11 @@ func (h *Handler) requireLinguistLangAccess(ctx context.Context, fileID int64, t
 // target-language must match when present, so a German file cannot overwrite
 // French translations.
 func (h *Handler) ReimportXLIFFFile(ctx context.Context, t ReimportTarget, filename string, content []byte, opts ReimportOptions) (*ReimportXLIFFResult, error) {
-	format := parser.FormatFromFilename(filename)
+	format := common.FormatFromFilename(filename)
 	if format != "xliff" {
 		return nil, httputil.NewClientError("re-import requires an XLIFF file (.xliff, .xlf, .sdlxliff, .mxliff, .mqxliff)")
 	}
-	xliffParser, err := parser.GetParser(format)
+	xliffParser, err := parsers.GetParser(format)
 	if err != nil {
 		logging.Warn(ctx, err, "re-import parser lookup failed", "reimport-parser-lookup-failed", logging.FileID(t.File.ID))
 		return nil, httputil.NewClientError("re-import requires an XLIFF file")
@@ -130,7 +132,7 @@ func (h *Handler) ReimportXLIFFFile(ctx context.Context, t ReimportTarget, filen
 	if len(segments) > MaxReimportSegments {
 		return nil, &TooManySegmentsError{Count: len(segments)}
 	}
-	if xliffLang, langErr := parser.XLIFFTargetLanguage(content); langErr == nil && xliffLang != "" {
+	if xliffLang, langErr := xliff.XLIFFTargetLanguage(content); langErr == nil && xliffLang != "" {
 		if normalized := langcode.Normalize(xliffLang); normalized != t.TargetLanguage {
 			return nil, httputil.NewClientError(fmt.Sprintf("XLIFF target-language %q does not match requested lang %q", normalized, t.TargetLanguage))
 		}
@@ -223,8 +225,8 @@ func (h *Handler) HandleReimportXLIFF(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize)
-	if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+	if err := r.ParseMultipartForm(UploadMemThreshold); err != nil {
 		httputil.BadRequest(w, "file too large or invalid multipart form")
 		return
 	}

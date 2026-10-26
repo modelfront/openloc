@@ -2,7 +2,7 @@
  * Accepted source-file extensions for project uploads.
  *
  * Must stay in sync with `FormatFromFilename` / `DetectFormat` in
- * `internal/parser/json_i18n.go` — an extension missing here is silently
+ * `internal/parsers/json_i18n/json_i18n.go` — an extension missing here is silently
  * unreachable from the UI even though the backend supports it.
  *
  * `.xml` covers both Android string resources and generic XML documents

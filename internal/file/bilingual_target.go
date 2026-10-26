@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"openloc/internal/langcode"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
 )
 
 // bilingualTarget picks the project target language that receives a bilingual
@@ -25,7 +25,7 @@ func bilingualTarget(in ingest) (lang, warning string) {
 		return "", ""
 	}
 	targets := in.project.TargetLanguages
-	fileLang := langcode.Normalize(parser.FileTargetLanguage(in.format, in.content))
+	fileLang := langcode.Normalize(parsers.FileTargetLanguage(in.format, in.content))
 	if fileLang == "" {
 		if len(targets) == 1 {
 			return targets[0], ""

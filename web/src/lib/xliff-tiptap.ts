@@ -414,7 +414,7 @@ export function flattenRichText(richText: string): string {
 
 // HasXliffTags only detects XLIFF rich-text markers.
 // HTML inline-tag detection is done at IMPORT time by the Go-side parsers
-// (`internal/parser/inline_tag.go`), which populate `source_rich_text` with
+// (`internal/parsers/common/inline_tag.go`), which populate `source_rich_text` with
 // XLIFF `<g>` / `<x>` wrappers. The display layer then routes through the
 // chip parser when richText contains those.
 //

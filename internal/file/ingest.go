@@ -12,7 +12,9 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/xlsx"
 	"openloc/internal/projectevents"
 	"openloc/internal/timing"
 	"openloc/internal/wordcount"
@@ -24,7 +26,7 @@ type IngestOptions struct {
 	Analyze bool
 	// XLSXLayout is the uploader's column layout of an Excel workbook without
 	// language codes in row 1; nil reads the workbook by its row 1.
-	XLSXLayout *parser.XLSXLayout
+	XLSXLayout *xlsx.XLSXLayout
 }
 
 // IngestResult is the stored file and any dispatch warnings (work that could
@@ -53,9 +55,9 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 
 	// Format detection needs the content: .xml is ambiguous between Android
 	// string resources and generic XML until the root element is read.
-	format := parser.DetectFormat(filename, content)
+	format := common.DetectFormat(filename, content)
 	if format == "" {
-		if msg, ok := parser.UnsupportedFormatMessage(filename); ok {
+		if msg, ok := common.UnsupportedFormatMessage(filename); ok {
 			return IngestResult{}, httputil.NewClientError(msg)
 		}
 		return IngestResult{}, httputil.NewClientError("unsupported file format")
@@ -67,12 +69,12 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	// The file keeps the mode it is parsed with, so a later change of the
 	// setting never re-reads it differently. The setting applies to the
 	// InlineHTMLFormat formats only; every other file's strings are HTML.
-	inlineHTML := settingsProfile.InlineHtml || !parser.InlineHTMLFormat(format)
+	inlineHTML := settingsProfile.InlineHtml || !parsers.InlineHTMLFormat(format)
 	layoutJSON, err := validateIngestLayout(format, content, opts.XLSXLayout)
 	if err != nil {
 		return IngestResult{}, err
 	}
-	p, err := parser.GetParserWith(format, parser.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: opts.XLSXLayout})
+	p, err := parsers.GetParserWith(format, parsers.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: opts.XLSXLayout})
 	if err != nil {
 		logging.Warn(ctx, err, "parser lookup failed", "upload-parser-lookup-failed")
 		return IngestResult{}, httputil.NewClientError(fmt.Sprintf("file format %q is not supported", format))
@@ -85,7 +87,7 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	if err != nil {
 		doneIngest(err)
 		logging.Warn(ctx, err, "upload parse failed", "upload-parse-failed")
-		if msg, ok := parser.ImportMessage(err); ok {
+		if msg, ok := common.ImportMessage(err); ok {
 			return IngestResult{}, httputil.NewClientError(msg)
 		}
 		return IngestResult{}, httputil.NewClientError(fmt.Sprintf("could not parse %s file — check that the file is well-formed", format))
@@ -206,7 +208,7 @@ func uploadEvent(ctx context.Context, project db.Project, f db.File, format stri
 
 // batchInsertSegments inserts segments in batches using multi-row INSERT ... RETURNING id.
 // Returns the IDs in the same order as the input segments.
-func (h *Handler) batchInsertSegments(ctx context.Context, dbtx db.DBTX, fileID int64, segments []parser.Segment) ([]int64, error) {
+func (h *Handler) batchInsertSegments(ctx context.Context, dbtx db.DBTX, fileID int64, segments []common.Segment) ([]int64, error) {
 	allIDs := make([]int64, 0, len(segments))
 
 	for batch := range slices.Chunk(segments, segmentBatchSize) {
@@ -252,7 +254,7 @@ func (h *Handler) batchInsertSegments(ctx context.Context, dbtx db.DBTX, fileID 
 // in batches using multi-row INSERT. For segments with pre-existing targets (e.g. XLIFF),
 // it also sets active_text and origin='file_import' on the stampLang translation
 // (see bilingualTarget); "" stamps none.
-func (h *Handler) batchInsertTranslations(ctx context.Context, dbtx db.DBTX, segmentIDs []int64, segments []parser.Segment, targetLangs []string, stampLang string) error {
+func (h *Handler) batchInsertTranslations(ctx context.Context, dbtx db.DBTX, segmentIDs []int64, segments []common.Segment, targetLangs []string, stampLang string) error {
 	// Build all (segmentID, lang, status) tuples. Every new row
 	// inserts at status='needs_review'. Rows with a
 	// pre-existing target get active_text + origin='file_import' stamped by the
@@ -316,7 +318,7 @@ func (h *Handler) batchInsertTranslations(ctx context.Context, dbtx db.DBTX, seg
 
 // validateIngestLayout checks an upload's Excel column layout against the
 // workbook and returns it as stored; nil without one.
-func validateIngestLayout(format string, content []byte, layout *parser.XLSXLayout) ([]byte, error) {
+func validateIngestLayout(format string, content []byte, layout *xlsx.XLSXLayout) ([]byte, error) {
 	if layout == nil {
 		return nil, nil
 	}
@@ -328,10 +330,10 @@ func validateIngestLayout(format string, content []byte, layout *parser.XLSXLayo
 
 // checkXLSXLayout validates a layout against the workbook and encodes it for
 // the file row. A layout the uploader can fix is a httputil.ClientError.
-func checkXLSXLayout(content []byte, layout *parser.XLSXLayout) ([]byte, error) {
+func checkXLSXLayout(content []byte, layout *xlsx.XLSXLayout) ([]byte, error) {
 	layout.Normalize()
 	if err := layout.Validate(content); err != nil {
-		var le *parser.XLSXLayoutError
+		var le *common.XLSXLayoutError
 		if errors.As(err, &le) {
 			return nil, httputil.NewClientError(le.Msg)
 		}

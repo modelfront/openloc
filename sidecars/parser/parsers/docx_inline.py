@@ -24,7 +24,7 @@ from docx.text.run import Run
 FORMAT_CTYPES = ("bold", "italic")
 LINK = "link"
 
-# The chip grammar of internal/parser (richToken): paired <g>, self-closing <x/>.
+# The chip grammar of internal/parsers/common/sentence_segments.go (richToken): paired <g>, self-closing <x/>.
 _CHIP = re.compile(r'<g(?:\s[^>]*)?>|</g>|<x(?:\s[^>]*)?/>')
 _CHIP_ATTR = re.compile(r'\s(id|ctype)="([^"]*)"')
 

@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/android_xml"
 )
 
 // TestExportTranslationMap_PrefersRichTextForTagAwareFormats verifies that the
@@ -146,25 +147,25 @@ func TestExportParser_AndroidStoredRaw(t *testing.T) {
 		return []db.ListApprovedForExportRow{{ID: 1, SegmentKey: &key, SourceText: source}}
 	}
 
-	p, err := exportParser("android_xml", parser.ParseOptions{InlineHTML: true}, original, row(`It\'s`))
+	p, err := exportParser("android_xml", parsers.ParseOptions{InlineHTML: true}, original, row(`It\'s`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a, ok := p.(parser.AndroidXML); !ok || !a.RawText {
+	if a, ok := p.(android_xml.AndroidXML); !ok || !a.RawText {
 		t.Errorf("raw stored text: parser = %#v, want AndroidXML{RawText: true}", p)
 	}
-	p, err = exportParser("android_xml", parser.ParseOptions{InlineHTML: true}, original, row("It's"))
+	p, err = exportParser("android_xml", parsers.ParseOptions{InlineHTML: true}, original, row("It's"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a, ok := p.(parser.AndroidXML); !ok || a.RawText {
+	if a, ok := p.(android_xml.AndroidXML); !ok || a.RawText {
 		t.Errorf("decoded stored text: parser = %#v, want AndroidXML{}", p)
 	}
-	p, err = exportParser("json_i18n", parser.ParseOptions{InlineHTML: true}, []byte(`{"a": "x"}`), row("x"))
+	p, err = exportParser("json_i18n", parsers.ParseOptions{InlineHTML: true}, []byte(`{"a": "x"}`), row("x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want, _ := parser.GetParser("json_i18n"); p != want {
+	if want, _ := parsers.GetParser("json_i18n"); p != want {
 		t.Errorf("json: parser = %#v, want the format's own parser %#v", p, want)
 	}
 }

@@ -6,77 +6,77 @@
 [[IgnoredVulns]]
 id = "GHSA-2j4c-ffch-9f23"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-5h23-36rv-pm65"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-8jjq-8j9w-m2v6"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-8mcq-6wmr-jrjv"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-c85p-xxjj-2r75"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-fq3v-74gv-27gm"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-fw94-4wwp-w8pw"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-g27h-8qhm-6pff"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-jrfj-fhj2-jjvm"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-jw42-f3rr-4cc3"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-mx22-3794-2vpv"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-r7x5-4969-99p7"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-rxcj-4pj5-74gr"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-wp2g-vpjj-g53r"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GHSA-x2q3-8cjh-766f"
 ignoreUntil = 2026-11-12
-reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
+reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parsers/xlsx/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
 id = "GO-2026-5932"

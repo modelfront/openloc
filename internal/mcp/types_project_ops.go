@@ -3,7 +3,7 @@ package mcp
 import (
 	"context"
 
-	"openloc/internal/parser"
+	"openloc/internal/parsers/xlsx"
 )
 
 // projectOpsTools is the Backend slice for the projects, files, project settings, labels tools.
@@ -290,7 +290,7 @@ type AttachUploadedFileIn struct {
 	UploadRef
 	Analyze bool `json:"analyze,omitempty" jsonschema:"run the automatic analysis once the jobs exist"`
 	// XLSXLayout picks the sheets and columns of an .xlsx without language codes in row 1.
-	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated. Translations are written back into their own cells"`
+	XLSXLayout *xlsx.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated. Translations are written back into their own cells"`
 }
 
 type UploadTextFileIn struct {

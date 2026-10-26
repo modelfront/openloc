@@ -71,11 +71,13 @@ type Handler struct {
 	playground bool
 	// issueReports: the deployment takes issue reports (SetIssueReports).
 	issueReports bool
+	// maxUpload caps one assistant upload (uploads.go).
+	maxUpload int64
 }
 
 func NewHandler(q db.Querier, enc *secrets.Encryptor, mcpSrv *mcp.Server, draining <-chan struct{}, catalog *ai.Catalog) *Handler {
 	return &Handler{q: q, enc: enc, mcpSrv: mcpSrv, newLLM: defaultLLMFactory, draining: draining, catalog: catalog,
-		trustedSpeechBase: defaultOpenAIBaseURL}
+		trustedSpeechBase: defaultOpenAIBaseURL, maxUpload: file.DefaultMaxUploadBytes}
 }
 
 // defaultLLMFactory picks the adapter for the model's provider. Adding a

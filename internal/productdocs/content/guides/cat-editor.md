@@ -79,7 +79,7 @@ sources:
   - internal/spellcheck/**
   - web/src/lib/spellcheck-scope.ts
   - web/src/api/spellcheck.ts
-  - internal/parser/android_xml_content.go
+  - internal/parsers/android_xml/android_xml_content.go
   - internal/comments/**
   - internal/api/api.go
   - internal/hold/**

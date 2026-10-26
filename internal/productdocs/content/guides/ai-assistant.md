@@ -45,7 +45,7 @@ An empty conversation offers one example question; click it to send it. A lingui
 
 ## Attach a file
 
-1. Click the paperclip next to the message box, **Attach a file (TMX, terms, a document to translate)**, and pick a file. It uploads at once, up to 50 MB.
+1. Click the paperclip next to the message box, **Attach a file (TMX, terms, a document to translate)**, and pick a file. It uploads at once, up to 200 MB.
 2. The file shows as a chip above the message box. Click the **✕** next to it to remove it.
 3. Say what to do with it, for example "Import this into the Marketing memory" or "Add this document to the Helix project".
 

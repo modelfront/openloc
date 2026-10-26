@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
 )
 
 // Generic XML has no element that means "bold", so formatting a translator adds
@@ -19,7 +19,7 @@ func TestExportGenericXMLDropsEditorFormatting(t *testing.T) {
   <para>Press <b>Start</b> now</para>
 </manual>
 `)
-	p, err := exportParser("xml", parser.ParseOptions{InlineHTML: true}, original, nil)
+	p, err := exportParser("xml", parsers.ParseOptions{InlineHTML: true}, original, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

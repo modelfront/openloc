@@ -3914,7 +3914,7 @@ ${transUnits.join("\n")}
 
   // HTML inline tags inside segment text bodies should
   // render as atomic chips wherever the source format-aware parser detects
-  // them and emits XLIFF <g>/<x> rich text (internal/parser/inline_tag.go).
+  // them and emits XLIFF <g>/<x> rich text (internal/parsers/common/inline_tag.go).
   // For TXT imports, this means a line containing `<i>...</i>` lands in the
   // DB with source_text="Hello world here." and source_rich_text containing
   // <g id="N" ctype="italic">world</g>. Same primitive (SegmentText →

@@ -8,7 +8,7 @@ sources:
   - internal/pipeline/**
   - internal/job/**
   - internal/taskedit/**
-  - internal/parser/**
+  - internal/parsers/**
   - internal/translation/**
   - internal/analysis/**
   - internal/inlinetag/**

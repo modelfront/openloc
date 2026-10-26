@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.1" srcLang="en" trgLang="de">
+  <file id="f1">
+    <unit id="u1">
+      <segment>
+        <source>Click <pc id="1" dataRefStart="d1" dataRefEnd="d2">here</pc> to <ph id="2" dataRef="d3"/> continue.</source>
+      </segment>
+    </unit>
+    <unit id="u2">
+      <segment>
+        <source>Press <sc id="3" dataRef="d4"/>Enter<ec startRef="3" dataRef="d5"/> now.</source>
+        <target>Drücken Sie <sc id="3" dataRef="d4"/>Eingabe<ec startRef="3" dataRef="d5"/> jetzt.</target>
+      </segment>
+    </unit>
+    <unit id="u3">
+      <segment>
+        <source>Read <mrk id="m1" type="term" ref="#t1">terms</mrk>.</source>
+      </segment>
+    </unit>
+  </file>
+</xliff>

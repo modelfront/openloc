@@ -8,7 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/xliff"
 	"openloc/internal/pipeline"
 	"openloc/internal/projectevents"
 	"openloc/internal/ptr"
@@ -44,7 +45,7 @@ func (e *DuplicateKeysError) Error() string {
 type ReimportXLIFFRequest struct {
 	FileID           int64
 	TargetLanguage   string
-	IncomingSegments []parser.Segment
+	IncomingSegments []common.Segment
 	Force            bool
 	DryRun           bool
 	EditedBy         int64
@@ -287,7 +288,7 @@ func ReimportXLIFF(ctx context.Context, pool *pgxpool.Pool, req ReimportXLIFFReq
 // Pure function — no DB calls. Safe to unit-test without a database.
 func computeReimportDiff(
 	rows []db.ListTranslationsByFileForReimportRow,
-	incoming []parser.Segment,
+	incoming []common.Segment,
 	force bool,
 ) (*ReimportXLIFFResult, []reimportPlan) {
 	result := &ReimportXLIFFResult{}
@@ -323,7 +324,7 @@ func computeReimportDiff(
 		currentPlain := ptr.Deref(row.ActiveText)
 		currentRich := ptr.Deref(row.ActiveRichText)
 		if seg.TargetRichText != "" {
-			if seg.Target == currentPlain && parser.XLIFFRichTextEqual(seg.TargetRichText, currentRich) {
+			if seg.Target == currentPlain && xliff.XLIFFRichTextEqual(seg.TargetRichText, currentRich) {
 				result.UntouchedNoChange++
 				continue
 			}
@@ -378,7 +379,7 @@ func computeReimportDiff(
 // findDuplicateKeys returns every key that appears two-or-more times in
 // `incoming`. Returns an empty slice when each key is unique. Each duplicated
 // key is listed once regardless of how many times it appears.
-func findDuplicateKeys(incoming []parser.Segment) []string {
+func findDuplicateKeys(incoming []common.Segment) []string {
 	seen := make(map[string]int, len(incoming))
 	for _, s := range incoming {
 		seen[s.Key]++

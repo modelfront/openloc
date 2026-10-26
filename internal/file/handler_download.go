@@ -22,8 +22,8 @@ import (
 // convention in the rest of this package).
 //
 // The body is buffered before any header is written: uploads are capped at
-// MaxUploadSize (50 MB) so this is bounded, and a storage failure then returns a
-// clean 500 instead of a silently truncated document landing in the customer's
+// MAX_UPLOAD_MB, so this is bounded, and a storage failure then returns a clean
+// 500 instead of a silently truncated document landing in the customer's
 // Downloads folder.
 func (h *Handler) HandleDownloadSource(w http.ResponseWriter, r *http.Request) {
 	id, err := httputil.ParseID(r, "fileID")

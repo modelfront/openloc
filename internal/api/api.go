@@ -86,6 +86,10 @@ type Deps struct {
 	Enqueuer      TaskEnqueuer      // nil falls back to synchronous execution
 	TaskCanceller job.TaskCanceller // nil skips asynq-level cancellation on delete
 
+	// MaxUploadBytes caps one upload: a project file, an assistant upload or a
+	// re-import. Zero keeps file.DefaultMaxUploadBytes.
+	MaxUploadBytes int64
+
 	// Auth / OAuth
 	GoogleClientID        string
 	GoogleClientSecret    string
@@ -787,6 +791,7 @@ func NewRouter(deps Deps) chi.Router {
 		} else {
 			chatHandler := chat.NewHandler(deps.Queries, chatEnc, mcpServer, deps.Draining, catalog)
 			chatHandler.SetStorage(deps.Storage)
+			chatHandler.SetMaxUploadBytes(deps.MaxUploadBytes)
 			chatHandler.SetPlayground(deps.DemoOrg)
 			chatHandler.SetIssueReports(issueSvc.Enabled())
 			r.Route("/api/chat", func(r chi.Router) {
@@ -859,6 +864,7 @@ func NewRouter(deps Deps) chi.Router {
 		holdHandler := hold.NewHandler(hold.NewService(deps.Queries, deps.DB.(*pgxpool.Pool)))
 		pipelineHandler := pipeline.NewHandler(deps.Queries, pipelineSvc)
 		fileHandler := file.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool), deps.Storage, deps.Enqueuer)
+		fileHandler.SetMaxUploadBytes(deps.MaxUploadBytes)
 		// The production enqueuer (*worker.Enqueuer) also enqueues
 		// QE+APE predict-on-start; a nil / non-async enqueuer skips it.
 		if aiEnq, ok := deps.Enqueuer.(file.AIStepEnqueuer); ok {

@@ -87,7 +87,7 @@ const FIXTURES: { name: string; content: string | Buffer; mime: string; expected
     expectedSegments: 3, // 3 bilingual rows
   },
   {
-    // Built by pptxtest.JourneyDeck (internal/parser/pptxtest/journey.go).
+    // Built by pptxtest.JourneyDeck (internal/parsers/pptx/pptxtest/journey.go).
     name: "gauntlet.pptx",
     content: fs.readFileSync(path.join(__dirname, "../fixtures/journey-deck.pptx")),
     mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",

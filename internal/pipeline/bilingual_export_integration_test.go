@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/xliff"
 	"openloc/internal/pipeline"
 	"openloc/internal/testutil"
 )
@@ -21,7 +21,7 @@ import (
 // =============================================================================
 //
 // The serializer's correctness is covered by the pure-function unit tests
-// in internal/parser/xliff_serialize_test.go (9 tests + 3 anti-tautology
+// in internal/parsers/xliff/xliff_serialize_test.go (9 tests + 3 anti-tautology
 // RED proofs). The integration tests below cover the wiring:
 //   - the pipeline.ExportBilingualXLIFF service method end-to-end
 //     against a real Postgres testcontainer
@@ -102,7 +102,7 @@ func seedSegmentWithKey(t *testing.T, q db.Querier, fileID int64, key, source st
 // TestIntegration_BilingualExport_HappyPath verifies the wiring from
 // service method through SQL through serializer for a TXT source file
 // with approved + untranslated segments. Asserts:
-//   - the result is parseable XLIFF (self-round-trip via parser.XLIFF)
+//   - the result is parseable XLIFF (self-round-trip via xliff.XLIFF)
 //   - source-language + target-language attributes are populated
 //   - segment_key is preserved as trans-unit id
 //   - approved segments emit state=final, untranslated emit
@@ -169,7 +169,7 @@ func TestIntegration_BilingualExport_HappyPath(t *testing.T) {
 	}
 
 	// Self-parse: the XLIFF parser must read what we emit.
-	parsed, err := parser.XLIFF{}.Parse(data)
+	parsed, err := xliff.XLIFF{}.Parse(data)
 	if err != nil {
 		t.Fatalf("self-parse: %v\nbody:\n%s", err, body)
 	}
@@ -301,7 +301,7 @@ func TestIntegration_BilingualExport_RoundTripsViaReimport(t *testing.T) {
 	// If the keys match, this is sufficient evidence the round-trip works
 	// at the structural level. (The actual SQL update path is covered by
 	// the re-import tests in internal/file.)
-	segments, err := parser.XLIFF{}.Parse(data)
+	segments, err := xliff.XLIFF{}.Parse(data)
 	if err != nil {
 		t.Fatalf("re-parse the bilingual export: %v\noutput:\n%s", err, string(data))
 	}
@@ -324,7 +324,7 @@ func TestIntegration_BilingualExport_RoundTripsViaReimport(t *testing.T) {
 	modified := strings.Replace(string(data),
 		`<target state="needs-translation"></target>`,
 		`<target state="needs-translation">Bonjour</target>`, 1)
-	reparsed, err := parser.XLIFF{}.Parse([]byte(modified))
+	reparsed, err := xliff.XLIFF{}.Parse([]byte(modified))
 	if err != nil {
 		t.Fatalf("re-parse after programmatic edit: %v", err)
 	}

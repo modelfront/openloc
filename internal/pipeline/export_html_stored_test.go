@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
 )
 
 // The HTML export reads each stored translation's chips by the numbering its
@@ -19,7 +19,7 @@ func TestExportHTMLReadsChipsByTheStoredSource(t *testing.T) {
 	rich := `<g id="2" ctype="x-html-a">Ye</g> y <g id="1" ctype="x-html-a">Equis</g>.`
 	rows := []db.ListApprovedForExportRow{{ID: 1, SegmentKey: &key, SourceText: "N X and Y.", SourceRichText: &storedSource, ActiveText: &text, ActiveRichText: &rich}}
 
-	p, err := exportParser("html", parser.ParseOptions{InlineHTML: true}, original, rows)
+	p, err := exportParser("html", parsers.ParseOptions{InlineHTML: true}, original, rows)
 	if err != nil {
 		t.Fatal(err)
 	}

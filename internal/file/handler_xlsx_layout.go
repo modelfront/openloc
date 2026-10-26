@@ -12,11 +12,13 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/xlsx"
 )
 
 // The column layout of an Excel workbook without language codes in row 1
-// (parser.XLSXLayout): the upload's inspect step and later changes. These
+// (xlsx.XLSXLayout): the upload's inspect step and later changes. These
 // routes sit with the upload, in the project route group managers may use.
 
 // layoutLockedMessage refuses a layout change once the file's segments sit
@@ -25,7 +27,7 @@ const layoutLockedMessage = "The Excel columns can change only while the project
 
 // layoutMessage is what the uploader sees for a layout error.
 func layoutMessage(err error) string {
-	var le *parser.XLSXLayoutError
+	var le *common.XLSXLayoutError
 	if errors.As(err, &le) {
 		return le.Msg
 	}
@@ -40,11 +42,11 @@ func (h *Handler) HandleInspectXLSX(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if parser.DetectFormat(up.filename, up.content) != "xlsx" {
+	if common.DetectFormat(up.filename, up.content) != "xlsx" {
 		httputil.BadRequest(w, "only .xlsx files can be inspected")
 		return
 	}
-	in, err := parser.InspectXLSX(up.content)
+	in, err := xlsx.InspectXLSX(up.content)
 	if err != nil {
 		logging.Warn(r.Context(), err, "xlsx inspect failed", "upload-xlsx-inspect-failed")
 		httputil.BadRequest(w, "could not read the xlsx file — check that the file is well-formed")
@@ -74,7 +76,7 @@ func (h *Handler) HandleSetXLSXLayout(w http.ResponseWriter, r *http.Request) {
 		httputil.BadRequest(w, "invalid request body")
 		return
 	}
-	layout, err := parser.ParseXLSXLayout(raw)
+	layout, err := xlsx.ParseXLSXLayout(raw)
 	if err != nil {
 		httputil.BadRequest(w, layoutMessage(err))
 		return
@@ -114,7 +116,7 @@ func (h *Handler) HandleGetXLSXLayout(w http.ResponseWriter, r *http.Request) {
 		httputil.ServerError(w, "read", "file")
 		return
 	}
-	in, err := parser.InspectXLSX(content)
+	in, err := xlsx.InspectXLSX(content)
 	if err != nil {
 		logging.Warn(ctx, err, "stored xlsx inspect failed", "file-xlsx-inspect-failed", logging.FileID(f.ID))
 		httputil.ServerError(w, "read", "file")
@@ -124,8 +126,8 @@ func (h *Handler) HandleGetXLSXLayout(w http.ResponseWriter, r *http.Request) {
 }
 
 type xlsxLayoutView struct {
-	Layout     json.RawMessage       `json:"layout"`
-	Inspection parser.XLSXInspection `json:"inspection"`
+	Layout     json.RawMessage     `json:"layout"`
+	Inspection xlsx.XLSXInspection `json:"inspection"`
 }
 
 // xlsxFile resolves the route's project and its .xlsx file, tenant-scoped,
@@ -177,15 +179,15 @@ func (h *Handler) storedContent(ctx context.Context, f db.File) ([]byte, error) 
 
 // relayoutDraftFile stores a draft file's new layout and replaces its
 // segments with the parse it gives, in one transaction.
-func (h *Handler) relayoutDraftFile(r *http.Request, f db.File, content []byte, layout *parser.XLSXLayout, stored []byte, tenantID int64) (db.File, error) {
+func (h *Handler) relayoutDraftFile(r *http.Request, f db.File, content []byte, layout *xlsx.XLSXLayout, stored []byte, tenantID int64) (db.File, error) {
 	ctx := r.Context()
-	p, err := parser.GetParserWith(string(f.Format), parser.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
+	p, err := parsers.GetParserWith(string(f.Format), parsers.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
 	if err != nil {
 		return db.File{}, err
 	}
 	segments, err := p.Parse(content)
 	if err != nil {
-		if msg, ok := parser.ImportMessage(err); ok {
+		if msg, ok := common.ImportMessage(err); ok {
 			return db.File{}, httputil.NewClientError(msg)
 		}
 		logging.Warn(ctx, err, "xlsx relayout parse failed", "file-xlsx-layout-parse-failed", logging.FileID(f.ID))

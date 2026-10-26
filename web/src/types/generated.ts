@@ -27,6 +27,7 @@ export const FileFormatTxt: FileFormat = "txt";
 export const FileFormatXlsx: FileFormat = "xlsx";
 export const FileFormatXml: FileFormat = "xml";
 export const FileFormatPptx: FileFormat = "pptx";
+export const FileFormatXliff2: FileFormat = "xliff2";
 export interface NullFileFormat {
   file_format: FileFormat;
   valid: boolean; // Valid is true if FileFormat is not NULL

@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/parser/pptxtest"
+	"openloc/internal/parsers/pptx/pptxtest"
 	"openloc/internal/pipeline"
 	"openloc/internal/testutil"
 )

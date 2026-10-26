@@ -27,6 +27,14 @@ func (h *Handler) SetStorage(s file.BlobStore) {
 	h.storage = s
 }
 
+// SetMaxUploadBytes sets the most one assistant upload may carry. Zero keeps the
+// default.
+func (h *Handler) SetMaxUploadBytes(n int64) {
+	if n > 0 {
+		h.maxUpload = n
+	}
+}
+
 type uploadView struct {
 	ID        string `json:"id"`
 	Filename  string `json:"filename"`
@@ -45,9 +53,9 @@ func (h *Handler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		httputil.Error(w, http.StatusServiceUnavailable, "File storage is not available.")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, file.MaxUploadSize)
-	if err := r.ParseMultipartForm(file.MaxUploadSize); err != nil {
-		httputil.BadRequest(w, "The file is too large (max 50 MB) or the upload is malformed.")
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUpload)
+	if err := r.ParseMultipartForm(file.UploadMemThreshold); err != nil {
+		httputil.BadRequest(w, fmt.Sprintf("The file is too large (max %d MB) or the upload is malformed.", h.maxUpload>>20))
 		return
 	}
 	f, header, err := r.FormFile("file")

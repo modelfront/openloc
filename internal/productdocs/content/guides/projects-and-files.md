@@ -35,7 +35,7 @@ sources:
   - internal/project/**
   - internal/label/**
   - internal/file/**
-  - internal/parser/**
+  - internal/parsers/**
   - internal/projectevents/**
   - internal/pipeline/outcome.go
   - internal/pipeline/export_events.go

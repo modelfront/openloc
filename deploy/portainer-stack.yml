@@ -1,0 +1,171 @@
+# OpenLoc for Portainer: the app and everything it needs, on one host.
+#
+# Deploy: Portainer → Stacks → Add stack → Web editor → paste this file, then
+# set the environment variables below in the stack's "Environment variables"
+# (Advanced mode takes NAME=value lines). Portainer does not read deploy/.env,
+# so every setting goes there.
+#
+# Required (generate each secret with: openssl rand -hex 32):
+#   POSTGRES_PASSWORD   database password
+#   JWT_SECRET          signs sign-in sessions; at least 32 characters
+#   AI_SECRETS_KEY      encrypts the provider keys stored in the app; if it
+#                       changes, every stored key becomes unreadable
+#   S3_ACCESS_KEY       file storage key pair; any value
+#   S3_SECRET_KEY       file storage key pair; any value
+#   BASE_URL            the address users open, e.g. https://tms.example.com
+#
+# Optional (empty by default): APP_PORT (8080), DOCS_HOST, DEVELOPER_HOST,
+# TRUSTED_PROXY_HOPS (0; 1 behind a reverse proxy), PLATFORM_ADMIN_EMAILS,
+# DEMO_ORG (true turns on the Playground), WORKER_CONCURRENCY,
+# WORKER_LONG_CONCURRENCY, email (NOTIFICATION_EMAIL with SMTP_* or
+# NOTIFICATION_SERVICE_*), MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET,
+# GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
+#
+# Images: the published releases, pinned. To upgrade, set OPENLOC_IMAGE and
+# OPENLOC_PARSER_IMAGE to the new tag, then update the stack with "Re-pull
+# image" ticked. Migrations run before the app starts.
+#
+# Create the owner after the first start, from the app container's Console,
+# with OWNER_PASSWORD (8 to 72 characters) set in that shell:
+#   ./server create-org --name "Acme" --owner-email you@example.com
+#
+# Not in this stack: spell check and machine translation. They are in
+# deploy/docker-compose.yml.
+
+x-app-image: &app-image ${OPENLOC_IMAGE:-ghcr.io/modelfront/openloc:0.1.0}
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://openloc:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the stack environment}@postgres:5432/openloc?sslmode=disable
+  ENV: production
+  BASE_URL: ${BASE_URL:-http://localhost:8080}
+  DOCS_HOST: ${DOCS_HOST:-}
+  DEVELOPER_HOST: ${DEVELOPER_HOST:-}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in the stack environment}
+  AI_SECRETS_KEY: ${AI_SECRETS_KEY:?set AI_SECRETS_KEY in the stack environment}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+  MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+  REDIS_ADDR: redis:6379
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_BUCKET: openloc
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in the stack environment}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in the stack environment}
+  PARSER_SIDECAR_URL: http://parser:5200
+  PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+  DEMO_ORG: ${DEMO_ORG:-}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+  WORKER_LONG_CONCURRENCY: ${WORKER_LONG_CONCURRENCY:-4}
+  # Email: NOTIFICATION_EMAIL plus either SMTP_* or the Google service account.
+  NOTIFICATION_EMAIL: ${NOTIFICATION_EMAIL:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_TLS: ${SMTP_TLS:-}
+  NOTIFICATION_SERVICE_CLIENT_ID: ${NOTIFICATION_SERVICE_CLIENT_ID:-}
+  NOTIFICATION_SERVICE_PRIVATE_KEY: ${NOTIFICATION_SERVICE_PRIVATE_KEY:-}
+
+services:
+  app:
+    image: *app-image
+    environment: *app-env
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/complete"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Shutdown drains running tasks and open requests within a 27s budget;
+    # Docker's default would kill the app after 10s.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # Applies pending database migrations, then exits. `app` starts only after
+  # it succeeds, so an upgrade migrates first.
+  migrate:
+    # Same image as app; app pulls it before any container starts.
+    image: *app-image
+    pull_policy: never
+    command: ["./server", "migrate"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: openloc
+      POSTGRES_USER: openloc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the stack environment}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openloc -d openloc"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # S3-compatible file storage. Same image and flags as deploy/docker-compose.yml.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    # Each bucket is a SeaweedFS collection with its own volumes. GROWTH_COPY_1=1
+    # starts a bucket with one volume instead of seven, and volume.max lifts the
+    # default cap of 8 volumes.
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333",
+              "-master.volumeSizeLimitMB=1024", "-volume.max=100"]
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
+      # SeaweedFS's S3 gateway accepts exactly this key pair.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in the stack environment}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in the stack environment}
+    volumes:
+      - seaweedfsdata:/data
+    healthcheck:
+      # /healthz answers before the volume server registers, and writes fail
+      # until it does ("Max" > 0 in the master's status).
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9333/dir/status | grep -q '\"Max\":[1-9]' && wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # DOCX and PDF parsing.
+  parser:
+    image: ${OPENLOC_PARSER_IMAGE:-ghcr.io/modelfront/openloc-parser:0.1.0}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5200/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  seaweedfsdata:

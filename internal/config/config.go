@@ -74,6 +74,9 @@ type Config struct {
 	// Static file serving (production: Go serves React SPA)
 	StaticDir string // STATIC_DIR — path to web/dist/; empty = disabled (dev uses Vite)
 
+	// Upload limit in MB for project files, assistant uploads and re-imports.
+	MaxUploadMB int // MAX_UPLOAD_MB — default 200
+
 	// Email. One sender per deployment, picked by notification.NewSender:
 	// SMTP when SMTP_HOST is set, Gmail when the Google service account is,
 	// otherwise a console sender that logs emails (dev). Setting both is an
@@ -222,6 +225,7 @@ func Load() Config {
 		ParserSidecarURL: envOr("PARSER_SIDECAR_URL", "http://localhost:9007"),
 		SpellcheckLTURL:  envOr("SPELLCHECK_LT_URL", "http://localhost:9008/v2/check"),
 		StaticDir:        envOr("STATIC_DIR", ""),
+		MaxUploadMB:      parseIntOr("MAX_UPLOAD_MB", 200),
 
 		NotificationEmail:             envOr("NOTIFICATION_EMAIL", ""),
 		NotificationServiceClientID:   envOr("NOTIFICATION_SERVICE_CLIENT_ID", ""),
@@ -283,6 +287,9 @@ func (c Config) Validate() error {
 	}
 	if c.TrustedProxyHops < 0 {
 		return errors.New("TRUSTED_PROXY_HOPS must be 0 or more")
+	}
+	if c.MaxUploadMB < 1 {
+		return errors.New("MAX_UPLOAD_MB must be 1 or more")
 	}
 	if c.Environment != "development" {
 		if err := validateJWTSecret(c.JWTSecret); err != nil {

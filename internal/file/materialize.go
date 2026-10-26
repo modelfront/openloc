@@ -19,7 +19,9 @@ import (
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
-	"openloc/internal/parser"
+	"openloc/internal/parsers"
+	"openloc/internal/parsers/common"
+	"openloc/internal/parsers/xlsx"
 	"openloc/internal/pipeline"
 	"openloc/internal/projectevents"
 	"openloc/internal/settings"
@@ -36,7 +38,7 @@ type ingest struct {
 	file       db.File
 	format     string
 	content    []byte
-	segments   []parser.Segment
+	segments   []common.Segment
 	segmentIDs []int64 // one per segment, same order
 	wordCount  int
 }
@@ -92,12 +94,12 @@ func (h *Handler) materializeInTx(ctx context.Context, tx pgx.Tx, in ingest) (jo
 // workbook or stored layout imports no targets, like every other import
 // warning.
 func (h *Handler) importXLSXTargets(ctx context.Context, txq *db.Queries, in ingest) error {
-	layout, err := parser.FileXLSXLayout(in.file.XlsxLayout)
+	layout, err := parsers.FileXLSXLayout(in.file.XlsxLayout)
 	if err != nil {
 		logging.Warn(ctx, err, "stored xlsx layout unreadable", "upload-xlsx-layout-unreadable", logging.FileID(in.file.ID))
 		return nil
 	}
-	xlsxTargets, err := parser.XLSX{PlainText: !in.file.InlineHtml, Layout: layout}.ExtractTargets(in.content, in.project.TargetLanguages)
+	xlsxTargets, err := xlsx.XLSX{PlainText: !in.file.InlineHtml, Layout: layout}.ExtractTargets(in.content, in.project.TargetLanguages)
 	if err != nil {
 		return nil
 	}
@@ -313,7 +315,7 @@ func (h *Handler) MaterializeProjectFiles(ctx context.Context, tenantID, project
 
 // storedMatchesParse reports whether a draft file's stored segments are the
 // ones a parse of its file gives: same count, keys, positions and text.
-func storedMatchesParse(stored []db.Segment, segments []parser.Segment) bool {
+func storedMatchesParse(stored []db.Segment, segments []common.Segment) bool {
 	if len(stored) != len(segments) {
 		return false
 	}
@@ -330,7 +332,7 @@ func storedMatchesParse(stored []db.Segment, segments []parser.Segment) bool {
 // replaceDraftSegments swaps a draft file's stored segments for segments, in
 // tx, and returns their ids. A draft file has no jobs, so nothing else points
 // at the rows it drops.
-func (h *Handler) replaceDraftSegments(ctx context.Context, tx pgx.Tx, fileID int64, segments []parser.Segment) ([]int64, error) {
+func (h *Handler) replaceDraftSegments(ctx context.Context, tx pgx.Tx, fileID int64, segments []common.Segment) ([]int64, error) {
 	txq := db.New(tx)
 	if err := txq.DeleteSegmentsByFile(ctx, fileID); err != nil {
 		return nil, fmt.Errorf("clear draft segments: %w", err)
@@ -366,12 +368,12 @@ func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project,
 		return fmt.Errorf("read stored file: %w", err)
 	}
 	// Parsed in the mode the file was uploaded with, not today's setting.
-	layout, err := parser.FileXLSXLayout(f.XlsxLayout)
+	layout, err := parsers.FileXLSXLayout(f.XlsxLayout)
 	if err != nil {
 		doneIngest(err)
 		return fmt.Errorf("read stored xlsx layout: %w", err)
 	}
-	p, err := parser.GetParserWith(string(f.Format), parser.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
+	p, err := parsers.GetParserWith(string(f.Format), parsers.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
 	if err != nil {
 		doneIngest(err)
 		return err

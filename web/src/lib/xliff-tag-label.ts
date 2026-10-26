@@ -52,8 +52,8 @@ export type RefResolver = (refKey: string) => string | undefined
 
 /**
  * ctype values that don't encode their element name, so they need a table.
- * Inverse of the Go-side maps in internal/parser: htmlCtypeMap (html.go),
- * inlineCtypeToHTMLMap (inline_tag.go) and xmlInlineCtypes (xml_inline.go).
+ * Inverse of the Go-side maps in internal/parsers: htmlCtypeMap (html/html_segment.go),
+ * inlineCtypeToHTMLMap (common/inline_tag.go) and xmlInlineCtypes (xml/xml_inline.go).
  */
 const CTYPE_ELEMENT: Record<string, string> = {
   bold: 'b',

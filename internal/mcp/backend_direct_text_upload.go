@@ -9,19 +9,19 @@ import (
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/file"
-	"openloc/internal/parser"
+	"openloc/internal/parsers/common"
 	"openloc/internal/pipeline"
 )
 
 // maxTextUpload caps a document sent or returned as text in a tool call. The
 // text passes through the model's context, so the cap sits far below the
-// 50 MB upload limit; a bigger file goes through the project page.
+// upload limit; a bigger file goes through the project page.
 const maxTextUpload = 1 << 20
 
 // textUploadFormats are the formats a model can send or read as text. Word, PDF and
 // Excel files are binary, and a model does not copy binary content reliably.
 var textUploadFormats = map[string]bool{
-	"txt": true, "html": true, "markdown": true, "json_i18n": true, "xliff": true,
+	"txt": true, "html": true, "markdown": true, "json_i18n": true, "xliff": true, "xliff2": true,
 	"po": true, "pot": true, "apple_strings": true, "android_xml": true, "xml": true,
 }
 
@@ -44,7 +44,7 @@ func (b *directBackend) UploadTextFile(ctx context.Context, in UploadTextFileIn)
 		return AttachedFileOut{}, invalidf("the content is not valid UTF-8 text")
 	}
 	content := []byte(in.Content)
-	if format := parser.DetectFormat(name, content); format != "" && !textUploadFormats[format] {
+	if format := common.DetectFormat(name, content); format != "" && !textUploadFormats[format] {
 		return AttachedFileOut{}, invalidf("%s is not a text format; ask the user to upload the file on the project page", name)
 	}
 	p, err := b.project(ctx, in.ProjectID)
