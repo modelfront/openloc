@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { backgroundAndBehind, deleteViaAPI, login } from "./helpers";
+import { readFileSync } from "node:fs";
+import { backgroundAndBehind, deleteViaAPI, login, pickComboboxOption, selectTargetLanguages } from "./helpers";
 
 /**
  * Create a QA profile through the New QA profile dialog and return its id,
@@ -20,8 +21,18 @@ async function createProfileViaUI(page: Page, name: string, description?: string
 }
 
 test.describe("QA profiles", () => {
+  // A profile a test created, deleted best-effort after it with its own
+  // timeout budget.
+  let createdProfileId: number | undefined;
+
   test.beforeEach(async ({ page }) => {
     await login(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    if (createdProfileId === undefined) return;
+    await page.request.delete(`/api/qa-profiles/${createdProfileId}`).catch(() => {});
+    createdProfileId = undefined;
   });
 
   test("QA profiles page shows seeded Standard QA profile", async ({ page }) => {
@@ -77,7 +88,7 @@ test.describe("QA profiles", () => {
 
       // The tag_checks sub-checks only render while the rule is enabled, so their
       // visibility is a clean observable signal of the enabled/disabled state.
-      const tagRow = page.locator("div.px-4.py-3").filter({ hasText: "Tag checks" });
+      const tagRow = page.getByTestId("qa-rule-tag_checks");
       await expect(tagRow).toBeVisible({ timeout: 10000 });
 
       const ruleSaved = () =>
@@ -97,6 +108,95 @@ test.describe("QA profiles", () => {
     } finally {
       await deleteViaAPI(page, `/api/qa-profiles/${profileId}`, `QA profile ${profileId}`);
     }
+  });
+
+  test("the number checks are listed, and the number format mode is saved", async ({ page }) => {
+    await page.getByRole("link", { name: /qa profiles/i }).click();
+    const profileName = `E2E QA number format ${Date.now()}`;
+    createdProfileId = await createProfileViaUI(page, profileName);
+
+    await page.getByText(profileName).first().click();
+    const panel = page.getByTestId("qa-rules-panel");
+    const numbers = page.getByTestId("qa-rule-number_consistency");
+    await expect(numbers).toBeVisible({ timeout: 10000 });
+    for (const label of ["Number format", "Dates", "Times", "Units"]) {
+      await expect(panel.getByText(label, { exact: true })).toBeVisible();
+    }
+
+    const ruleSaved = () =>
+      page.waitForResponse(r => /\/qa-profiles\/\d+\/rules$/.test(r.url()) && r.request().method() === "POST");
+    const formatRow = page.getByTestId("qa-rule-number_format");
+
+    // Enabling the rule saves the default mode and shows the mode toggle.
+    const [enabled] = await Promise.all([ruleSaved(), formatRow.getByRole("button", { name: "Warning", exact: true }).click()]);
+    expect(enabled.request().postDataJSON()).toMatchObject({ check_type: "number_format", enabled: true, severity: "warning", config: { mode: "allow" } });
+    const mode = page.getByTestId("qa-number-format-mode");
+    await expect(mode.getByRole("radio", { name: "Source or target format" })).toHaveAttribute("aria-checked", "true");
+
+    const [switched] = await Promise.all([ruleSaved(), mode.getByRole("radio", { name: "Target format only" }).click()]);
+    expect(switched.ok(), `save mode: ${switched.status()}`).toBe(true);
+    expect(switched.request().postDataJSON()).toMatchObject({ check_type: "number_format", config: { mode: "require" } });
+
+    // After a reload the profile still requires the target format.
+    await page.reload();
+    await page.getByText(profileName).first().click();
+    await expect(page.getByTestId("qa-number-format-mode").getByRole("radio", { name: "Target format only" }))
+      .toHaveAttribute("aria-checked", "true", { timeout: 10000 });
+  });
+
+  test("languages' number format shows while the rule is on, and is kept while it is off", async ({ page }) => {
+    await page.getByRole("link", { name: /qa profiles/i }).click();
+    const profileName = `E2E QA number languages ${Date.now()}`;
+    createdProfileId = await createProfileViaUI(page, profileName);
+
+    await page.getByText(profileName).first().click();
+    const formatRow = page.getByTestId("qa-rule-number_format");
+    await expect(formatRow).toBeVisible({ timeout: 10000 });
+    const block = page.getByTestId("qa-number-format-languages");
+    await expect(block).toHaveCount(0);
+
+    const ruleSaved = () =>
+      page.waitForResponse(r => /\/qa-profiles\/\d+\/rules$/.test(r.url()) && r.request().method() === "POST");
+    await Promise.all([ruleSaved(), formatRow.getByRole("button", { name: "Warning", exact: true }).click()]);
+    await expect(block).toBeVisible();
+
+    await selectTargetLanguages(page, block.getByTestId("lang"), ["es", "de"]);
+    await pickComboboxOption(page, page.getByTestId("qa-number-format-new-format"), "1 234,56");
+    const add = page.getByTestId("qa-number-format-add");
+    await expect(add).toHaveText("Add 2 languages");
+    const languages = [{ language: "es", decimal: ",", group: " " }, { language: "de", decimal: ",", group: " " }];
+    const [saved] = await Promise.all([ruleSaved(), add.click()]);
+    expect(saved.ok(), `save languages: ${saved.status()}`).toBe(true);
+    expect(saved.request().postDataJSON()).toMatchObject({ check_type: "number_format", enabled: true, config: { mode: "allow", languages } });
+    await expect(page.getByTestId("qa-number-format-es")).toContainText("1 234,56");
+    await expect(page.getByTestId("qa-number-format-de")).toContainText("1 234,56");
+
+    // Off: the list is hidden, and the save keeps it.
+    const [off] = await Promise.all([ruleSaved(), formatRow.getByRole("button", { name: "Disabled", exact: true }).click()]);
+    expect(off.request().postDataJSON()).toMatchObject({ check_type: "number_format", enabled: false, config: { languages } });
+    await expect(block).toHaveCount(0);
+
+    // After a reload, turning it back on shows the kept languages.
+    await page.reload();
+    await page.getByText(profileName).first().click();
+    await expect(formatRow).toBeVisible({ timeout: 10000 });
+    await expect(block).toHaveCount(0);
+    await Promise.all([ruleSaved(), formatRow.getByRole("button", { name: "Warning", exact: true }).click()]);
+    await expect(page.getByTestId("qa-number-format-es")).toContainText("1 234,56", { timeout: 10000 });
+    await expect(page.getByTestId("qa-number-format-de")).toContainText("1 234,56");
+
+    // A language already in the list is not offered again.
+    const popover = page.locator('[data-slot="popover-content"]');
+    await page.getByTestId("qa-number-format-languages").getByTestId("lang").click();
+    await expect(popover).toHaveCount(1);
+    const search = popover.getByPlaceholder(/search languages/i);
+    await search.fill("fr");
+    await expect(popover.getByTestId("lang-option-fr")).toBeVisible();
+    await search.fill("es");
+    await expect(popover.getByTestId("lang-option-es-mx")).toBeVisible();
+    await expect(popover.getByTestId("lang-option-es")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
   });
 
   test("can create and delete a QA profile", async ({ page }) => {
@@ -235,5 +335,105 @@ test.describe("QA profiles", () => {
     } finally {
       await deleteViaAPI(page, `/api/qa-profiles/${profileId}`, `QA profile ${profileId}`);
     }
+  });
+});
+
+test.describe("QA profile custom regex rules", () => {
+  const created: number[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    while (created.length) {
+      await deleteViaAPI(page, `/api/qa-profiles/${created.pop()}`, "QA profile");
+    }
+  });
+
+  test("add a regex rule with a non-breaking space, export the profile and import it back", async ({ page }) => {
+    await page.goto("/quality");
+    const profileName = `E2E QA regex ${Date.now()}`;
+    created.push(await createProfileViaUI(page, profileName));
+    await page.getByText(profileName).first().click();
+
+    await page.getByTestId("add-regex-rule").click();
+    await page.getByTestId("regex-name").fill("Space before unit");
+    const pattern = page.getByTestId("regex-pattern");
+    await pattern.fill("\\d(kg)");
+    await pattern.evaluate((el: HTMLInputElement) => el.setSelectionRange(2, 2));
+    await page.getByRole("button", { name: "NBSP", exact: true }).first().click();
+    await expect(page.getByTestId("special-space-preview")).toContainText("NBSP");
+    await page.getByTestId("regex-message").fill("Use a non-breaking space before the unit.");
+    const [saved] = await Promise.all([
+      page.waitForResponse(r => /\/api\/qa-profiles\/\d+\/rules$/.test(r.url()) && r.request().method() === "POST"),
+      page.getByTestId("regex-save").click(),
+    ]);
+    expect(saved.ok(), `save regex rule: ${saved.status()}`).toBe(true);
+    const rule = (await saved.json()).data;
+    expect(rule.config.pattern).toBe("\\d\u00a0(kg)");
+    await expect(page.getByTestId(`regex-rule-${rule.id}`)).toContainText("Space before unit");
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("export-qa-profile").click(),
+    ]);
+    const text = readFileSync(await download.path(), "utf8");
+    expect(text).toContain("\\\\d\u00a0(kg)");
+
+    const [imported] = await Promise.all([
+      page.waitForResponse(r => /\/api\/qa-profiles\/import$/.test(r.url())),
+      page.getByTestId("import-qa-profile-input").setInputFiles({ name: "profile.json", mimeType: "application/json", buffer: Buffer.from(text, "utf8") }),
+    ]);
+    expect(imported.status(), `import: ${await imported.text()}`).toBe(201);
+    const copy = (await imported.json()).data;
+    created.push(copy.id);
+    expect(copy.name).toBe(`${profileName} (2)`);
+    await expect(page.getByText(`${profileName} (2)`).first()).toBeVisible();
+  });
+
+  test("a pattern the server refuses shows its reason under the field", async ({ page }) => {
+    await page.goto("/quality");
+    const profileName = `E2E QA regex bad ${Date.now()}`;
+    created.push(await createProfileViaUI(page, profileName));
+    await page.getByText(profileName).first().click();
+
+    await page.getByTestId("add-regex-rule").click();
+    await page.getByTestId("regex-name").fill("Broken");
+    await page.getByTestId("regex-pattern").fill("a*");
+    await page.getByTestId("regex-message").fill("Never shown.");
+    const [res] = await Promise.all([
+      page.waitForResponse(r => /\/api\/qa-profiles\/\d+\/rules$/.test(r.url()) && r.request().method() === "POST"),
+      page.getByTestId("regex-save").click(),
+    ]);
+    expect(res.status()).toBe(400);
+    await expect(page.getByText(/matches empty text/i)).toBeVisible();
+  });
+
+  test("the Placeables check saves its sub-checks", async ({ page }) => {
+    await page.goto("/quality");
+    const profileName = `E2E QA placeables ${Date.now()}`;
+    created.push(await createProfileViaUI(page, profileName));
+
+    await page.getByText(profileName).first().click();
+    const row = page.getByTestId("qa-rule-placeables");
+    await expect(row).toBeVisible({ timeout: 10000 });
+    const subs = page.getByTestId("qa-sub-checks-placeables");
+    await expect(subs).toHaveCount(0);
+    const ruleSaved = () =>
+      page.waitForResponse(r => /\/qa-profiles\/\d+\/rules$/.test(r.url()) && r.request().method() === "POST");
+
+    const [on] = await Promise.all([ruleSaved(), row.getByRole("button", { name: "Warning", exact: true }).click()]);
+    expect(on.request().postDataJSON()).toMatchObject({ check_type: "placeables", enabled: true, config: { urls_emails: true, codes: true, variables: true } });
+    await expect(subs.getByRole("checkbox")).toHaveCount(3);
+
+    const [off] = await Promise.all([ruleSaved(), subs.getByLabel(/alphanumerics/i).click()]);
+    expect(off.ok(), `save sub-check: ${off.status()}`).toBe(true);
+    expect(off.request().postDataJSON()).toMatchObject({ config: { urls_emails: true, codes: false, variables: true } });
+
+    await page.reload();
+    await page.getByText(profileName).first().click();
+    await expect(subs.getByLabel(/alphanumerics/i)).not.toBeChecked({ timeout: 10000 });
+    await expect(subs.getByLabel(/variables/i)).toBeChecked();
   });
 });

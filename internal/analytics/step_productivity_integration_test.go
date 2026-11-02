@@ -332,7 +332,9 @@ func TestIntegrationStepProductivity_ReadsOnlyTheProjectsHistory(t *testing.T) {
 		SELECT $1, 'human', $2, $3 FROM generate_series(1, 3000)`, otherTr.ID, otherUser, otherJSA); err != nil {
 		t.Fatalf("other history: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `ANALYZE translation_history`); err != nil {
+	// Every table the report joins, so the plan rests on real statistics and
+	// not on estimates from page counts and column widths.
+	if _, err := pool.Exec(ctx, `ANALYZE`); err != nil {
 		t.Fatalf("analyze: %v", err)
 	}
 

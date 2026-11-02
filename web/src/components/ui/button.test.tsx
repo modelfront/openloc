@@ -63,6 +63,31 @@ describe('Button hover background', () => {
   )
 })
 
+describe('Button unavailable filled', () => {
+  const faded = /(^|\s)bg-primary-faded(\s|$)/
+  it('fades a disabled filled button to the solid faded primary, not opacity', () => {
+    const { getByRole } = render(<Button disabled>Save</Button>)
+    const cls = getByRole('button').className
+    expect(cls).toMatch(faded)
+    expect(cls).toMatch(/(^|\s)text-primary-faded-foreground(\s|$)/)
+    expect(cls).not.toMatch(/(^|\s)text-primary-foreground(\s|$)/)
+    expect(cls).toMatch(/(^|\s)disabled:opacity-100(\s|$)/)
+    expect(cls).not.toMatch(/(^|\s)bg-primary(\s|$)/)
+  })
+
+  it('keeps the primary fill while loading, even when also disabled', () => {
+    const { getByRole } = render(<Button loading disabled>Save</Button>)
+    const cls = getByRole('button').className
+    expect(cls).toMatch(/(^|\s)bg-primary(\s|$)/)
+    expect(cls).not.toMatch(faded)
+  })
+
+  it('leaves other variants alone when disabled', () => {
+    const { getByRole } = render(<Button variant="outline" disabled>Cancel</Button>)
+    expect(getByRole('button').className).not.toMatch(faded)
+  })
+})
+
 describe('Button start/end icons', () => {
   it('renders a start icon marked data-icon=inline-start before the label', () => {
     const { getByRole } = render(

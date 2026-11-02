@@ -14,6 +14,7 @@ import { FormField } from '@/components/ui/form-field'
 import { Combobox, MultiCombobox } from '@/components/ui/combobox'
 import { langPickerProps, toLangOptions } from './lang-options'
 import { CustomerSelect } from './customer/CustomerSelect'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 const tmSchema = z.object({
   name: z.string().min(1, 'TM name is required'),
@@ -136,13 +137,7 @@ export function CreateTMDialog({ open, onClose, onCreated, initialSourceLanguage
               {...register('name')}
               placeholder="TM name"
               autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  submit()
-                }
-              }}
+              onKeyDown={submitOnEnter(submit)}
             />
           </FormField>
 

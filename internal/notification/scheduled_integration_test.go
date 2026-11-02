@@ -36,6 +36,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,6 +70,7 @@ type spySendCall struct {
 	To       string
 	Subject  string
 	HTMLBody string
+	Thread   emaillayout.Thread
 }
 
 func (s *spySender) SendEmail(_ context.Context, to, subject string, body emaillayout.Email) error {
@@ -79,7 +81,7 @@ func (s *spySender) SendEmail(_ context.Context, to, subject string, body emaill
 		// test wants to assert on what was *successfully* sent.
 		return errors.New("simulated send failure")
 	}
-	s.calls = append(s.calls, spySendCall{To: to, Subject: subject, HTMLBody: body.HTML()})
+	s.calls = append(s.calls, spySendCall{To: to, Subject: subject, HTMLBody: body.HTML(), Thread: body.Thread()})
 	return nil
 }
 
@@ -195,7 +197,15 @@ func TestScheduled_HappyPath_DispatchesDeadlineNotification(t *testing.T) {
 	_, q, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()
 
-	userID, jobID := seedDeadlineFixture(t, q, 12*time.Hour)
+	tenantID, userID, jobID := seedDeadlineTenant(t, q, "DeadlineCorp", 12*time.Hour)
+	job, err := q.GetJobTenant(context.Background(), db.GetJobTenantParams{ID: jobID, TenantID: tenantID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := q.GetFileTenant(context.Background(), db.GetFileTenantParams{ID: job.FileID, TenantID: tenantID})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	sender := &spySender{}
 	service := notif.NewService(q, sender)
@@ -212,8 +222,12 @@ func TestScheduled_HappyPath_DispatchesDeadlineNotification(t *testing.T) {
 	if emails[0].To != "translator@deadlinecorp.test" {
 		t.Errorf("email.To = %q, want translator@deadlinecorp.test", emails[0].To)
 	}
-	if !strings.Contains(emails[0].Subject, "Deadline") {
-		t.Errorf("email.Subject = %q, want subject containing 'Deadline'", emails[0].Subject)
+	if emails[0].Subject != "[OpenLoc] Deadline Project" {
+		t.Errorf("email.Subject = %q, want the project subject", emails[0].Subject)
+	}
+	wantThread := emaillayout.Thread{ID: fmt.Sprintf("project-%d-%d.openloc", tenantID, file.ProjectID)}
+	if emails[0].Thread != wantThread {
+		t.Errorf("email thread = %+v, want the project thread %+v", emails[0].Thread, wantThread)
 	}
 
 	if got := countDeadlineNotifsForUser(t, q, userID); got != 1 {
@@ -224,6 +238,9 @@ func TestScheduled_HappyPath_DispatchesDeadlineNotification(t *testing.T) {
 	rows := allNotifsByUser(t, q, userID)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 notification row, got %d", len(rows))
+	}
+	if !strings.HasPrefix(rows[0].Subject, "Deadline approaching: ") {
+		t.Errorf("notification subject = %q, want the detailed bell subject", rows[0].Subject)
 	}
 	if rows[0].ReferenceType != "job" || rows[0].ReferenceID != jobID {
 		t.Errorf("notification ref = (%s, %d), want (job, %d)",

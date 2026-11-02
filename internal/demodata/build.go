@@ -11,6 +11,7 @@ import (
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/settings"
 )
 
 // builder writes the dataset through one transaction. Every method returns
@@ -364,7 +365,7 @@ func (b *builder) customer(name string) (customerRef, error) {
 }
 
 func (b *builder) project(name, description string, targets []string, customer customerRef, status db.ProjectStatus, deadlineDays int, domain string, managed bool) (db.Project, error) {
-	sp, err := b.q.CreateSettingsProfile(b.ctx, db.CreateSettingsProfileParams{TenantID: b.tenantID, FuzzyThreshold: 0.75, MtOnUpload: true, TmOnUpload: true})
+	sp, err := settings.CreateProfileFor(b.ctx, b.q, db.CreateSettingsProfileParams{TenantID: b.tenantID, FuzzyThreshold: 0.75, MtOnUpload: true, TmOnUpload: true}, "en")
 	if err != nil {
 		return db.Project{}, fmt.Errorf("settings profile: %w", err)
 	}
@@ -437,7 +438,7 @@ func (b *builder) wireProfile(profileID, tmID int64, tb *db.TermBasis, qaID *int
 	}
 	if tb != nil {
 		for _, lang := range targets {
-			if _, err := b.q.CreateSettingsTermAssignment(b.ctx, db.CreateSettingsTermAssignmentParams{SettingsProfileID: profileID, TermBaseID: tb.ID, SourceLanguage: "en", TargetLanguage: lang, Mode: "read", Priority: 0}); err != nil {
+			if _, err := b.q.CreateSettingsTermAssignment(b.ctx, db.CreateSettingsTermAssignmentParams{SettingsProfileID: profileID, TermBaseID: tb.ID, SourceLanguage: "en", TargetLanguage: lang, Mode: "read_write", Priority: 0}); err != nil {
 				return fmt.Errorf("term assignment: %w", err)
 			}
 		}

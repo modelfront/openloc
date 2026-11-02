@@ -21,6 +21,43 @@ function isWordChar(ch: string): boolean {
 // (handles Turkish İ→i, accented characters, etc.). Shared by all matchers.
 const caseFold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
 
+// caseFold per character, with `map[i]` = the original index of folded unit i
+// and `map[folded.length]` = text.length. Folding changes length (a Hangul
+// syllable becomes 2-3 jamo, "…" becomes "...", marks vanish), so a folded
+// index must go through the map before it touches the original text.
+function foldWithMap(text: string): { folded: string; map: number[] } {
+  let folded = ''
+  const map: number[] = []
+  let i = 0
+  for (const ch of text) {
+    const f = caseFold(ch)
+    for (let k = 0; k < f.length; k++) map.push(i)
+    folded += f
+    i += ch.length
+  }
+  map.push(text.length)
+  return { folded, map }
+}
+
+/**
+ * Every case-folded occurrence of `term` in `text`, as original-text ranges.
+ * A match that starts or ends inside the expansion of one original character
+ * ("1" in "½") is not a match. With `wholeWord`, only word-boundary matches.
+ */
+function* termMatches(text: string, term: string, wholeWord: boolean): Generator<{ index: number; length: number }> {
+  const needle = caseFold(term)
+  if (!needle) return
+  const { folded, map } = foldWithMap(text)
+  for (let idx = folded.indexOf(needle); idx !== -1; idx = folded.indexOf(needle, idx + 1)) {
+    const end = idx + needle.length
+    if ((idx > 0 && map[idx - 1] === map[idx]) || map[end - 1] === map[end]) continue
+    const start = map[idx]
+    const stop = map[end]
+    if (wholeWord && ((start > 0 && isWordChar(text[start - 1])) || (stop < text.length && isWordChar(text[stop])))) continue
+    yield { index: start, length: stop - start }
+  }
+}
+
 /**
  * Find the position of a term (case-insensitive) in the text.
  * Returns the index and length, or null if not found.
@@ -36,31 +73,7 @@ export function findTermInText(
   term: string,
   wholeWord = false
 ): { index: number; length: number } | null {
-  if (!term) return null
-  const textLower = caseFold(text)
-  const termLower = caseFold(term)
-  let startPos = 0
-
-  while (startPos < textLower.length) {
-    const idx = textLower.indexOf(termLower, startPos)
-    if (idx === -1) return null
-
-    if (!wholeWord) {
-      return { index: idx, length: term.length }
-    }
-
-    // Check word boundaries: char before and after the match must not be word characters
-    const beforeOk = idx === 0 || !isWordChar(text[idx - 1])
-    const afterOk = (idx + term.length) >= text.length || !isWordChar(text[idx + term.length])
-
-    if (beforeOk && afterOk) {
-      return { index: idx, length: term.length }
-    }
-
-    // Not a whole-word match — try next occurrence
-    startPos = idx + 1
-  }
-
+  for (const m of termMatches(text, term, wholeWord)) return m
   return null
 }
 
@@ -75,22 +88,7 @@ export function findAllTermMatches(
   term: string,
   wholeWord = false
 ): { index: number; length: number }[] {
-  if (!term) return []
-  const textLower = caseFold(text)
-  const termLower = caseFold(term)
-  const out: { index: number; length: number }[] = []
-  let startPos = 0
-  while (startPos <= textLower.length) {
-    const idx = textLower.indexOf(termLower, startPos)
-    if (idx === -1) break
-    const beforeOk = idx === 0 || !isWordChar(text[idx - 1])
-    const afterOk = (idx + term.length) >= text.length || !isWordChar(text[idx + term.length])
-    if (!wholeWord || (beforeOk && afterOk)) {
-      out.push({ index: idx, length: term.length })
-    }
-    startPos = idx + 1
-  }
-  return out
+  return [...termMatches(text, term, wholeWord)]
 }
 
 /**

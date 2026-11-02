@@ -32,9 +32,9 @@ func handleAppConfig(deps Deps) http.HandlerFunc {
 			// /docs or /api-docs), and whether this request came in on it.
 			// BASE_URL need not match the address the app is served on, so
 			// the frontend never compares addresses itself.
-			"docs_url":       hostOrigin(deps.BaseURL, deps.DocsHost),
+			"docs_url":       HostOrigin(deps.BaseURL, deps.DocsHost),
 			"docs_host":      onHost(r, deps.DocsHost),
-			"developer_url":  hostOrigin(deps.BaseURL, deps.DeveloperHost),
+			"developer_url":  HostOrigin(deps.BaseURL, deps.DeveloperHost),
 			"developer_host": onHost(r, deps.DeveloperHost),
 			// The Playground is on: the UI offers it and its saved tours.
 			"playground": deps.DemoOrg,

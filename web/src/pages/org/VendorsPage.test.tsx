@@ -155,3 +155,21 @@ describe('VendorsPage when the list fails to load', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('VendorsPage invite form', () => {
+  it('keeps Send invitation disabled until the email is valid, and says why', async () => {
+    membersMock.mockResolvedValue([])
+    invitesMock.mockResolvedValue([])
+    renderPage()
+    const email = await screen.findByTestId('vendor-invite-email')
+    const submit = () => screen.getByTestId('vendor-invite-submit')
+    await waitFor(() => expect(submit()).toHaveAttribute('aria-disabled', 'true'))
+    fireEvent.change(email, { target: { value: 'not-an-email' } })
+    await waitFor(() => expect(submit()).toHaveAttribute('aria-disabled', 'true'))
+    fireEvent.focus(submit())
+    expect(await screen.findByText('Enter a valid email address first.')).toBeInTheDocument()
+    fireEvent.change(email, { target: { value: 'new@example.com' } })
+    await waitFor(() => expect(submit()).not.toHaveAttribute('aria-disabled'))
+    expect(submit()).toBeEnabled()
+  })
+})

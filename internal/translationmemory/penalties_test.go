@@ -49,6 +49,57 @@ func TestPenalties_Deduction(t *testing.T) {
 	}
 }
 
+// Breakdown is what the Resources panel shows beside the percent, so it must
+// name every deduction Deduction charged, with the languages that caused a
+// variant penalty, and nothing Deduction did not charge.
+func TestPenalties_Breakdown(t *testing.T) {
+	p := Penalties{Sublanguage: 0.01, NearExact: 0.02, PerTM: map[int64]float64{7: 0.05}}
+
+	t.Run("lists_each_deduction_with_its_languages", func(t *testing.T) {
+		in := MatchInfo{TMID: 7, WantSrc: "en-us", GotSrc: "en", WantTgt: "fr-fr", GotTgt: "fr-ca", NearExact: true}
+		want := []Penalty{
+			{Kind: PenaltySourceVariant, Percent: 1, TMLanguage: "en", ProjectLanguage: "en-us"},
+			{Kind: PenaltyTargetVariant, Percent: 1, TMLanguage: "fr-ca", ProjectLanguage: "fr-fr"},
+			{Kind: PenaltyNearExact, Percent: 2},
+			{Kind: PenaltyTM, Percent: 5},
+		}
+		got := p.Breakdown(in)
+		if len(got) != len(want) {
+			t.Fatalf("Breakdown = %+v, want %+v", got, want)
+		}
+		sum := 0
+		for i := range want {
+			g := got[i]
+			g.amount = 0
+			if g != want[i] {
+				t.Errorf("Breakdown[%d] = %+v, want %+v", i, g, want[i])
+			}
+			sum += got[i].Percent
+		}
+		if d := int(math.Round(p.Deduction(in) * 100)); sum != d {
+			t.Errorf("Breakdown sums to %d%%, Deduction charges %d%%", sum, d)
+		}
+	})
+
+	t.Run("clean_match_has_none", func(t *testing.T) {
+		in := MatchInfo{TMID: 8, WantSrc: "en", GotSrc: "en", WantTgt: "fr", GotTgt: "fr"}
+		if got := p.Breakdown(in); got != nil {
+			t.Errorf("Breakdown = %+v, want nil", got)
+		}
+	})
+
+	// A variant under a 0% penalty is not docked, so the panel must not
+	// claim it was.
+	t.Run("zero_penalty_is_not_listed", func(t *testing.T) {
+		none := Penalties{NearExact: 0.01}
+		in := MatchInfo{WantSrc: "en-us", GotSrc: "en", WantTgt: "fr", GotTgt: "fr", NearExact: true}
+		got := none.Breakdown(in)
+		if len(got) != 1 || got[0].Kind != PenaltyNearExact {
+			t.Errorf("Breakdown = %+v, want only the near-exact penalty", got)
+		}
+	})
+}
+
 func TestPenalties_Apply(t *testing.T) {
 	p := Penalties{Sublanguage: 0.01, NearExact: 0.01, PerTM: map[int64]float64{7: 0.05}}
 	same := MatchInfo{WantSrc: "en", GotSrc: "en", WantTgt: "fr", GotTgt: "fr"}

@@ -12,6 +12,7 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/enginehealth"
 	"openloc/internal/extension"
+	"openloc/internal/logging"
 	"openloc/pkg/extsdk"
 )
 
@@ -222,15 +223,30 @@ func TestRunAIStep_ExtensionGetsBatchMetadata(t *testing.T) {
 	}
 }
 
-// A vendor 4xx (other than 429) is a request the vendor will refuse again,
-// so the job fails without retries; 429 and 5xx may pass on a later try.
+// Only a vendor 4xx is the user's to fix (their key, plan or rate): a
+// ClientError, Permanent but for 429, which asks to come back later. A 5xx,
+// a vendor that answered and still failed, or one that never answered is an
+// outage (VendorOutageError); anything else (the extension refusing on its
+// own, a trap, bad output) is an ExtensionFailure. Both are reported, and
+// both keep the extension's text out of what is logged and reported: it can
+// quote the vendor's body.
 func TestRunAIStep_VendorClientErrorIsNotRetried(t *testing.T) {
+	const marker = "SEGMENT-TEXT-MARKER"
 	for _, tc := range []struct {
-		status    int
-		permanent bool
-	}{{400, true}, {401, true}, {422, true}, {429, false}, {503, false}, {0, false}} {
+		status      int
+		unreachable bool
+		permanent   bool
+		want        string // client | outage | failure
+	}{
+		{400, false, true, "client"}, {401, false, true, "client"}, {422, false, true, "client"}, {429, false, false, "client"},
+		{503, false, false, "outage"}, {200, false, false, "outage"}, {0, true, false, "outage"},
+		// A 429, then a retry that got no answer: the latest request is what
+		// counts, and it is an outage.
+		{429, true, false, "outage"},
+		{0, false, false, "failure"},
+	} {
 		mq := extStepJob("good")
-		pred := &fakeExtPredictor{err: &extension.CallError{Msg: "refused", VendorStatus: tc.status}}
+		pred := &fakeExtPredictor{err: &extension.CallError{Msg: "refused " + marker, VendorStatus: tc.status, VendorUnreachable: tc.unreachable}}
 		svc, _ := newExtStepService(mq, pred)
 		_, err := svc.RunAIStep(context.Background(), 1, 5, nil)
 		if err == nil {
@@ -239,8 +255,24 @@ func TestRunAIStep_VendorClientErrorIsNotRetried(t *testing.T) {
 		if got := IsPermanent(err); got != tc.permanent {
 			t.Errorf("status %d: permanent = %v, want %v (err: %v)", tc.status, got, tc.permanent, err)
 		}
-		if _, ok := httputil.AsClientError(err); !ok {
-			t.Errorf("status %d: the vendor's message must reach the user as a client error, got %v", tc.status, err)
+		_, client := httputil.AsClientError(err)
+		var outage *VendorOutageError
+		var failure *ExtensionFailure
+		got := map[bool]string{true: "client"}[client]
+		switch {
+		case errors.As(err, &outage):
+			got = "outage"
+		case errors.As(err, &failure):
+			got = "failure"
+		}
+		if got != tc.want {
+			t.Errorf("status %d unreachable %v: got %q (%T %v), want %q", tc.status, tc.unreachable, got, err, err, tc.want)
+		}
+		if !strings.Contains(err.Error(), "refused") {
+			t.Errorf("status %d: the extension's message must reach the user, got %v", tc.status, err)
+		}
+		if tc.want != "client" && strings.Contains(logging.SafeErrorMessage(err), marker) {
+			t.Errorf("status %d: the extension's text reached the log text: %q", tc.status, logging.SafeErrorMessage(err))
 		}
 	}
 }

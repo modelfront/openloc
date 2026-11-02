@@ -1,50 +1,58 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useDebounce } from './useDebounce'
 
 /**
  * A text input backed by one URL query param, written `delay` ms after the last
- * keystroke — the search box on a filtered list. Returns `[value, setValue]`
- * for the input; the URL param is the source of truth the list query reads.
- * An empty value removes the param. Other params are left alone.
+ * keystroke — the search box of a URL-backed list. Returns `[value, setValue]`
+ * for the input. The input keeps its own state, so a list filtered in the
+ * browser filters on `value` and narrows as you type; a server-backed list
+ * reads the URL param. An empty value removes the param. Other params are left
+ * alone.
  *
- * The write runs only when the debounced input changes. `setParams` gets a new
- * identity on every URL change, so watching it would re-write the old input
- * over a URL just changed from outside (Clear filters, back/forward). It also
- * writes only when the value differs from the URL: `setParams` navigates even
- * when it returns `prev` unchanged, and `prev` can be a stale snapshot, so a
- * no-op write on mount pulls back a page that another component (a guided
- * tour) just left.
+ * The router applies a URL change as a transition, so the URL can still show a
+ * value this hook wrote while the user types on. `written` holds those values
+ * until the URL reaches them: only a URL value that is not one of them is a
+ * change from outside (Clear filters, back/forward) and replaces the input.
+ *
+ * A write is skipped when the input already matches what the URL holds or is
+ * about to hold: `setParams` navigates even when it returns `prev` unchanged,
+ * and `prev` can be a stale snapshot, so a no-op write on mount pulls back a
+ * page that another component (a guided tour) just left.
  */
 export function useDebouncedUrlParam(key: string, delay = 300) {
   const [params, setParams] = useSearchParams()
   const urlValue = params.get(key) ?? ''
   const [value, setValue] = useState(urlValue)
-  const debounced = useDebounce(value, delay)
+  const [written, setWritten] = useState<string[]>([])
+  const [seenUrl, setSeenUrl] = useState(urlValue)
 
-  // Read, not watched: the write effect answers the input, the sync effect
-  // answers the URL. Declared first so it runs before both in each commit.
-  const latest = useRef({ urlValue, setParams })
-  useEffect(() => {
-    latest.current = { urlValue, setParams }
-  })
+  // The URL param changed since the last render: adjust state while rendering,
+  // so the write effect below never sees the old input against the new URL.
+  if (urlValue !== seenUrl) {
+    setSeenUrl(urlValue)
+    const own = written.indexOf(urlValue)
+    if (own >= 0) {
+      setWritten(written.slice(own + 1))
+    } else {
+      setWritten([])
+      setValue(urlValue)
+    }
+  }
 
+  const expected = written.at(-1) ?? urlValue
   useEffect(() => {
-    const { urlValue, setParams } = latest.current
-    if (debounced === urlValue) return
-    setParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (debounced) next.set(key, debounced)
-      else next.delete(key)
-      return next
-    }, { replace: true })
-  }, [debounced, key])
-
-  // Follow the URL when the param changes from outside (Clear filters,
-  // back/forward).
-  useEffect(() => {
-    setValue(urlValue)
-  }, [urlValue])
+    if (value === expected) return
+    const timer = setTimeout(() => {
+      setWritten(w => [...w, value])
+      setParams(prev => {
+        const next = new URLSearchParams(prev)
+        if (value) next.set(key, value)
+        else next.delete(key)
+        return next
+      }, { replace: true })
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [value, expected, key, delay, setParams])
 
   return [value, setValue] as const
 }

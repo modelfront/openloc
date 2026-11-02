@@ -1,4 +1,4 @@
-.PHONY: dev dev-down dev-restart dev-logs seed-spellcheck seed-task-matrix seed-task-statuses seed-ai-steps seed-analysis seed-docs docs-screenshots journeys-parallel \
+.PHONY: dev dev-down dev-restart dev-logs seed-spellcheck seed-task-matrix seed-task-statuses seed-ai-steps seed-analysis seed-all seed-docs docs-screenshots journeys-parallel ports-free \
        run watch test test-short test-integration ci-go ci-types check-sqlc ci-web ci-images ci-lint ci-e2e ci-journeys check-go-short check-tsc check-licenses scan-secrets scan-vulns lint fmt vet \
        migrate-up migrate-down migrate-status migrate-create \
        sqlc types frontend build clean check e2e reset reset-storage seed \
@@ -37,8 +37,14 @@ APP_URL            ?= http://localhost:$(FRONTEND_PORT)
 API_BASE           ?= http://localhost:$(BACKEND_PORT)
 # The seed's platform admin (internal/seedid OperatorEmail): reads reported issues.
 PLATFORM_ADMIN_EMAILS ?= ops@operators.example.com
+# Docker services `make dev` and `make fresh` start, comma-separated; empty
+# starts all. An instance.conf can leave out services it shares with other checkouts.
+DEV_SERVICES       ?=
 
 -include instance.conf
+
+comma            := ,
+DEV_SERVICE_ARGS  = $(subst $(comma), ,$(DEV_SERVICES))
 
 BIN          := bin/server
 FRONTEND_URL := http://localhost:$(FRONTEND_PORT)
@@ -63,7 +69,7 @@ OPEN_CMD := $(shell command -v xdg-open 2>/dev/null || command -v open 2>/dev/nu
 # --- Dev environment ---
 
 dev: ## Start dev dependencies (postgres, redis, seaweedfs, …)
-	docker compose up -d
+	docker compose up -d $(DEV_SERVICE_ARGS)
 	@echo "Waiting for postgres..."
 	@until docker compose exec -T postgres pg_isready -U openloc > /dev/null 2>&1; do sleep 0.5; done
 	@echo "Dependencies ready. Run 'make migrate-up' then 'make watch'."
@@ -251,6 +257,12 @@ seed-ai-steps: ## Create the "AI step states" project: Hybrid → AI workflow, a
 seed-analysis: ## Create the "Analysis export demo" project: 5 files × 5 languages and one completed analysis with realistic numbers (run by `make reset`)
 	go run ./cmd/seed-analysis
 
+seed-all: ## Seed the full demo set `make reset` loads (seed, task statuses, AI steps, analysis)
+	@$(MAKE) seed
+	@$(MAKE) seed-task-statuses
+	@$(MAKE) seed-ai-steps
+	@$(MAKE) seed-analysis
+
 # `make reset` refuses to drop a database something is still connected to (a
 # dev server, a psql session) and says so; FORCE=1 ends those sessions and drops
 # anyway. The server reconnects by itself.
@@ -264,10 +276,7 @@ reset: reset-storage ## Drop + recreate DB, wipe the storage bucket, run migrati
 	@echo "==> Running migrations..."
 	@$(MAKE) migrate-up
 	@echo "==> Seeding data..."
-	@$(MAKE) seed
-	@$(MAKE) seed-task-statuses
-	@$(MAKE) seed-ai-steps
-	@$(MAKE) seed-analysis
+	@$(MAKE) seed-all
 	@echo "==> Reset complete ✓"
 
 reset-storage: ## Wipe the dev storage bucket. Pairs with `reset` to keep DB + storage consistent.
@@ -360,12 +369,12 @@ frontend: ## Start frontend dev server (no backend)
 
 kill: ## Kill THIS checkout's dev processes and free its backend/frontend ports (leaves other checkouts alone)
 	@# Other checkouts may run side-by-side on their own port blocks. The
-	@# vite/esbuild pkills are anchored to $(CURDIR) so they only match processes
-	@# launched from THIS directory — a bare
+	@# vite/esbuild pkills are anchored to $(CURDIR)/web so they only match processes
+	@# launched from THIS checkout, not from a worktree nested under it — a bare
 	@# `pkill -x air` / `pkill -f vite` would also kill the other instance's
 	@# servers. air/npm listeners are freed by the port-based kills below.
-	@-pkill -9 -f "$(CURDIR).*node_modules/.bin/vite" 2>/dev/null || true
-	@-pkill -9 -f "$(CURDIR).*node_modules/@esbuild/.*/bin/esbuild" 2>/dev/null || true
+	@-pkill -9 -f "$(CURDIR)/web/node_modules/.bin/vite" 2>/dev/null || true
+	@-pkill -9 -f "$(CURDIR)/web/node_modules/@esbuild/.*/bin/esbuild" 2>/dev/null || true
 	@# Reap AIR ITSELF, or it notices its child died and respawns the server —
 	@# reclaiming the port seconds after this target reports success. That stale
 	@# server then answers `fresh`'s health check while your new binary and env
@@ -377,9 +386,22 @@ kill: ## Kill THIS checkout's dev processes and free its backend/frontend ports 
 	@-for p in $$(pgrep -f "go/bin/air" 2>/dev/null); do 		cwd=$$(lsof -a -p $$p -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-); 		[ "$$cwd" = "$(CURDIR)" ] && kill -9 $$p 2>/dev/null || true; 	done
 	@# The binary air builds. Absolute path, so it's anchored to this checkout.
 	@-pkill -9 -f "^$(CURDIR)/tmp/server" 2>/dev/null || true
-	@-lsof -ti :$(BACKEND_PORT) 2>/dev/null | xargs kill -9 2>/dev/null || true
-	@-lsof -ti :$(FRONTEND_PORT) 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@-lsof -ti tcp:$(BACKEND_PORT) -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@-lsof -ti tcp:$(FRONTEND_PORT) -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
 	@echo "Killed this checkout's dev processes (ports $(BACKEND_PORT)/$(FRONTEND_PORT)) ✓"
+
+ports-free: ## Fail while something listens on this checkout's backend or frontend port (a client of one does not count)
+	@for p in $(BACKEND_PORT) $(FRONTEND_PORT); do \
+		if lsof -ti tcp:$$p -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo ""; \
+			echo "\033[31m✗ port $$p is still in use after 'make kill'.\033[0m"; \
+			echo "  Starting now would leave you talking to the OLD server while the new"; \
+			echo "  one dies on bind — with its config lines already in the log."; \
+			echo "  Who has it:  lsof -i :$$p -sTCP:LISTEN"; \
+			echo "  Then:        ps -o pid,lstart,command -p <pid>"; \
+			exit 1; \
+		fi; \
+	done
 
 fresh: ## Kill everything, start backend + frontend from scratch
 	@echo "==> Stopping old processes..."
@@ -391,19 +413,9 @@ fresh: ## Kill everything, start backend + frontend from scratch
 	@# satisfied by the old process — so this target reports success while you
 	@# are talking to a stale binary with stale env. Once the
 	@# ports are known free, anything answering the health check is ours.
-	@for p in $(BACKEND_PORT) $(FRONTEND_PORT); do \
-		if lsof -ti :$$p >/dev/null 2>&1; then \
-			echo ""; \
-			echo "\033[31m✗ port $$p is still in use after 'make kill'.\033[0m"; \
-			echo "  Starting now would leave you talking to the OLD server while the new"; \
-			echo "  one dies on bind — with its config lines already in the log."; \
-			echo "  Who has it:  lsof -i :$$p -sTCP:LISTEN"; \
-			echo "  Then:        ps -o pid,lstart,command -p <pid>"; \
-			exit 1; \
-		fi; \
-	done
+	@$(MAKE) -s ports-free
 	@echo "==> Starting docker services..."
-	@docker compose up -d 2>/dev/null || true
+	@docker compose up -d $(DEV_SERVICE_ARGS) 2>/dev/null || true
 	@echo "==> Starting backend + frontend..."
 	@trap 'kill 0' EXIT; \
 	DEV_AUTO_LOGIN=true $(AIR) & \

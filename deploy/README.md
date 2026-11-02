@@ -233,9 +233,15 @@ uploaded and translated files).
   `PLATFORM_ADMIN_EMAILS` and run `up -d` again. The operator console is then
   available to you.
 - **Issue reports:** the same `PLATFORM_ADMIN_EMAILS` people receive the bugs,
-  enhancements and feature requests users report from the app, by email and
-  under **Reported issues**, and answer them there. With the variable empty,
-  the app offers no issue reporting.
+  enhancements and feature requests users report from the app under
+  **Reported issues**, and answer them there. The person an issue is assigned
+  to gets an email when someone else replies, comments, adds a note, changes
+  the status or edits it; nobody gets an email for a new issue. With the
+  variable empty, the app offers no issue reporting.
+- **Issue reports in Slack:** set `SLACK_BOT_TOKEN` and `ISSUE_SLACK_CHANNEL`
+  (see `env.example`), and each new issue is also posted to that channel, with
+  every reply and internal note in its thread. The post shows the issue's current
+  status and assignee, and changes with them. The bot must be in the channel.
 - **The Playground and guided tours** are on: `DEMO_ORG=true` in `.env`. The
   app builds the Playground, a shared read-only organization with sample
   data, at start and refreshes it daily. To turn it off, set `DEMO_ORG=` and

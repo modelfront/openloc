@@ -57,9 +57,11 @@ export function buildProjectSetupPayload(workflowId: string, s: SettingsValues) 
       tm_on_upload: s.tmOnUpload,
       auto_complete: s.autoComplete,
       inline_html: s.inlineHTML,
+      linguist_terms: s.linguistTerms,
       qa_profile_id: s.qaProfileId,
+      segmentation_profile_id: s.segmentationProfileId ?? undefined,
       tm_profile_id: s.tmProfileId ?? undefined,
-      mt_router_id: s.mtRouterId ?? undefined,
+      mt_router_id: s.mtRouterId,
     },
     // A project that follows a TM profile takes its TMs from the profile;
     // sending rows as well is refused by the server.

@@ -155,7 +155,7 @@ describe('richTextToTipTapContent', () => {
     const content = result.content![0].content!
     expect(content).toHaveLength(3)
     expect(content[0]).toEqual({ type: 'text', text: 'Line one' })
-    expect(content[1]).toEqual({ type: 'hardBreak' })
+    expect(content[1].type).toBe('hardBreak')
     expect(content[2]).toEqual({ type: 'text', text: ' Line two' })
   })
 
@@ -219,6 +219,24 @@ describe('tipTapToRichText', () => {
     const tiptap = richTextToTipTapContent('Line one<x id="1" ctype="lb"/> Line two')
     const result = tipTapToRichText(tiptap)
     expect(result).toBe(`Line one<x id="1" ctype="lb" original_tag="br"/> Line two`)
+  })
+
+  it('keeps a line break tag id that comes before other tags', () => {
+    // HTML parsers number <br> in document order with the other tags, so the
+    // break's id is not the next free id; tag QA compares ids with the source.
+    const original = 'A<x id="1" ctype="lb" original_tag="br"/><g id="2">b</g>'
+    expect(tipTapToRichText(richTextToTipTapContent(original))).toBe(original)
+  })
+
+  it('keeps the original_tag of a line break tag (hr, img)', () => {
+    const original = 'A<x id="4" ctype="lb" original_tag="hr"/>B'
+    expect(tipTapToRichText(richTextToTipTapContent(original))).toBe(original)
+  })
+
+  it('gives a typed line break an id no other tag or break uses', () => {
+    const doc = richTextToTipTapContent('A<x id="5" ctype="lb" original_tag="br"/><g id="2">b</g>')
+    doc.content![0].content!.push({ type: 'hardBreak' })
+    expect(tipTapToRichText(doc)).toBe('A<x id="5" ctype="lb" original_tag="br"/><g id="2">b</g><x id="6" ctype="lb" original_tag="br"/>')
   })
 
   it('round-trips non-lb self-closing x tags verbatim', () => {

@@ -1,8 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { listTemplates, createTemplate, deleteTemplate, duplicateTemplate } from '../api'
+import { listTemplates, deleteTemplate, duplicateTemplate } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { formatDate } from '../utils'
 import { useCRUDList } from '../hooks/use-crud-list'
@@ -16,31 +13,15 @@ import { LoadFailed } from '@/components/layout/LoadFailed'
 import { hoverActionClass } from '@/components/list/hover-action'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
-import { Input } from '@/components/ui/input'
-import { FormField } from '@/components/ui/form-field'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useScrollToError } from '../hooks/useScrollToError'
 import { Copy } from 'lucide-react'
 import { Chip } from '@/components/ui/chip'
 import { listCardClass } from '@/components/list/list-row'
 import { cn } from '@/lib/utils'
 
-const templateSchema = z.object({ name: z.string().min(1, 'Template name is required') })
-type TemplateFormValues = z.infer<typeof templateSchema>
-
 export default function TemplateList() {
-  const {
-    register: registerCreate,
-    handleSubmit: handleCreateSubmit,
-    reset: resetCreate,
-    formState: { errors: createErrors },
-  } = useForm<TemplateFormValues>({
-    resolver: zodResolver(templateSchema),
-    defaultValues: { name: '' },
-  })
-  useScrollToError(createErrors)
-
   const navigate = useNavigate()
 
   // Deep copy (scalars + all assignments) → open the copy for editing.
@@ -54,15 +35,12 @@ export default function TemplateList() {
 
   const {
     items: templates, isLoading, loadFailed, error, refetch,
-    showForm: creating, setShowForm: setCreating, createMut,
     deleteTarget, setDeleteTarget, confirmDelete,
   } = useCRUDList({
     queryKey: queryKeys.templates.all,
     queryFn: listTemplates,
-    createFn: (name: string) => createTemplate({ name, mt_on_upload: true, tm_on_upload: true }),
     deleteFn: deleteTemplate,
     entityName: 'Template',
-    onCreateSuccess: () => resetCreate(),
   })
 
   return (
@@ -70,34 +48,8 @@ export default function TemplateList() {
     <PageContainer>
       <PageHeader
         title="Templates"
-        actions={<Button onClick={() => setCreating(true)} data-guide="templates.new">New template</Button>}
+        actions={<CreateButton onClick={() => navigate('/templates/new')} data-guide="templates.new">New template</CreateButton>}
       />
-
-      {creating && (
-        <form
-          onSubmit={handleCreateSubmit(data => createMut.mutate(data.name.trim()))}
-          className="mb-4 p-4 bg-card rounded-lg border border-border flex gap-2 items-end"
-        >
-          <FormField label="Name" error={createErrors.name?.message} required className="flex-1">
-            <Input
-              {...registerCreate('name')}
-              placeholder="Template name"
-              autoFocus
-            />
-          </FormField>
-          <Button type="submit" size="sm" disabled={createMut.isPending}>
-            {createMut.isPending ? 'Creating...' : 'Create'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => { setCreating(false); resetCreate() }}
-          >
-            Cancel
-          </Button>
-        </form>
-      )}
 
       {loadFailed && <LoadFailed what="templates" error={error} onRetry={refetch} />}
 

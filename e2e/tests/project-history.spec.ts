@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { deleteProjectViaAPI, login, uploadFileViaAPI } from "./helpers";
+import { deleteProjectViaAPI, login, standardWorkflowId, uploadFileViaAPI } from "./helpers";
 import { SEED_OWNER_NAME } from "../seed-identity";
 
 // Project history tab: the audit log renders as a table
@@ -23,6 +23,7 @@ test.describe("Project history", () => {
         name: projName,
         source_language: "en",
         target_languages: ["de"],
+        workflow_id: await standardWorkflowId(page),
         settings: { tm_on_upload: false, mt_on_upload: false },
       },
     });

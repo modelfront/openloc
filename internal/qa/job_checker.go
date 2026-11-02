@@ -23,19 +23,9 @@ type jobScope struct {
 // resolveJobScope loads the job's project, QA profile and rules. The job must
 // come from a tenant-scoped lookup.
 func (s *Service) resolveJobScope(ctx context.Context, job db.Job, tenantID int64) (jobScope, error) {
-	// safe: job.FileID is FK-bound to the tenant-scoped job row.
-	file, err := s.queries.GetFile(ctx, job.FileID)
+	project, profile, err := s.jobSettings(ctx, job, tenantID)
 	if err != nil {
-		return jobScope{}, fmt.Errorf("get file: %w", err)
-	}
-	project, err := s.queries.GetProject(ctx, db.GetProjectParams{ID: file.ProjectID, TenantID: tenantID})
-	if err != nil {
-		return jobScope{}, fmt.Errorf("get project: %w", err)
-	}
-	// safe: project.SettingsProfileID is FK-bound through the validated chain.
-	profile, err := s.queries.GetSettingsProfile(ctx, project.SettingsProfileID)
-	if err != nil {
-		return jobScope{}, fmt.Errorf("get settings profile: %w", err)
+		return jobScope{}, err
 	}
 	js := jobScope{sc: segmentScope{
 		fileID:            job.FileID,
@@ -47,11 +37,41 @@ func (s *Service) resolveJobScope(ctx context.Context, job db.Job, tenantID int6
 	if profile.QaProfileID == nil {
 		return js, nil
 	}
-	if js.rs, err = s.loadRules(ctx, *profile.QaProfileID); err != nil {
+	if js.rs, err = s.loadRules(ctx, *profile.QaProfileID, job.TargetLanguage); err != nil {
 		return jobScope{}, err
 	}
 	js.profileAssigned = true
 	return js, nil
+}
+
+// JobHasQAProfile reports whether the job's project has a QA profile, which a
+// QA run needs. The job must come from a tenant-scoped lookup.
+func (s *Service) JobHasQAProfile(ctx context.Context, job db.Job, tenantID int64) (bool, error) {
+	_, profile, err := s.jobSettings(ctx, job, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return profile.QaProfileID != nil, nil
+}
+
+// jobSettings loads the job's project and its settings profile. The job must
+// come from a tenant-scoped lookup.
+func (s *Service) jobSettings(ctx context.Context, job db.Job, tenantID int64) (db.Project, db.SettingsProfile, error) {
+	// safe: job.FileID is FK-bound to the tenant-scoped job row.
+	file, err := s.queries.GetFile(ctx, job.FileID)
+	if err != nil {
+		return db.Project{}, db.SettingsProfile{}, fmt.Errorf("get file: %w", err)
+	}
+	project, err := s.queries.GetProject(ctx, db.GetProjectParams{ID: file.ProjectID, TenantID: tenantID})
+	if err != nil {
+		return db.Project{}, db.SettingsProfile{}, fmt.Errorf("get project: %w", err)
+	}
+	// safe: project.SettingsProfileID is FK-bound through the validated chain.
+	profile, err := s.queries.GetSettingsProfile(ctx, project.SettingsProfileID)
+	if err != nil {
+		return db.Project{}, db.SettingsProfile{}, fmt.Errorf("get settings profile: %w", err)
+	}
+	return project, profile, nil
 }
 
 // JobChecker runs the confirm-time QA check on many rows of one job, loading

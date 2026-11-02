@@ -8,9 +8,12 @@
 # in the Alpine build stages (sh, no bash).
 #
 #   third-party-notices.sh header <image>   the intro paragraph for that image
-#   third-party-notices.sh go               the Go standard library and the modules
-#                                           linked into ./cmd/server; run in the
-#                                           module root, honours GOOS/GOARCH/CGO_ENABLED
+#   third-party-notices.sh go               the Go standard library, the CLDR data
+#                                           in internal/langcode, the data a VENDORED
+#                                           file declares (data_records) and the
+#                                           modules linked into ./cmd/server; run in
+#                                           the module root, honours
+#                                           GOOS/GOARCH/CGO_ENABLED
 #   third-party-notices.sh npm              production npm packages of the app in
 #                                           the current directory (after npm ci);
 #                                           ./licenses/<package>/ supplies the texts
@@ -85,6 +88,7 @@ license_label() {
   upper="$(printf '%s' "$text" | LC_ALL=C tr '[:lower:]' '[:upper:]')"
   case "$upper" in
     *"COMMONS CLAUSE"*)                      echo "Commons Clause"; return ;;
+    *"UNICODE LICENSE V3"*)                  echo "Unicode-3.0"; return ;;
     *"BUSINESS SOURCE LICENSE"*)             echo "BSL"; return ;;
     *"SERVER SIDE PUBLIC LICENSE"*)          echo "SSPL"; return ;;
     *"EUROPEAN UNION PUBLIC LICENCE"*)       echo "EUPL"; return ;;
@@ -209,9 +213,30 @@ go_records() {
   files="$goroot/LICENSE"
   [ ! -f "$goroot/PATENTS" ] || files="$files$nl$goroot/PATENTS"
   record "Go standard library and runtime" "$(go env GOVERSION)" - - "$files"
+  # The locale tables generated from Unicode CLDR into internal/langcode. The
+  # label is given: the Unicode license text would read as MIT.
+  cldr="internal/langcode/cldr_table.go"
+  [ -f "$cldr" ] || die "$cldr not found; run this in the module root"
+  record "Unicode CLDR locale data (internal/langcode)" "$(sed -n 's/^const CLDRVersion = "\(.*\)"$/\1/p' "$cldr")" Unicode-3.0 - "internal/langcode/LICENSE-CLDR"
+  data_records
   printf '%s\n' "$list" | while read -r path version dir; do
     [ -d "$dir" ] || die "module $path $version is not in the module cache"
     record "$path" "$version" - - "$(license_files "$dir")"
+  done
+}
+
+# data_records: data files copied into OpenLoc's own Go packages and
+# embedded in the binary. A file named VENDORED in the data's directory holds
+# "<name><TAB><version>"; the license files next to it are the data's.
+data_records() {
+  for d in cmd internal pkg; do
+    [ ! -d "$d" ] || find "$d" -type f -name VENDORED
+  done | sort | while IFS= read -r f; do
+    IFS="$tab" read -r name version < "$f" || [ -n "${name:-}" ] || die "$f: want <name><TAB><version>"
+    [ -n "${name:-}" ] && [ -n "${version:-}" ] || die "$f: want <name><TAB><version>"
+    files="$(license_files "$(dirname "$f")")"
+    [ -n "$files" ] || die "$f: no license file next to it"
+    record "$name" "$version" - - "$files"
   done
 }
 

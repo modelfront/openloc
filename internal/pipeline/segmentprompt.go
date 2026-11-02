@@ -170,6 +170,9 @@ func (r *segPromptRenderer) fetchTerms(ctx context.Context, rows []segPromptRow)
 			dedupe[key] = true
 			out[row.TranslationID] = append(out[row.TranslationID], segmentprompt.Term{
 				Source: t.SourceTerm, Target: t.TargetTerm, Status: t.Status,
+				Definition: strings.TrimSpace(t.Definition),
+				Domain:     strings.TrimSpace(t.Domain),
+				Notes:      strings.TrimSpace(t.Notes),
 			})
 		}
 	}

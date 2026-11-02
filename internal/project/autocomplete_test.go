@@ -334,7 +334,7 @@ func TestIntegrationAutoComplete_RoundTripsThroughTemplate(t *testing.T) {
 	defer cleanup()
 
 	rec := testutil.DoRequestWithRole(t, f.router, "POST", "/api/templates",
-		map[string]any{"name": "TemplateRoundTrip tmpl", "settings": map[string]any{"auto_complete": false}},
+		map[string]any{"workflow_id": testutil.LibraryWorkflow(t, f.q, f.tenant.ID), "name": "TemplateRoundTrip tmpl", "settings": map[string]any{"auto_complete": false}},
 		f.user.ID, f.tenant.ID, "owner")
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {

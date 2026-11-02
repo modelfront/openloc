@@ -12,7 +12,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/honeybadger-io/honeybadger-go"
 	"openloc/internal/auth"
 	"openloc/internal/errtrack"
 	"openloc/internal/errtrack/errtracktest"
@@ -34,9 +33,7 @@ func testRouter(t *testing.T, register func(r chi.Router)) chi.Router {
 	t.Helper()
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Recoverer)
-	r.Use(requestObservability)
-	r.Use(honeybadger.Handler)
+	useCoreMiddleware(r)
 	register(r)
 	return r
 }

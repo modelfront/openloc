@@ -48,7 +48,7 @@ func provisionApprovedTenant(ctx context.Context, q db.Querier, name string, dom
 	if err := dashboarddefaults.InstallDefaults(ctx, q, tenant.ID, nil); err != nil {
 		return db.Tenant{}, &provisionError{"organization", err}
 	}
-	if err := ensureDefaultWorkflow(ctx, q, tenant.ID); err != nil {
+	if err := EnsureDefaultWorkflow(ctx, q, tenant.ID); err != nil {
 		return db.Tenant{}, &provisionError{"default workflow", err}
 	}
 	return tenant, nil

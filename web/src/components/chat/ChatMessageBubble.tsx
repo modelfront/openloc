@@ -3,12 +3,14 @@
 import { Wrench } from 'lucide-react'
 import { Markdown } from '@/components/markdown/Markdown'
 import { Chip } from '@/components/ui/chip'
+import { LinkedText } from '@/components/ui/linked-text'
 import { cn } from '@/lib/utils'
 import { SpecChart } from '../charts/SpecChart'
 import type { ChatToolCall, ChartSpec } from '../../api'
 import { ConfirmAction, type ConfirmState, type PendingConfirm } from './ConfirmAction'
 import { ChatScreenshotRequest } from './ChatScreenshotRequest'
 import { ChatRepeatRequest } from './ChatRepeatRequest'
+import { REPLACED_BY_NEWER_ASK, WAIT_FOR_ANSWER } from './ChatCard'
 import type { ChatAsk, ChatSend } from './chat-ask'
 
 export interface DisplayMessage {
@@ -30,6 +32,7 @@ export interface DisplayMessage {
 export function MessageBubble({
   message,
   working,
+  replaced,
   elapsed,
   getConversationId,
   onConfirmState,
@@ -37,6 +40,8 @@ export function MessageBubble({
 }: {
   message: DisplayMessage
   working?: boolean
+  /** A newer message carries an ask: this one's card no longer takes an answer. */
+  replaced?: boolean
   elapsed?: number
   getConversationId: () => number | undefined
   onConfirmState: (confirmIndex: number, state: ConfirmState) => void
@@ -45,11 +50,15 @@ export function MessageBubble({
 }) {
   if (message.role === 'user') {
     return (
-      <div className="ml-auto w-fit max-w-[85%] rounded-2xl bg-gray-100 px-3 py-2 text-sm text-gray-900 dark:bg-gray-800 dark:text-gray-100">
-        {message.content}
+      <div
+        className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-gray-100 px-3 py-2 text-sm text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+        data-testid="chat-user-message"
+      >
+        <LinkedText text={message.content} />
       </div>
     )
   }
+  const askWaitReason = working ? WAIT_FOR_ANSWER : replaced ? REPLACED_BY_NEWER_ASK : undefined
   return (
     <div className="mr-4 text-sm text-gray-800 dark:text-gray-200">
       {message.toolCalls.length > 0 && (
@@ -65,10 +74,10 @@ export function MessageBubble({
       ))}
       {message.content && <Markdown variant="chat">{message.content}</Markdown>}
       {onSend && message.ask?.kind === 'screenshot' && (
-        <ChatScreenshotRequest reason={message.ask.reason} disabled={working} onSend={onSend} />
+        <ChatScreenshotRequest reason={message.ask.reason} disabledReason={askWaitReason} onSend={onSend} />
       )}
       {onSend && message.ask?.kind === 'repeat' && (
-        <ChatRepeatRequest reason={message.ask.reason} disabled={working} onSend={onSend} />
+        <ChatRepeatRequest reason={message.ask.reason} disabledReason={askWaitReason} onSend={onSend} />
       )}
       {message.confirmations.map((c, ci) => (
         <ConfirmAction

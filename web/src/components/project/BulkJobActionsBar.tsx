@@ -31,8 +31,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import {
   advanceJobStep,
-  applyJobMT,
-  applyJobTM,
+  pretranslateProject,
   assignJobStep,
   clearJobTranslations,
   completeJob,
@@ -97,7 +96,7 @@ interface Props {
 }
 
 export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isManager, onClear }: Props) {
-  const { run, runningAction } = useBulkJobActions(projectId)
+  const { run, runQueued, runningAction } = useBulkJobActions(projectId)
   const [clearOpen, setClearOpen] = useState(false)
   const [completeOpen, setCompleteOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -168,6 +167,17 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
     }).then(() => warnHeldSkipped(held))
   }
 
+  // Apply TM / Apply MT: one request queues a worker task per eligible job.
+  const runPretranslate = (phase: 'tm' | 'mt', label: string) =>
+    runQueued({
+      actionKey: phase,
+      label,
+      items: tmMtEligible,
+      call: jobs => pretranslateProject(projectId, { jobIds: jobs.map(j => j.id), phase }),
+      skipped: { count: total - tmMtEligible.length, reason: 'not in first step / still running' },
+      serverSkipReason: 'running or not in first step',
+    })
+
   const runAssign = (userId: number) =>
     run({
       actionKey: 'assign',
@@ -179,7 +189,7 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
     })
 
   const runClear = (scope: ClearScope) =>
-    runApply('clear', 'Clear', clearEligible, id => clearJobTranslations(id, scope), 'nothing to clear / not first step')
+    runApply('clear', 'Clear', clearEligible, id => clearJobTranslations(id, scope), 'nothing to clear / past the first human or hybrid step')
 
   const runComplete = () =>
     run({
@@ -272,7 +282,7 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
         />
         <DropdownMenuContent className="min-w-64">
           <DropdownMenuItem
-            onClick={() => runApply('tm', 'Apply TM', tmMtEligible, applyJobTM, 'not in first step / still running')}
+            onClick={() => runPretranslate('tm', 'Apply TM')}
             data-testid="bulk-apply-tm-btn"
             className="items-start"
           >
@@ -284,7 +294,7 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
             </span>
           </DropdownMenuItem>
           <DropdownMenuItem
-            onClick={() => runApply('mt', 'Apply MT', tmMtEligible, applyJobMT, 'not in first step / still running')}
+            onClick={() => runPretranslate('mt', 'Apply MT')}
             data-testid="bulk-apply-mt-btn"
             className="items-start"
           >
@@ -413,7 +423,7 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
             pending={runningAction === 'clear'}
             eligibleCount={clearEligible.length}
             disabled={busy}
-            tooltip="Revert translations across the selected jobs so Apply TM/MT can re-fire"
+            tooltip="Empty the translations of the selected jobs"
             onClick={() => setClearOpen(true)}
             testid="bulk-clear-btn"
             variant="destructive"

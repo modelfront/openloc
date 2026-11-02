@@ -37,9 +37,11 @@ type TemplateDetail struct {
 	TmOnUpload            bool     `json:"tm_on_upload"`
 	AutoComplete          bool     `json:"auto_complete"`
 	InlineHTML            bool     `json:"inline_html"`
+	LinguistTerms         string   `json:"linguist_terms"`
 	SublanguagePenaltyPct int32    `json:"sublanguage_penalty_pct"`
 	NearExactPenaltyPct   int32    `json:"near_exact_penalty_pct"`
 	QAProfileID           int64    `json:"qa_profile_id,omitempty"`
+	SegmentationProfileID int64    `json:"segmentation_profile_id,omitempty"`
 	MTRouterID            int64    `json:"mt_router_id,omitempty"`
 	MTRouterName          string   `json:"mt_router_name,omitempty"`
 	WorkflowID            int64    `json:"workflow_id,omitempty"`
@@ -59,15 +61,19 @@ type CreateTemplateIn struct {
 	TargetLanguages []string `json:"target_languages,omitempty" jsonschema:"optional target language codes"`
 	CustomerID      int64    `json:"customer_id,omitempty" jsonschema:"optional customer, from openloc_list_customers"`
 	Domain          string   `json:"domain,omitempty" jsonschema:"optional subject domain"`
-	WorkflowID      int64    `json:"workflow_id,omitempty" jsonschema:"library workflow to copy, from openloc_list_workflows; default Translation then Review"`
+	WorkflowID      int64    `json:"workflow_id,omitempty" jsonschema:"optional: the library workflow to copy, from openloc_list_workflows; without one the template has no steps"`
 	MTRouterID      int64    `json:"mt_router_id,omitempty" jsonschema:"MT router, from openloc_list_mt_routers"`
 	QAProfileID     int64    `json:"qa_profile_id,omitempty" jsonschema:"QA profile, from openloc_list_qa_profiles"`
 	TMProfileID     int64    `json:"tm_profile_id,omitempty" jsonschema:"TM profile to follow"`
-	MtOnUpload      *bool    `json:"mt_on_upload,omitempty" jsonschema:"machine-translate files on upload; default true"`
-	TmOnUpload      *bool    `json:"tm_on_upload,omitempty" jsonschema:"fill translation memory matches on upload; default true"`
-	AutoComplete    *bool    `json:"auto_complete,omitempty" jsonschema:"complete a job's step when every segment is confirmed; default true"`
-	InlineHTML      *bool    `json:"inline_html,omitempty" jsonschema:"strings in JSON, PO, TXT and Excel files are HTML: their tags become protected tags; default true"`
-	FuzzyThreshold  *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score used, 0 to 1; default 0.75"`
+	// SegmentationProfileID, left out, takes the suggested profile for the
+	// source language.
+	SegmentationProfileID int64    `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile, from openloc_list_segmentation_profiles; default the suggested one for the source language"`
+	MtOnUpload            *bool    `json:"mt_on_upload,omitempty" jsonschema:"machine-translate files on upload; default true"`
+	TmOnUpload            *bool    `json:"tm_on_upload,omitempty" jsonschema:"fill translation memory matches on upload; default true"`
+	AutoComplete          *bool    `json:"auto_complete,omitempty" jsonschema:"complete a job's step when every segment is confirmed; default true"`
+	InlineHTML            *bool    `json:"inline_html,omitempty" jsonschema:"strings in JSON, PO, TXT and Excel files are HTML: their tags become protected tags; default true"`
+	LinguistTerms         *string  `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved; default pending"`
+	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score used, 0 to 1; default 0.75"`
 }
 
 type DuplicateTemplateIn struct {
@@ -87,10 +93,12 @@ type UpdateTemplateIn struct {
 	MTRouterID            *int64   `json:"mt_router_id,omitempty" jsonschema:"MT router from openloc_list_mt_routers; 0 clears"`
 	QAProfileID           *int64   `json:"qa_profile_id,omitempty" jsonschema:"QA profile from openloc_list_qa_profiles; 0 clears"`
 	TMProfileID           *int64   `json:"tm_profile_id,omitempty" jsonschema:"TM profile to follow from now on"`
+	SegmentationProfileID *int64   `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile from openloc_list_segmentation_profiles; it must suit the source language. There is no clear"`
 	MtOnUpload            *bool    `json:"mt_on_upload,omitempty"`
 	TmOnUpload            *bool    `json:"tm_on_upload,omitempty"`
 	AutoComplete          *bool    `json:"auto_complete,omitempty"`
 	InlineHTML            *bool    `json:"inline_html,omitempty"`
+	LinguistTerms         *string  `json:"linguist_terms,omitempty"`
 	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"0 to 1; refused while the template follows a TM profile"`
 	SublanguagePenaltyPct *int32   `json:"sublanguage_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
 	NearExactPenaltyPct   *int32   `json:"near_exact_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
@@ -116,6 +124,7 @@ type GetQAProfileIn struct {
 }
 
 type QARule struct {
+	RuleID    int64          `json:"rule_id"`
 	CheckType string         `json:"check_type"`
 	Enabled   bool           `json:"enabled"`
 	Severity  string         `json:"severity"`
@@ -131,10 +140,11 @@ type QAProfileDetail struct {
 
 // QARuleIn is one check of a profile.
 type QARuleIn struct {
-	CheckType string         `json:"check_type" jsonschema:"one of: consistency, empty_target, forbidden_terms, number_consistency, punctuation, tag_checks, target_identical_to_source, terminology"`
+	RuleID    int64          `json:"rule_id,omitempty" jsonschema:"regex rules only: the rule to replace, from openloc_get_qa_profile; omit to add a new regex rule"`
+	CheckType string         `json:"check_type" jsonschema:"one of: consistency, date_consistency, empty_target, forbidden_terms, number_consistency, number_format, placeables, punctuation, regex, tag_checks, target_identical_to_source, terminology, time_consistency, unit_conversion"`
 	Enabled   *bool          `json:"enabled,omitempty" jsonschema:"default true"`
 	Severity  string         `json:"severity,omitempty" jsonschema:"error (default), warning or info"`
-	Config    map[string]any `json:"config,omitempty" jsonschema:"optional check options, as returned by openloc_get_qa_profile"`
+	Config    map[string]any `json:"config,omitempty" jsonschema:"check options, as returned by openloc_get_qa_profile. number_format takes {\"mode\": \"allow\"} (the source's or the target language's separators) or {\"mode\": \"require\"} (the target language's only), and optional \"languages\": [{\"language\": \"es\", \"decimal\": \".\", \"group\": \",\"}] to set how a language writes numbers (decimal \".\" or \",\"; group \",\", \".\", \" \", \"'\" or \"\" for none; \"es\" covers every Spanish locale, \"es-mx\" only itself), used by the number checks only while number_format is on (kept, unused, while it is off); placeables takes {\"urls_emails\": true, \"codes\": true, \"variables\": true} to pick which placeables it compares (each defaults to true); send the whole config, it replaces the stored one. Required for regex: {name, mode (target_must_not_match, target_must_match, source_match_target_not, source_must_not_match), pattern (Go RE2 syntax, matched against the text as the editor shows it, each tag as its label such as <1>, </1> or {1}), source_pattern (source_match_target_not only), message (shown in every finding), target_languages (empty = all; \"fr\" covers every French locale), ignore_case}"`
 }
 
 type CreateQAProfileIn struct {
@@ -152,11 +162,17 @@ type UpdateQAProfileIn struct {
 
 type UpsertQARulesIn struct {
 	QAProfileID int64      `json:"qa_profile_id" jsonschema:"the profile, from openloc_list_qa_profiles"`
-	Rules       []QARuleIn `json:"rules" jsonschema:"rules to create or replace, one per check type; rules not listed stay as they are"`
+	Rules       []QARuleIn `json:"rules" jsonschema:"rules to create or replace: one per built-in check type, any number of regex rules; rules not listed stay as they are"`
 	Confirm
 }
 
 type DeleteQAProfileIn struct {
 	QAProfileID int64 `json:"qa_profile_id" jsonschema:"the profile to delete, from openloc_list_qa_profiles"`
+	Confirm
+}
+
+type DeleteQARuleIn struct {
+	QAProfileID int64 `json:"qa_profile_id" jsonschema:"the profile, from openloc_list_qa_profiles"`
+	RuleID      int64 `json:"rule_id" jsonschema:"the regex rule to delete, from openloc_get_qa_profile; a built-in rule is switched off with enabled false instead"`
 	Confirm
 }

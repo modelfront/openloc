@@ -58,7 +58,7 @@ UPDATE oauth_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at I
 UPDATE oauth_tokens SET last_used_at = now() WHERE id = $1;
 
 -- name: ListOAuthConnections :many
--- One row per live token family for the Settings "Connected apps" list.
+-- One row per live token family for the AI settings "Connected apps" list.
 SELECT DISTINCT ON (t.family_id)
        t.family_id, t.client_id, c.name AS client_name, t.scope,
        t.tenant_id, t.created_at, t.last_used_at

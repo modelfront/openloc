@@ -126,26 +126,6 @@ func TestGoogleError403(t *testing.T) {
 	}
 }
 
-func TestGoogleError429(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(429)
-	}))
-	defer server.Close()
-
-	engine := Google{APIKey: "key", BaseURL: server.URL}
-	_, err := engine.Translate(context.Background(), TranslateRequest{
-		SourceLang: "en",
-		TargetLang: "es",
-		Texts:      []string{"Hello"},
-	})
-	if err == nil {
-		t.Fatal("expected error for 429")
-	}
-	if !strings.Contains(err.Error(), "rate limit") {
-		t.Errorf("expected rate limit error, got: %s", err.Error())
-	}
-}
-
 func TestGoogleErrorWithMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

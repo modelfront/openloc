@@ -17,6 +17,7 @@ import (
 	"openloc/internal/auth"
 	"openloc/internal/dashboard"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/settings"
 	"openloc/internal/testutil"
 )
 
@@ -31,12 +32,20 @@ func TestIntegrationMCPCreateProjectWithArgs(t *testing.T) {
 		TemplateApplied bool     `json:"template_applied"`
 		Note            string   `json:"note"`
 	}
+	// A project needs a workflow: none, and no template, is refused.
+	if isErr, text := callTool(t, s, "openloc_create_project", map[string]any{
+		"name": "MCP No workflow", "source_language": "en", "target_languages": []string{"de"},
+	}, nil); !isErr || !strings.Contains(text, "workflow_id is required") {
+		t.Fatalf("create_project without a workflow: isErr=%v %q, want a \"workflow_id is required\" refusal", isErr, text)
+	}
+
 	// Messy language codes on purpose: normalization is the service's job.
 	if isErr, text := callTool(t, s, "openloc_create_project", map[string]any{
 		"name":             "MCP Created",
 		"source_language":  "EN-US",
 		"target_languages": []string{"DE-de", "fr"},
 		"deadline":         "2026-09-01T17:00:00Z",
+		"workflow_id":      testutil.LibraryWorkflow(t, f.q, f.tenantA.ID),
 	}, &out); isErr {
 		t.Fatalf("create_project failed: %s", text)
 	}
@@ -50,15 +59,15 @@ func TestIntegrationMCPCreateProjectWithArgs(t *testing.T) {
 		t.Fatalf("note missing the navigate handoff: %q", out.Note)
 	}
 
-	// Verify in the DB: project + settings profile + the mandatory default
-	// workflow step (must hold on this path too).
+	// Verify in the DB: project + settings profile + the steps of the
+	// workflow it was created with.
 	p, err := f.q.GetProject(context.Background(), db.GetProjectParams{ID: out.ProjectID, TenantID: f.tenantA.ID})
 	if err != nil {
 		t.Fatalf("created project not found in tenant: %v", err)
 	}
 	steps, err := f.q.ListSettingsWorkflowSteps(context.Background(), p.SettingsProfileID)
 	if err != nil || len(steps) == 0 {
-		t.Fatalf("default workflow step missing: %v %v", err, steps)
+		t.Fatalf("workflow steps missing: %v %v", err, steps)
 	}
 	if p.Deadline.Time.IsZero() {
 		t.Fatal("deadline not persisted")
@@ -88,6 +97,10 @@ func TestIntegrationMCPCreateProjectWithTemplate(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
+	}
+	// The template brings the workflow, so template_id alone is enough.
+	if err := settings.CreateDefaultWorkflowSteps(ctx, f.q, f.tenantA.ID, tmplProfile.ID); err != nil {
+		t.Fatalf("seed template steps: %v", err)
 	}
 
 	s := connect(t, f.url, writeToken(t, f, f.tenantA.ID, f.ownerA.ID))
@@ -142,6 +155,29 @@ func TestIntegrationMCPCreateProjectWithTemplate(t *testing.T) {
 	for _, pr := range projects {
 		if pr.Name == "Cross" {
 			t.Fatal("orphan project created despite invalid template_id")
+		}
+	}
+
+	// A template with no steps brings no workflow: refused, and no project.
+	bareProfile, err := f.q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{TenantID: f.tenantA.ID, FuzzyThreshold: 0.75, TmOnUpload: true})
+	if err != nil {
+		t.Fatalf("seed bare profile: %v", err)
+	}
+	bare, err := f.q.CreateTemplate(ctx, db.CreateTemplateParams{TenantID: f.tenantA.ID, Name: "No steps", SettingsProfileID: bareProfile.ID})
+	if err != nil {
+		t.Fatalf("seed bare template: %v", err)
+	}
+	if isErr, text := callTool(t, s, "openloc_create_project", map[string]any{
+		"name": "Stepless", "source_language": "en", "target_languages": []string{"de"}, "template_id": bare.ID,
+	}, nil); !isErr || !strings.Contains(text, "workflow_id is required") {
+		t.Fatalf("template without steps: isErr=%v %q, want a \"workflow_id is required\" refusal", isErr, text)
+	}
+	if projects, err = f.q.ListProjects(ctx, f.tenantA.ID); err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	for _, pr := range projects {
+		if pr.Name == "Stepless" {
+			t.Fatal("a refused create left a project")
 		}
 	}
 }

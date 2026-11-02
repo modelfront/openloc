@@ -52,6 +52,7 @@ function renderSidebar(overrides: {
   terms?: TermLookupResult[]
   editText?: string
   plainText?: boolean
+  onAddTerm?: () => void
 } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const onInsertMatch = overrides.onInsertMatch ?? vi.fn()
@@ -69,6 +70,7 @@ function renderSidebar(overrides: {
     qaIssues: overrides.qaIssues,
     onQARefresh: overrides.onQARefresh,
     plainText: overrides.plainText,
+    onAddTerm: overrides.onAddTerm,
   }
   return {
     ...render(
@@ -355,8 +357,8 @@ describe('gated (too-short / no) source does not show the previous segment\'s da
 // but doesn't navigate would leave the linguist exactly where they started.
 describe('References section', () => {
   const refs = [
-    { refKey: '/tms/tmsnode[14]/metalist/meta', source: 'Wet', target: 'Feucht', segmentNumber: 126 },
-    { refKey: '/tms/tmsnode[15]/metalist/meta', source: 'Dry', target: '', segmentNumber: 128 },
+    { refKey: '/tms/tmsnode[14]/metalist/meta', source: 'Wet', target: 'Feucht', segmentNumber: '126' },
+    { refKey: '/tms/tmsnode[15]/metalist/meta', source: 'Dry', target: '', segmentNumber: '128' },
   ]
 
   it('is hidden entirely when the segment has no references', () => {
@@ -530,5 +532,21 @@ describe('Terminology term status', () => {
     const chip = screen.getByText('legacy')
     expect(chip).not.toHaveClass('sr-only')
     expect(chip.querySelector('svg')).toBeNull()
+  })
+})
+
+// The editor passes onAddTerm only while this user may add terms here; without
+// it the Terminology section offers no + at all.
+describe('EditorSidebar Terminology add button', () => {
+  it('shows the + and opens the quick-add when the editor allows adding', async () => {
+    const onAddTerm = vi.fn()
+    renderSidebar({ onAddTerm })
+    await userEvent.click(screen.getByTestId('add-term-btn'))
+    expect(onAddTerm).toHaveBeenCalledOnce()
+  })
+
+  it('has no + when adding is not allowed', () => {
+    renderSidebar()
+    expect(screen.queryByTestId('add-term-btn')).toBeNull()
   })
 })

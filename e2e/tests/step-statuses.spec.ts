@@ -63,7 +63,7 @@ test.describe("Segment statuses per workflow step", () => {
       // Approved and not confirmed are not marked in the Status column.
       await job.navigateToEditor(/Hello steps world/);
       await expect(page.locator("[data-translation-cell]")).toHaveCount(2);
-      await expect(page.getByTestId("previous-step-chip")).toHaveCount(0);
+      await expect(page.getByTestId("previous-step-status")).toHaveCount(0);
 
       // The full record is in the segment's History panel.
       await page.locator("[data-translation-cell]").first().click();

@@ -304,9 +304,10 @@ graph TD
     InProc["ConnectInProcess<br/>(in-memory transport,<br/>claims ride the connect ctx)"]
     Mw["auth.Middleware<br/>PAT branch → memberships JOIN<br/>(role resolved per request)"]
     RL["Per-token rate limiter"]
-    Pick{"role tier?"}
+    Pick{"tier?<br/>(role, and support team<br/>on /mcp only)"}
     MgrSrv["manager server<br/>34 tools (reads incl. 3 help-page reads;<br/>writes gated by token capability)"]
     LingSrv["linguist server<br/>(no project/job enumeration;<br/>help pages role-filtered)"]
+    OpSrv["+ support team tools<br/>(every org's reported issues;<br/>platform operators only)"]
     Wrap["tool wrapper<br/>role gate · write-capability gate<br/>error sanitising · audit"]
     BE["Backend interface"]
     Direct["directBackend<br/>tenant-scoped queries only"]
@@ -317,11 +318,15 @@ graph TD
     Client -->|"Bearer eltm_pat_…"| Mw
     Browser -->|"JWT cookie"| Mw
     Mw --> RL --> Pick
-    Mw --> ChatH --> InProc --> Pick
+    Mw --> ChatH --> InProc
+    InProc -->|owner/admin/PM| MgrSrv
+    InProc -->|linguist| LingSrv
     Pick -->|owner/admin/PM| MgrSrv
     Pick -->|linguist| LingSrv
+    Pick -->|platform operator, PAT/OAuth| OpSrv
     MgrSrv --> Wrap
     LingSrv --> Wrap
+    OpSrv --> Wrap
     Wrap --> BE
     BE --> Direct --> PG
     BE -.not yet.-> HTTPBE
@@ -331,8 +336,13 @@ graph TD
 ```
 
 The built-in chat is an MCP **client** of this same surface: its
-agent loop calls `ConnectInProcess`, which connects the prebuilt per-role
-server over an in-memory transport. Identity rides the connect context (the
+agent loop calls `ConnectInProcess`, which connects the prebuilt server of the
+user's role tier over an in-memory transport. The tiers are prebuilt per
+role, each with and without the support team's tools; `/mcp` serves the
+support tools to a platform operator (an account in `PLATFORM_ADMIN_EMAILS`,
+checked per request, never an operator viewing an organization), and the
+chat never does, because the chat runs on the signed-in organization's AI
+vendor key and other organizations' reported issues must not reach it. Identity rides the connect context (the
 SDK propagates it into tool-handler contexts — pinned by
 `TestInProcessClaimsPropagation`), so chat inherits tenant scoping, role
 tiering and auditing without a PAT. Chat sessions have no `PATInfo`, so the

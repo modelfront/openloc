@@ -78,9 +78,50 @@ func TestIntegrationRBACRoleMatrix(t *testing.T) {
 		rec := testutil.DoRequestWithRole(t, router, "GET", "/api/projects", nil, pm.ID, tenant.ID, "project_manager")
 		testutil.AssertStatus(t, rec, http.StatusOK)
 		rec = testutil.DoRequestWithRole(t, router, "POST", "/api/projects",
-			map[string]any{"name": "PM Project", "source_language": "en", "target_languages": []string{"fr"}},
+			map[string]any{"name": "PM Project", "source_language": "en", "target_languages": []string{"fr"},
+				"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID)},
 			pm.ID, tenant.ID, "project_manager")
 		testutil.AssertStatus(t, rec, http.StatusCreated)
+	})
+
+	// Workflow step edits and their preview are the manager surface.
+	t.Run("PM can edit and preview workflow steps; linguist cannot", func(t *testing.T) {
+		rec := testutil.DoRequestWithRole(t, router, "POST", "/api/projects",
+			map[string]any{"name": "PM Workflow", "source_language": "en", "target_languages": []string{"fr"},
+				"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID)},
+			pm.ID, tenant.ID, "project_manager")
+		testutil.AssertStatus(t, rec, http.StatusCreated)
+		var created struct {
+			Data struct {
+				ID int64 `json:"id"`
+			} `json:"data"`
+		}
+		testutil.DecodeJSON(t, rec, &created)
+		rec = testutil.DoRequestWithRole(t, router, "GET",
+			fmt.Sprintf("/api/projects/%d/settings", created.Data.ID), nil, pm.ID, tenant.ID, "project_manager")
+		testutil.AssertStatus(t, rec, http.StatusOK)
+		var settings struct {
+			Data struct {
+				WorkflowSteps []struct {
+					ID int64 `json:"id"`
+				} `json:"workflow_steps"`
+			} `json:"data"`
+		}
+		testutil.DecodeJSON(t, rec, &settings)
+		var steps []map[string]any
+		for _, st := range settings.Data.WorkflowSteps {
+			steps = append(steps, map[string]any{"existing_step_id": st.ID})
+		}
+		body := map[string]any{"steps": steps}
+		for _, c := range []struct{ method, path string }{
+			{"POST", fmt.Sprintf("/api/projects/%d/workflow-steps/preview", created.Data.ID)},
+			{"PUT", fmt.Sprintf("/api/projects/%d/workflow-steps", created.Data.ID)},
+		} {
+			rec = testutil.DoRequestWithRole(t, router, c.method, c.path, body, linguist.ID, tenant.ID, "linguist")
+			testutil.AssertStatus(t, rec, http.StatusForbidden)
+			rec = testutil.DoRequestWithRole(t, router, c.method, c.path, body, pm.ID, tenant.ID, "project_manager")
+			testutil.AssertStatus(t, rec, http.StatusOK)
+		}
 	})
 
 	// Draft autosave + publish sit next to create.
@@ -94,7 +135,8 @@ func TestIntegrationRBACRoleMatrix(t *testing.T) {
 			} `json:"data"`
 		}
 		testutil.DecodeJSON(t, rec, &created)
-		body := map[string]any{"name": "PM Draft", "source_language": "en", "target_languages": []string{"fr"}}
+		body := map[string]any{"name": "PM Draft", "source_language": "en", "target_languages": []string{"fr"},
+			"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID)}
 
 		rec = testutil.DoRequestWithRole(t, router, "PUT",
 			fmt.Sprintf("/api/projects/%d/draft", created.Data.ID), body, linguist.ID, tenant.ID, "linguist")
@@ -158,7 +200,8 @@ func TestIntegrationRBACRoleMatrix(t *testing.T) {
 		live := draftID("Published then undeletable")
 		rec = testutil.DoRequestWithRole(t, router, "PUT",
 			fmt.Sprintf("/api/projects/%d/draft", live),
-			map[string]any{"name": "Live", "source_language": "en", "target_languages": []string{"fr"}},
+			map[string]any{"name": "Live", "source_language": "en", "target_languages": []string{"fr"},
+				"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID)},
 			pm.ID, tenant.ID, "project_manager")
 		testutil.AssertStatus(t, rec, http.StatusOK)
 		rec = testutil.DoRequestWithRole(t, router, "POST",
@@ -340,4 +383,70 @@ func TestIntegrationRBACRoleMatrix(t *testing.T) {
 
 	// unused var guard (SeedFile import parity with other flow tests)
 	_ = db.FileFormatJsonI18n
+}
+
+// TestIntegrationRBACSegmentationProfiles pins the segmentation profile gates:
+// every member reads, previews and downloads SRX; owners, admins and project
+// managers create, edit, delete and read SRX uploads.
+func TestIntegrationRBACSegmentationProfiles(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+	router := testutil.NewTestRouter(pool)
+	tenant := testutil.SeedTenant(t, q, "RBACSegmentation")
+	pm := testutil.SeedUserWithRole(t, q, tenant.ID, "pm@seg-rbac.test", "pass", "project_manager")
+	linguist := testutil.SeedUserWithRole(t, q, tenant.ID, "ling@seg-rbac.test", "pass", "linguist")
+	def := map[string]any{"rules": []map[string]any{{"before": `\.`, "after": `\s`, "break": true}}}
+
+	rec := testutil.DoRequestWithRole(t, router, "POST", "/api/segmentation-profiles",
+		map[string]any{"name": "Legal", "source_language": "en", "definition": def}, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	var created struct {
+		Data struct {
+			ID        int64  `json:"id"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"data"`
+	}
+	testutil.DecodeJSON(t, rec, &created)
+	profilePath := fmt.Sprintf("/api/segmentation-profiles/%d", created.Data.ID)
+	var builtin int64
+	if err := pool.QueryRow(context.Background(), `SELECT id FROM segmentation_builtin_profiles WHERE builtin_key = 'builtin:en@1'`).Scan(&builtin); err != nil {
+		t.Fatal(err)
+	}
+	builtinPath := fmt.Sprintf("/api/segmentation-profiles/%d", builtin)
+
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/segmentation-profiles"},
+		{"GET", profilePath},
+		{"GET", builtinPath},
+		{"GET", profilePath + "/srx"},
+	} {
+		rec := testutil.DoRequestWithRole(t, router, c.method, c.path, nil, linguist.ID, tenant.ID, "linguist")
+		testutil.AssertStatus(t, rec, http.StatusOK)
+	}
+	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/segmentation-profiles/preview",
+		map[string]any{"id": builtin, "text": "One. Two."}, linguist.ID, tenant.ID, "linguist")
+	testutil.AssertStatus(t, rec, http.StatusOK)
+
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", "/api/segmentation-profiles", map[string]any{"name": "Mine", "source_language": "en", "definition": def}},
+		{"PUT", profilePath, map[string]any{"name": "Mine", "source_language": "en", "definition": def, "updated_at": created.Data.UpdatedAt}},
+		{"DELETE", profilePath, nil},
+	} {
+		rec := testutil.DoRequestWithRole(t, router, c.method, c.path, c.body, linguist.ID, tenant.ID, "linguist")
+		testutil.AssertStatus(t, rec, http.StatusForbidden)
+	}
+	rec = testutil.DoFileUploadWithRole(t, router, "/api/segmentation-profiles/srx/parse", "rules.srx", "<srx/>", linguist.ID, tenant.ID, "linguist")
+	testutil.AssertStatus(t, rec, http.StatusForbidden)
+
+	// The project manager does all of it.
+	rec = testutil.DoRequestWithRole(t, router, "PUT", profilePath,
+		map[string]any{"name": "Legal 2", "source_language": "en", "definition": def, "updated_at": created.Data.UpdatedAt}, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusOK)
+	rec = testutil.DoFileUploadWithRole(t, router, "/api/segmentation-profiles/srx/parse", "rules.srx", "<srx/>", pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusBadRequest)
+	rec = testutil.DoRequestWithRole(t, router, "DELETE", profilePath, nil, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusNoContent)
 }

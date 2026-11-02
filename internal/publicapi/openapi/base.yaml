@@ -23,6 +23,7 @@ tags:
   - name: Labels
   - name: Members
   - name: AI
+  - name: Segmentation
   - name: Spec
 paths:
   /openapi.json:

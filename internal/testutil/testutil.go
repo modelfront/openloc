@@ -200,6 +200,11 @@ func truncateAll(t testing.TB, pool *pgxpool.Pool) {
 			ai_connections,
 			ai_vendors,
 			demo_workspace_items,
+			-- Not segmentation_builtin_profiles: the migration seeds it and
+			-- tests read those rows.
+			segmentation_profiles,
+			-- No foreign key: the queue outlives the issues it names.
+			issue_slack_blanks,
 			projects,
 			users,
 			tenants

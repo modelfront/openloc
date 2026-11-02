@@ -8,3 +8,4 @@ export const isMac =
 // word forms need a separator (`Ctrl+Enter`), so callers rendering a word
 // form must add the `+` themselves.
 export const modKey = isMac ? '⌘' : 'Ctrl'
+export const altKey = isMac ? '⌥' : 'Alt'

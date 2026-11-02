@@ -473,9 +473,8 @@ test.describe.serial("J1 — Full Project Lifecycle", () => {
     const editor = segmentEditor(page).first();
     await expect(editor).toBeVisible({ timeout: 5000 });
 
-    // Verify no lock icon is shown (🔒)
-    // The lock button should say "Lock" not "Unlock" — meaning it's currently unlocked
-    await expect(page.getByText(/🔓 Lock/i).first()).toBeVisible({ timeout: 3000 });
+    // No padlock on the row: it is not locked.
+    await expect(page.locator('[data-segment-idx="0"]').getByRole("img", { name: "Locked" })).toHaveCount(0);
   });
 
   test("D6: confirm a pre-translated segment WITHOUT editing (QA finding #16)", async ({ page }) => {
@@ -575,16 +574,24 @@ test.describe.serial("J1 — Full Project Lifecycle", () => {
     const editor = segmentEditor(page).first();
     await expect(editor).toBeVisible({ timeout: 5000 });
 
-    // D12: Lock the segment
-    const lockBtn = page.getByText(/🔓 Lock/i).first();
-    await expect(lockBtn).toBeVisible({ timeout: 3000 });
-    await lockBtn.click();
-    // Should now show "Unlock"
-    await expect(page.getByText(/🔒 Unlock/i).first()).toBeVisible({ timeout: 3000 });
+    // D12: Lock the segment from the selection bar
+    const row = page.locator('[data-segment-idx="0"]');
+    await page.getByTestId("segment-select-1").click();
+    const locked = page.waitForResponse(
+      (r) => r.url().endsWith("/translations/lock") && r.request().method() === "POST",
+      { timeout: 10000 },
+    );
+    await page.getByTestId("segment-bulk-lock").click();
+    expect((await locked).ok(), "bulk lock").toBe(true);
+    await expect(row.getByRole("button", { name: "Unlock" })).toBeVisible({ timeout: 3000 });
 
-    // D13: Unlock the segment
-    await page.getByText(/🔒 Unlock/i).first().click();
-    await expect(page.getByText(/🔓 Lock/i).first()).toBeVisible({ timeout: 3000 });
+    // D13: Unlock it with the row's padlock
+    await row.getByRole("button", { name: "Unlock" }).click();
+    await expect(row.getByRole("img", { name: "Locked" })).toHaveCount(0, { timeout: 3000 });
+
+    // Ticking the checkbox closed the editor; open the segment again.
+    await page.locator("[data-translation-cell]").first().click();
+    await expect(editor).toBeVisible({ timeout: 5000 });
 
     // D14: edit, then re-confirm. The lock and unlock each refetch the
     // translations, and a refetch landing inside a single fill splices the

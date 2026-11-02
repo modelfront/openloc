@@ -38,6 +38,8 @@ vi.mock('../api', () => ({
   listAPITokens: () => listAPITokens(),
   listMTEngineCatalog: () => listMTEngineCatalog(),
   createAPIToken: vi.fn(), revokeAPIToken: vi.fn(),
+  listOAuthConnections: () => Promise.resolve([]),
+  revokeOAuthConnection: vi.fn(),
   getMe: () => getMe(),
   getAppConfig: () => Promise.resolve({ app_url: 'https://app.example.com', docs_url: '', docs_host: false, developer_url: '', developer_host: false, playground: false, issues: false }),
 }))
@@ -106,6 +108,8 @@ describe('AISettingsPage', () => {
     // Connect an AI tool is present but closed too.
     expect(screen.getByTestId('connect-ai-tools-section')).toBeInTheDocument()
     expect(screen.queryByTestId('mcp-server-url')).not.toBeInTheDocument()
+    // The apps connected that way are listed inside it, so they are closed too.
+    expect(screen.queryByTestId('connected-apps')).not.toBeInTheDocument()
   })
 
   // The reason the route isn't admin-gated: a linguist needs their own token to
@@ -705,6 +709,7 @@ describe('AISettingsPage', () => {
     await user.click(await screen.findByTestId('ai-connection-tile-7'))
     const form = await screen.findByTestId('ai-connection-form')
 
+    await user.type(within(form).getByTestId('ai-connection-base-url'), 'https://example.com')
     await user.click(within(form).getByRole('button', { name: 'Update' }))
     await waitFor(() => expect(updateAIConnection).toHaveBeenCalled())
     expect(screen.getByTestId('ai-connection-panel')).toBeInTheDocument()
@@ -824,9 +829,10 @@ describe('AISettingsPage', () => {
     // The stored endpoint is visible rather than hidden behind an API-only field.
     expect(within(form).getByTestId('ai-connection-base-url')).toHaveValue(azure)
 
+    await user.type(within(form).getByTestId('ai-connection-base-url'), '/v1')
     await user.click(within(form).getByRole('button', { name: 'Update' }))
     await waitFor(() => expect(updateAIConnection).toHaveBeenCalled())
-    expect(updateAIConnection.mock.calls[0][2]).toMatchObject({ base_url: azure })
+    expect(updateAIConnection.mock.calls[0][2]).toMatchObject({ base_url: `${azure}/v1` })
   })
 
   it('sends a new connection endpoint on create', async () => {

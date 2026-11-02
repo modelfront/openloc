@@ -91,7 +91,7 @@ func TestPPTXSmartArt_MismatchKeepsDrawingAndIsCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, unmirrored, err := reconstructPPTX(context.Background(), content, map[string]string{
+	out, unmirrored, err := PPTX{}.reconstruct(context.Background(), content, map[string]string{
 		segs[1].Key: `Le <g id="1">livrer</g>`,
 	}, ExportLangs{Source: "en", Target: "fr"})
 	if err != nil {
@@ -130,7 +130,7 @@ func TestPPTXSmartArt_NoOrEmptyDrawing(t *testing.T) {
 			if len(segs) != 1 || segs[0].Text != "Plan the launch" {
 				t.Fatalf("segments = %q", pptxTexts(segs))
 			}
-			out, unmirrored, err := reconstructPPTX(context.Background(), content, map[string]string{segs[0].Key: "Planifier"}, ExportLangs{})
+			out, unmirrored, err := PPTX{}.reconstruct(context.Background(), content, map[string]string{segs[0].Key: "Planifier"}, ExportLangs{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +155,7 @@ func TestPPTXSmartArt_UnmatchedDrawingTextIsCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, unmirrored, err := reconstructPPTX(context.Background(), content, map[string]string{segs[0].Key: "Planifier le lancement"}, ExportLangs{})
+	out, unmirrored, err := PPTX{}.reconstruct(context.Background(), content, map[string]string{segs[0].Key: "Planifier le lancement"}, ExportLangs{})
 	if err != nil {
 		t.Fatal(err)
 	}

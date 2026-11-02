@@ -17,12 +17,20 @@ import { getTMProfile, createTMProfile, updateTMProfile, setTMProfileTMs, ApiErr
 import { queryKeys } from '../lib/query-keys'
 import { TMScoringFields, describeScoringSave, SCORING_SAVED_TOAST_ID, type TMScoringUpdate } from './settings/TMScoringFields'
 import { TMLookupOrderField } from './settings/TMLookupOrderField'
-import { toTMLookupOrder, type TMLookupOrder } from '../lib/settings-values'
+import { LINGUIST_TERMS_LABELS, toTMLookupOrder, type LinguistTerms, type TMLookupOrder } from '../lib/settings-values'
+import { LinguistTermsField } from './settings/LinguistTermsField'
+import { modeHasWrite } from '../lib/tm-mode'
 import { TMProfilePicker } from './settings/TMProfilePicker'
 import type { WorkflowStep } from './WorkflowStepsEditor'
 import { isPretranslateOnly } from '../lib/workflow-steps'
 import { MISSING_MT_ROUTER_WARNING, missingTMWarning, mtRouterCoverageWarning, type RouterCoverage } from '../lib/settings-coverage'
 import { SectionInfo } from '@/components/ui/section-info'
+import { FileConfigurationsSection } from './settings/FileConfigurationsSection'
+import { useSegmentationProfiles } from '../hooks/useSegmentationProfiles'
+import { OpenLinkButton } from '@/components/ui/open-link-button'
+import { mtRouterPath, qaProfilePath, termBasePath } from '@/lib/asset-links'
+import { conceptsLabel, tmEntriesLabel } from '@/lib/tm-display'
+import { describeSwitchSave, mergeSwitches, pickSwitches } from '@/lib/settings-switches'
 
 // One partial settings update. Keys match the PUT body the API takes.
 export type ScalarUpdate = {
@@ -34,7 +42,9 @@ export type ScalarUpdate = {
   tm_on_upload?: boolean
   auto_complete?: boolean
   inline_html?: boolean
+  linguist_terms?: LinguistTerms
   qa_profile_id?: number | null
+  segmentation_profile_id?: number
   // null = no machine translation for this project.
   mt_router_id?: number | null
 }
@@ -48,7 +58,13 @@ export interface SettingsValues {
   tmOnUpload: boolean
   autoComplete: boolean
   inlineHTML: boolean
+  linguistTerms: LinguistTerms
   qaProfileId: number | null
+  // The segmentation profile new uploads are split with. null: on a new
+  // project, the suggested one; on a saved project or template, none is
+  // picked (its profile was deleted).
+  segmentationProfileId: number | null
+  segmentationProfileName?: string
   // The TM profile the row follows (null/absent = its own TM list + scoring).
   // While set, tmAssignments and the scoring trio are the profile's values.
   tmProfileId?: number | null
@@ -70,7 +86,7 @@ interface SettingsEditorProps {
   /** `unusable` warns that a route inside the router points at a broken engine;
    *  the routes and default engine show which target languages it covers. */
   mtRouters: ({ id: number; name: string; unusable?: UnusableReason } & RouterCoverage)[]
-  termBases: { id: number; name: string; source_language: string; target_languages: string[] }[]
+  termBases: { id: number; name: string; source_language: string; target_languages: string[]; entry_count?: number }[]
   qaProfiles: { id: number; name: string }[]
   tmProfiles?: { id: number; name: string }[]
   // Only changes wording in the TM profile picker ("this project" / "this template").
@@ -82,6 +98,10 @@ interface SettingsEditorProps {
    *  are no targetLanguages: the template page passes its default targets
    *  here, without the project-language behaviour targetLanguages brings. */
   routerCoverageLanguages?: string[]
+  /** The source language the segmentation profile must suit, when there is
+   *  no sourceLanguage: the template page passes its own here, without the
+   *  project-language behaviour sourceLanguage brings. */
+  segmentationLanguage?: string
   mode: 'edit' | 'create'
   onUpdateScalars?: (data: ScalarUpdate) => Promise<void>
   onSaveTMAssignments?: (items: TMAssignmentItem[]) => Promise<void>
@@ -114,6 +134,7 @@ export function SettingsEditor({
   sourceLanguage,
   targetLanguages,
   routerCoverageLanguages,
+  segmentationLanguage,
   mode,
   onUpdateScalars,
   onSaveTMAssignments,
@@ -133,16 +154,21 @@ export function SettingsEditor({
   // the MT page, in a new tab.
   const { mtRouter } = useEngineCreateActions()
   const mtRouterActions = useMemo(() => [mtRouter()], [mtRouter])
+  // Term bases carry their size as the picker chip and the row's second line.
+  const termBaseResources = useMemo(
+    () => termBases.map(t => ({ ...t, meta: t.entry_count != null ? conceptsLabel(t.entry_count) : undefined })),
+    [termBases],
+  )
 
-  const [localPreTranslate, setLocalPreTranslate] = useState(values.mtOnUpload)
-  const [localTmOnUpload, setLocalTmOnUpload] = useState(values.tmOnUpload)
-  const [localAutoComplete, setLocalAutoComplete] = useState(values.autoComplete)
-  const [localInlineHTML, setLocalInlineHTML] = useState(values.inlineHTML)
+  const [localSwitches, setLocalSwitches] = useState(() => pickSwitches(values))
   const [localTmLookupOrder, setLocalTmLookupOrder] = useState(values.tmLookupOrder)
+  const [localLinguistTerms, setLocalLinguistTerms] = useState(values.linguistTerms)
   // The wizard's own TM rows live in TMAssignmentSection and reach us only
   // through onDraftChange; `values` is not re-fed, so count them here.
   const [localTMRowCount, setLocalTMRowCount] = useState(values.tmAssignments.length)
   const [localQaProfileId, setLocalQaProfileId] = useState(values.qaProfileId)
+  const [localSegmentationProfileId, setLocalSegmentationProfileId] = useState(values.segmentationProfileId)
+  const segmentation = useSegmentationProfiles(sourceLanguage ?? segmentationLanguage)
   const [localMTRouterId, setLocalMTRouterId] = useState<number | null>(values.mtRouterId)
   // Create mode keeps the TM profile choice as a draft too; edit mode reads it
   // from the server payload.
@@ -160,6 +186,11 @@ export function SettingsEditor({
   const tmRows: TMAssignmentItem[] = isCreate && tmLinked
     ? (linkedProfile?.tm_assignments ?? []).map(a => ({ id: a.id, tmId: a.tm_id, mode: a.mode, priority: a.priority, penaltyPct: a.penalty_pct ?? 0 }))
     : values.tmAssignments
+  // Entries across the rows' TMs, for the collapsed summary; null while any count is unknown.
+  const tmEntryTotal = tmRows.reduce<number | null>((sum, a) => {
+    const n = tmCollections.find(t => t.id === a.tmId)?.entry_count
+    return sum == null || n == null ? null : sum + n
+  }, 0)
   // A new project starts with the TM source unanswered: no profile, no
   // memories of its own, no pick yet. Until it is answered the list + scoring
   // stay hidden and the on-upload switch has nothing to act on. A template
@@ -250,13 +281,12 @@ export function SettingsEditor({
   useEffect(() => {
     if (isCreate && values !== prevValuesRef.current) {
       prevValuesRef.current = values
-      setLocalPreTranslate(values.mtOnUpload)
-      setLocalTmOnUpload(values.tmOnUpload)
-      setLocalAutoComplete(values.autoComplete)
-      setLocalInlineHTML(values.inlineHTML)
+      setLocalSwitches(pickSwitches(values))
       setLocalTmLookupOrder(values.tmLookupOrder)
+      setLocalLinguistTerms(values.linguistTerms)
       setLocalTMRowCount(values.tmAssignments.length)
       setLocalQaProfileId(values.qaProfileId)
+      setLocalSegmentationProfileId(values.segmentationProfileId)
       setLocalMTRouterId(values.mtRouterId)
       setLocalTMProfileId(values.tmProfileId ?? null)
     }
@@ -275,21 +305,15 @@ export function SettingsEditor({
   const describeScalarSave = (data: ScalarUpdate): string => {
     const scoring = describeScoringSave(data)
     if (scoring) return scoring
-    if (data.mt_on_upload !== undefined) {
-      return data.mt_on_upload ? 'MT on upload enabled' : 'MT on upload disabled'
-    }
-    if (data.tm_on_upload !== undefined) {
-      return data.tm_on_upload ? 'Apply TM on upload enabled' : 'Apply TM on upload disabled'
-    }
-    if (data.auto_complete !== undefined) {
-      return data.auto_complete ? 'Auto-complete enabled' : 'Auto-complete disabled'
-    }
-    if (data.inline_html !== undefined) {
-      return data.inline_html ? 'HTML strings enabled' : 'HTML strings disabled'
-    }
+    const toggled = describeSwitchSave(data)
+    if (toggled) return toggled
+    if (data.linguist_terms !== undefined) return `Linguists can add terms set to “${LINGUIST_TERMS_LABELS[data.linguist_terms]}”`
     if ('qa_profile_id' in data) {
       if (data.qa_profile_id === null) return 'QA profile cleared'
       return `QA profile set to ${qaProfiles.find(p => p.id === data.qa_profile_id)!.name}`
+    }
+    if (data.segmentation_profile_id !== undefined) {
+      return `Segmentation profile set to ${segmentation.profiles.find(p => p.id === data.segmentation_profile_id)?.name ?? data.segmentation_profile_id}`
     }
     if ('mt_router_id' in data) {
       if (data.mt_router_id === null) return 'MT router cleared'
@@ -305,18 +329,16 @@ export function SettingsEditor({
       const newSublanguage = data.sublanguage_penalty_pct ?? draftRef.current.sublanguagePenaltyPct
       const newNearExact = data.near_exact_penalty_pct ?? draftRef.current.nearExactPenaltyPct
       const newLookupOrder = data.tm_lookup_order ?? draftRef.current.tmLookupOrder
-      const newPreTranslate = data.mt_on_upload ?? localPreTranslate
-      const newTmOnUpload = data.tm_on_upload ?? localTmOnUpload
-      const newAutoComplete = data.auto_complete ?? localAutoComplete
-      const newInlineHTML = data.inline_html ?? localInlineHTML
+      const newLinguistTerms = data.linguist_terms ?? localLinguistTerms
+      const newSwitches = mergeSwitches(localSwitches, data)
       const newQa = data.qa_profile_id !== undefined ? data.qa_profile_id : localQaProfileId
+      const newSegmentation = data.segmentation_profile_id ?? localSegmentationProfileId
       const newMTRouter = data.mt_router_id !== undefined ? data.mt_router_id : localMTRouterId
-      setLocalPreTranslate(newPreTranslate)
-      setLocalTmOnUpload(newTmOnUpload)
-      setLocalAutoComplete(newAutoComplete)
-      setLocalInlineHTML(newInlineHTML)
+      setLocalSwitches(newSwitches)
       setLocalTmLookupOrder(newLookupOrder)
+      setLocalLinguistTerms(newLinguistTerms)
       setLocalQaProfileId(newQa)
+      setLocalSegmentationProfileId(newSegmentation)
       setLocalMTRouterId(newMTRouter)
       // Use draftRef to preserve assignments added via other callbacks
       const next = {
@@ -325,11 +347,10 @@ export function SettingsEditor({
         sublanguagePenaltyPct: newSublanguage,
         nearExactPenaltyPct: newNearExact,
         tmLookupOrder: newLookupOrder,
-        mtOnUpload: newPreTranslate,
-        tmOnUpload: newTmOnUpload,
-        autoComplete: newAutoComplete,
-        inlineHTML: newInlineHTML,
+        linguistTerms: newLinguistTerms,
+        ...newSwitches,
         qaProfileId: newQa,
+        segmentationProfileId: newSegmentation,
         mtRouterId: newMTRouter,
       }
       draftRef.current = next
@@ -350,11 +371,21 @@ export function SettingsEditor({
     }
   }
 
-  const displayPreTranslate = isCreate ? localPreTranslate : values.mtOnUpload
-  const displayTmOnUpload = isCreate ? localTmOnUpload : values.tmOnUpload
-  const displayAutoComplete = isCreate ? localAutoComplete : values.autoComplete
-  const displayInlineHTML = isCreate ? localInlineHTML : values.inlineHTML
+  const displaySwitches = isCreate ? localSwitches : pickSwitches(values)
+  const displayLinguistTerms = isCreate ? localLinguistTerms : values.linguistTerms
   const displayQaProfileId = isCreate ? localQaProfileId : values.qaProfileId
+  // A new project shows the suggested profile until one is picked, which is
+  // what the form sends. A saved project or template names none after its
+  // profile is deleted: the field stays empty and asks for one.
+  const storedSegmentationId = isCreate ? localSegmentationProfileId : values.segmentationProfileId
+  const segmentationMissing = !isCreate && storedSegmentationId == null
+  // A saved project keeps its profile when the list no longer holds it: one
+  // whose language was changed since.
+  const keepsStoredProfile = !isCreate && storedSegmentationId != null && !!values.segmentationProfileName &&
+    !segmentation.isLoading && !segmentation.error && !segmentation.profiles.some(p => p.id === storedSegmentationId)
+  const displaySegmentationProfileId = segmentationMissing ? null
+    : keepsStoredProfile ? storedSegmentationId : segmentation.pick(storedSegmentationId)
+  const storedSegmentationLabel = values.segmentationProfileName && `${values.segmentationProfileName} (not for this language)`
   const displayMTRouterId = isCreate ? localMTRouterId : values.mtRouterId
   // Same gate as tmChosen, for the MT switch: on a new project there is
   // nothing to translate with until a router is picked.
@@ -378,6 +409,7 @@ export function SettingsEditor({
   // Unlike the gaps above, this one shows on the New project form too: the
   // router is picked there, before any file is machine translated.
   const selectedRouter = mtRouters.find(r => r.id === displayMTRouterId)
+  const selectedQaProfile = qaProfiles.find(p => p.id === displayQaProfileId)
   const routerCoverageWarning = selectedRouter
     ? mtRouterCoverageWarning(selectedRouter, targetLanguages ?? routerCoverageLanguages ?? [])
     : null
@@ -474,7 +506,7 @@ export function SettingsEditor({
       open={profileSettingsOpen}
       onToggle={() => setProfileSettingsOpen(o => !o)}
       controls={tmSettingsId}
-      summary={<>{' '}— {tmRows.length} {tmRows.length === 1 ? 'TM' : 'TMs'} · {Math.round(scoringValues.fuzzyThreshold * 100)}% threshold</>}
+      summary={<>{' '}— {tmRows.length} {tmRows.length === 1 ? 'TM' : 'TMs'}{tmRows.length > 0 && tmEntryTotal != null && ` · ${tmEntriesLabel(tmEntryTotal)}`} · {Math.round(scoringValues.fuzzyThreshold * 100)}% threshold</>}
       data-testid="tm-profile-settings-toggle"
     >
       {profileSettingsOpen ? 'Hide' : 'Show'} profile settings
@@ -539,7 +571,7 @@ export function SettingsEditor({
 
         <CheckboxField
           className="mb-4"
-          checked={displayAutoComplete}
+          checked={displaySwitches.autoComplete}
           onChange={checked => handleScalarChange({ auto_complete: checked })}
           disabled={saving}
           data-testid="settings-auto-complete"
@@ -551,7 +583,7 @@ export function SettingsEditor({
 
         <CheckboxField
           className="mb-4"
-          checked={displayInlineHTML}
+          checked={displaySwitches.inlineHTML}
           onChange={checked => handleScalarChange({ inline_html: checked })}
           disabled={saving}
           data-testid="settings-inline-html"
@@ -567,7 +599,7 @@ export function SettingsEditor({
       </div>
 
       {typeof afterProjectSettings === 'function'
-        ? afterProjectSettings({ mtRouterName: selectedRouter?.name, mtOnUpload: displayPreTranslate })
+        ? afterProjectSettings({ mtRouterName: selectedRouter?.name, mtOnUpload: displaySwitches.mtOnUpload })
         : afterProjectSettings}
 
 
@@ -585,7 +617,7 @@ export function SettingsEditor({
         {/* Locked until the TM source is chosen: with no memories behind it the
             switch would promise a lookup that cannot run. */}
         <CheckboxField
-          checked={displayTmOnUpload}
+          checked={displaySwitches.tmOnUpload}
           onChange={checked => handleScalarChange({ tm_on_upload: checked })}
           disabled={saving || !tmChosen}
           data-testid="settings-tm-on-upload"
@@ -625,7 +657,7 @@ export function SettingsEditor({
             locked; the shared wrapper keeps it right under the row. */}
         <div>
           <CheckboxField
-            checked={mtLocked || displayPreTranslate}
+            checked={mtLocked || displaySwitches.mtOnUpload}
             onChange={checked => handleScalarChange({ mt_on_upload: checked })}
             disabled={saving || !mtChosen || mtLocked}
             data-testid="settings-mt-on-upload"
@@ -675,28 +707,43 @@ export function SettingsEditor({
               {routerCoverageWarning}
             </SectionInfo>
           )}
+          {selectedRouter && <OpenLinkButton to={mtRouterPath(selectedRouter.id)} label="Open MT router" data-testid="mt-router-open" />}
         </div>
       </div>
 
-      {/* Terminology Assignments */}
-      <AssignmentSection
-        title="Terminology"
-        helpText="Assign terminology (term bases) to language pairs. Terms from assigned term bases are highlighted in the CAT editor and used for QA terminology checks."
-        items={values.termAssignments}
-        resources={termBases}
-        resourceLabel="Term base"
-        hasMode
-        hasPriority
-        languages={languages}
-        autoSourceLanguage={sourceLanguage}
-        restrictTargetsTo={targetLanguages}
-        resourceLangs={Object.fromEntries(termBases.map(t => [t.id, { source_language: t.source_language, target_languages: t.target_languages }]))}
-        initialEditing={isCreate}
-        onDraftChange={isCreate ? handleTermDraftChange : undefined}
-        onSave={!isCreate ? onSaveTermAssignments : undefined}
-        onCreateNewResource={handleCreateNewTermBase}
-        createNewLabel="Create new term base..."
-      />
+      {/* Terminology: who adds terms from the editor, then the term bases.
+          One card, like Translation memory above. */}
+      <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-4" data-testid="terminology-settings">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Terminology</h3>
+        <LinguistTermsField
+          value={displayLinguistTerms}
+          disabled={saving}
+          disabledReason={values.termAssignments.length === 0
+            ? 'Add a term base to let linguists add terms.'
+            : values.termAssignments.some(a => modeHasWrite(a.mode ?? 'read_write')) ? undefined : 'Tick Write on a term base to let linguists add terms.'}
+          onChange={v => handleScalarChange({ linguist_terms: v })}
+        />
+        <AssignmentSection
+          variant="embedded"
+          title="Term bases"
+          helpText="Assign term bases to language pairs. Terms from assigned term bases are highlighted in the CAT editor and used for QA terminology checks."
+          items={values.termAssignments}
+          resources={termBaseResources}
+          resourcePath={termBasePath}
+          resourceLabel="term base"
+          hasMode
+          hasPriority
+          languages={languages}
+          autoSourceLanguage={sourceLanguage}
+          restrictTargetsTo={targetLanguages}
+          resourceLangs={Object.fromEntries(termBases.map(t => [t.id, { source_language: t.source_language, target_languages: t.target_languages }]))}
+          initialEditing={isCreate}
+          onDraftChange={isCreate ? handleTermDraftChange : undefined}
+          onSave={!isCreate ? onSaveTermAssignments : undefined}
+          onCreateNewResource={handleCreateNewTermBase}
+          createNewLabel="Create new term base..."
+        />
+      </div>
 
       {/* Quality assurance: which QA profile's checks run on this project. Its
           own card, like the other resources — terminology above feeds its
@@ -719,8 +766,20 @@ export function SettingsEditor({
             disabled={saving}
             data-testid="qa-profile-select"
           />
+          {selectedQaProfile && <OpenLinkButton to={qaProfilePath(selectedQaProfile.id)} label="Open QA profile" data-testid="qa-profile-open" />}
         </div>
       </div>
+
+      <FileConfigurationsSection
+        profiles={segmentation.profiles}
+        value={displaySegmentationProfileId}
+        storedLabel={storedSegmentationLabel || undefined}
+        missing={segmentationMissing ? 'Pick a segmentation profile.' : undefined}
+        disabled={saving}
+        error={segmentation.error}
+        onRetry={() => { void segmentation.refetch() }}
+        onChange={id => handleScalarChange({ segmentation_profile_id: id })}
+      />
 
       {inlineCreateDialogs}
     </div>

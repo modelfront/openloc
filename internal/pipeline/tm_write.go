@@ -293,7 +293,7 @@ func (s *Service) SaveToTM(ctx context.Context, tenantID, translationID int64) (
 
 	// Record the segment's document neighbors so a future
 	// pretranslate of the same context can leverage this entry as 101%.
-	prevHash, nextHash := s.resolveContextHashes(ctx, tr.SegmentID)
+	prevHash, nextHash := s.resolveContextHashes(ctx, tr.SegmentID, tr.TargetLanguage)
 	tmIDs, err := s.saveSegmentToTM(ctx, tenantID, seg.SourceText, *tr.ActiveText, project.SourceLanguage, tr.TargetLanguage, srcRich, tgtRich, project.ID, userIDFromCtx(ctx), TMReasonCATConfirm, prevHash, nextHash)
 	if err != nil {
 		return nil, err
@@ -325,18 +325,17 @@ func userIDFromCtx(ctx context.Context) *int64 {
 }
 
 // updatedByLabel resolves the free-text updated_by label for a TM write from
-// the acting user's id. Returns "human" for system-driven writes
+// the acting user's id. Returns auth.NoUserLabel for system-driven writes
 // (nil userID, asynq workers, background jobs) or when the user can't be
-// loaded — matching the historical literal so those rows read sensibly.
-// Otherwise returns auth.UserLabel("Name <email>").
+// loaded. Otherwise returns auth.UserLabel("Name <email>").
 func (s *Service) updatedByLabel(ctx context.Context, userID *int64) string {
 	if userID == nil {
-		return "human"
+		return auth.NoUserLabel
 	}
 	u, err := s.queries.GetUser(ctx, *userID)
 	if err != nil {
 		logging.Warn(ctx, err, "could not resolve user for updated_by label; using 'human'", "tm-write-user-label-failed", logging.UserID(*userID))
-		return "human"
+		return auth.NoUserLabel
 	}
 	return auth.UserLabel(u.Name, u.Email)
 }

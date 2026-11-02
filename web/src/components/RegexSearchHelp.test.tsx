@@ -2,17 +2,18 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RegexSearchHelp } from './RegexSearchHelp'
-import { REGEX_HELP_PATTERNS } from '@/lib/regex-help-patterns'
+import { QA_REGEX_HELP_PATTERNS, REGEX_HELP_PATTERNS } from '@/lib/regex-help-patterns'
 
 // The cheat sheet is copy-paste material: every row lands in the search box
 // verbatim. A row whose pattern doesn't match the text its description
 // promises is worse than no row at all, so each one carries a sample it must
-// find. The TM search runs the same rows in Postgres — pinned by
-// entry_search_integration_test.go.
+// find. The segment search runs them in Go RE2 (internal/editor/
+// regex_help_patterns_test.go), the TM search in Postgres
+// (entry_search_integration_test.go).
 describe('regex cheat sheet', () => {
   it.each(REGEX_HELP_PATTERNS)('$pattern is a working pattern', ({ pattern, sample }) => {
-    // buildTextMatcher compiles the raw string with no flags and calls .test —
-    // an invalid pattern would throw here and match nothing in the UI.
+    // The filter bar validates the draft with JavaScript before it is sent;
+    // an invalid pattern would throw here and show an error in the UI.
     const re = new RegExp(pattern)
     expect(re.test(sample)).toBe(true)
   })
@@ -52,5 +53,40 @@ describe('RegexSearchHelp TM variant', () => {
     expect(dialog.textContent).not.toContain('finds untranslated')
     // The shared rows are still there.
     expect(dialog.textContent).toContain(String.raw`\bserver\b`)
+  })
+})
+
+describe('RegexSearchHelp QA variant', () => {
+  afterEach(cleanup)
+
+  it('shows only rows a QA rule accepts and explains the rule-specific limits', async () => {
+    render(<RegexSearchHelp variant="qa" />)
+    await userEvent.click(screen.getByTestId('regex-help-trigger'))
+    const dialog = await screen.findByRole('dialog', { name: 'Regex patterns' })
+    expect(dialog.textContent).toContain('Ignore case')
+    expect(dialog.textContent).toContain('no lookahead')
+    expect(dialog.textContent).not.toContain('Search in')
+    expect(dialog.textContent).not.toContain('(?=.*password)')
+    expect(dialog.textContent).not.toContain('^.{0,10}$')
+    expect(dialog.textContent).toContain(String.raw`\bserver\b`)
+  })
+
+  it('lists no row a QA rule would refuse for matching empty text', () => {
+    for (const { pattern } of QA_REGEX_HELP_PATTERNS) {
+      expect(new RegExp(pattern).test(''), pattern).toBe(false)
+    }
+  })
+})
+
+describe('segment search cheat sheet', () => {
+  // The segment search runs Go RE2, which has no lookahead: such a row would
+  // match nothing there.
+  it('shows no lookahead row', async () => {
+    render(<RegexSearchHelp variant="segments" />)
+    await userEvent.click(screen.getByTestId('regex-help-trigger'))
+    const dialog = await screen.findByRole('dialog', { name: 'Regex search' })
+    expect(dialog.textContent).not.toContain('(?=')
+    expect(dialog.textContent).toContain('RE2 syntax')
+    cleanup()
   })
 })

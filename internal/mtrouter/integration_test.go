@@ -349,7 +349,8 @@ func TestIntegrationMTRouterTenantIsolation(t *testing.T) {
 	}
 	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/projects", map[string]any{
 		"name": "B's other project", "source_language": "en", "target_languages": []string{"fr"},
-		"settings": map[string]any{"mt_router_id": routerA},
+		"settings":    map[string]any{"mt_router_id": routerA},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantB.ID),
 	}, adminB.ID, tenantB.ID, "admin")
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 }
@@ -371,7 +372,8 @@ func TestIntegrationProjectMTRouterTriState(t *testing.T) {
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "P", "source_language": "en", "target_languages": []string{"fr"},
-		"settings": map[string]any{"mt_router_id": prod},
+		"settings":    map[string]any{"mt_router_id": prod},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var createResp struct {

@@ -18,14 +18,16 @@ import (
 	"strings"
 )
 
-// HeaderMarker is the brand bar markup every email starts with. Tests in
-// other packages use it to check an email went through Render.
-const HeaderMarker = `>OpenLoc</td>`
+// HeaderMarker is the brand bar markup every email starts with, with or
+// without the logo. Tests in other packages use it to check an email went
+// through Render.
+const HeaderMarker = `<td bgcolor="#101828"`
 
-// LogoPath is the logo mark in the frontend's public folder, served from the
-// app's origin. Mail clients don't show SVG, so it is a PNG; the wordmark next
-// to it is text, so the bar still reads "OpenLoc" when images are blocked.
-const LogoPath = "/email-logo.png"
+// LogoPath is the wordmark in the frontend's public folder, served from the
+// app's origin. Mail clients load neither SVG nor web fonts, so it is a PNG of
+// "OpenLoc" in the brand serif, 3× its 88×26 display size; its alt text keeps
+// the bar reading "OpenLoc" when images are blocked.
+const LogoPath = "/email-wordmark.png"
 
 // Content is one email. Body and Notes are trusted HTML — build them with the
 // helpers below.
@@ -75,11 +77,8 @@ var layoutTmpl = template.Must(template.New("email").Parse(`<!DOCTYPE html>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eef0f3" style="background-color: #eef0f3;">
 <tr><td align="center" style="padding: 28px 16px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 560px; background-color: #ffffff; border: 1px solid #e4e7ec; border-radius: 10px; font-family: ` + fontStack + `;">
-<tr><td bgcolor="#101828" style="background-color: #101828; padding: 18px 32px; border-radius: 10px 10px 0 0;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-{{if .LogoURL}}<td style="padding-right: 10px; vertical-align: middle;"><img src="{{.LogoURL}}" width="24" height="24" alt="" style="display: block; border: 0;"></td>{{end}}
-<td style="vertical-align: middle; font-family: ` + fontStack + `; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: #ffffff;">OpenLoc</td>
-</tr></table>
+<tr><td bgcolor="#101828" style="background-color: #101828; padding: 18px 32px; border-radius: 10px 10px 0 0; font-family: ` + fontStack + `; font-size: 18px; font-weight: 600; line-height: 26px; letter-spacing: -0.01em; color: #ffffff;">
+{{- if .LogoURL}}<img src="{{.LogoURL}}" width="88" height="26" alt="OpenLoc" style="display: block; border: 0; color: #ffffff; font-family: ` + fontStack + `; font-size: 18px; font-weight: 600;">{{else}}OpenLoc{{end -}}
 </td></tr>
 <tr><td style="padding: 32px;">
 <h1 style="margin: 0 0 12px; font-family: ` + fontStack + `; font-size: 22px; font-weight: 600; line-height: 1.3; color: #101828;">{{.Heading}}</h1>
@@ -122,12 +121,10 @@ func (e Email) HTML() string {
 
 // Thread puts the emails about one thing in one conversation in mail apps.
 // ID is stable for the thing ("issue-42.app.example.com") and becomes the
-// message id that every email of the thread refers to; Root marks the email
-// that starts the thread and carries that id itself. The zero Thread is no
+// message id that every email of the thread refers to. The zero Thread is no
 // thread.
 type Thread struct {
-	ID   string
-	Root bool
+	ID string
 }
 
 // InThread is e as an email of thread t.
@@ -153,7 +150,7 @@ func AppURL(baseURL, path string) string {
 }
 
 // Render wraps c in the shared layout. baseURL is the app's origin, which
-// serves the logo; without it the bar shows the wordmark alone.
+// serves the logo; without it the bar shows the wordmark as text.
 func Render(baseURL string, c Content) (Email, error) {
 	v := view{Content: c, LogoURL: AppURL(baseURL, LogoPath)}
 	if v.Footer == "" {

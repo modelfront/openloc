@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"openloc/internal/hold"
 	"openloc/internal/httputil"
 	"openloc/internal/job"
+	"openloc/internal/logging"
+	"openloc/internal/pipeline"
 	"openloc/internal/project"
 	"openloc/internal/settings"
 	"openloc/internal/taskedit"
@@ -57,7 +60,7 @@ func serviceErr(err error, what string) error {
 		return invalidf("QA errors block confirming this segment: %s. Fix the text, or ignore a false positive with openloc_ignore_qa_finding.", strings.Join(msgs, "; "))
 	case errors.Is(err, translation.ErrLocked):
 		return invalidf("segment is locked — it must be unlocked first")
-	case errors.Is(err, translation.ErrNotFirstStep), errors.Is(err, job.ErrRunInterrupted):
+	case errors.Is(err, translation.ErrPastClearStep), errors.Is(err, job.ErrRunInterrupted):
 		return invalidf("%s", err.Error())
 	case errors.Is(err, translation.ErrConflict):
 		return errConflict
@@ -67,5 +70,19 @@ func serviceErr(err error, what string) error {
 			return invalidf("%s", msg)
 		}
 	}
+	// A vendor outage or an extension failure is worded for the user too; the
+	// REST answer is a 502. The tool call logs it (logReportedFailure).
+	if msg, ok := pipeline.ReportedFailureMessage(err); ok {
+		return errInvalid{msg: msg, cause: err}
+	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+// logReportedFailure logs a vendor outage or an extension failure that a
+// tool answers with its worded message: the REST twin answers 502 and is
+// reported, so the MCP path must leave a trace too.
+func logReportedFailure(ctx context.Context, err error, tool string) {
+	if _, ok := pipeline.ReportedFailureMessage(err); ok {
+		logging.Error(ctx, err, "MCP tool hit a vendor or extension failure", "mcp-tool-vendor-failed", logging.Label("tool", tool))
+	}
 }

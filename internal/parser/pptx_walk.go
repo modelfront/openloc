@@ -3,6 +3,8 @@ package parser
 import (
 	"fmt"
 	"strings"
+
+	"openloc/internal/segmentation"
 )
 
 // maxPPTXShapeDepth caps how deep groups and alternate content may nest. The
@@ -66,12 +68,15 @@ type pptxCollector struct {
 	slide   int
 	// titles are the current slide's title shapes, already collected.
 	titles map[*xmlNode]bool
+	seg    *segmentation.Segmenter
+	// err is the first segmentation error; the walk stops adding units.
+	err error
 }
 
 // collectPPTX returns every translatable unit in reading order. Parse and
 // Reconstruct both go through here, which keeps their keys in lockstep.
-func collectPPTX(pkg *pptxPackage) ([]*pptxUnit, error) {
-	c := &pptxCollector{pkg: pkg, visited: map[string]bool{}}
+func collectPPTX(pkg *pptxPackage, seg *segmentation.Segmenter) ([]*pptxUnit, error) {
+	c := &pptxCollector{pkg: pkg, visited: map[string]bool{}, seg: seg}
 	slides, err := pkg.slideParts()
 	if err != nil {
 		return nil, err
@@ -99,7 +104,7 @@ func collectPPTX(pkg *pptxPackage) ([]*pptxUnit, error) {
 			}
 		}
 	}
-	return c.units, nil
+	return c.units, c.err
 }
 
 func (c *pptxCollector) context(kind string) string {
@@ -221,7 +226,11 @@ func (c *pptxCollector) graphicFrame(part string, doc *xmlDoc, frame *xmlNode) e
 func (c *pptxCollector) textBody(part string, doc *xmlDoc, body *xmlNode, context string) []*pptxUnit {
 	var added []*pptxUnit
 	for _, p := range body.childrenNamed("p") {
-		para := newPPTXParagraph(doc.src, p)
+		para, err := newPPTXParagraph(doc.src, p, c.seg)
+		if err != nil {
+			c.err = err
+			return added
+		}
 		if para == nil {
 			continue
 		}

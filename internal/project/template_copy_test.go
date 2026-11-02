@@ -73,7 +73,7 @@ func TestIntegrationTemplateCopyPreservesAIEngineID(t *testing.T) {
 	}
 
 	// A project created from the template keeps the router on its copy.
-	pid := createProjectWithBody(t, router, map[string]any{"template_id": tmplResp.Data.ID}, user.ID, tenant.ID)
+	pid := createProjectWithBody(t, q, router, map[string]any{"template_id": tmplResp.Data.ID}, user.ID, tenant.ID)
 	found = false
 	for _, s := range projectSettings(t, router, pid, user.ID, tenant.ID).Data.WorkflowSteps {
 		if s.Name == "ai review" {
@@ -85,5 +85,44 @@ func TestIntegrationTemplateCopyPreservesAIEngineID(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("ai review step missing from the project created from the template")
+	}
+}
+
+// A project made from a template whose steps were edited after its library
+// workflow was applied reads "edited" too: the mark travels with the steps.
+func TestIntegrationTemplateCopyKeepsWorkflowEditedMark(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+	router := testutil.NewTestRouter(pool)
+	tenant := testutil.SeedTenant(t, q, "EditedCorp")
+	user := testutil.SeedUser(t, q, tenant.ID, "edited@test.com", "pass")
+	tr := testutil.SeedStepDefinition(t, q, tenant.ID, "Translate", "human", "", nil)
+	rv := testutil.SeedStepDefinition(t, q, tenant.ID, "Check", "human", "", nil)
+	pr := testutil.SeedStepDefinition(t, q, tenant.ID, "Polish", "human", "", nil)
+	wf := createLibraryWorkflow(t, router, "Two steps", []int64{tr.ID, rv.ID}, user.ID, tenant.ID)
+
+	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Edited template"}, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	tmpl := testutil.DecodeData[struct {
+		ID int64 `json:"id"`
+	}](t, rec)
+	rec = testutil.DoRequest(t, router, "POST", fmt.Sprintf("/api/templates/%d/workflow/apply", tmpl.ID), map[string]any{"workflow_id": wf}, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusOK)
+	rec = testutil.DoRequest(t, router, "PUT", fmt.Sprintf("/api/templates/%d/workflow-steps", tmpl.ID), map[string]any{"steps": []map[string]any{
+		{"step_definition_id": tr.ID}, {"step_definition_id": pr.ID},
+	}}, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusOK)
+
+	pid := createProjectWithBody(t, q, router, map[string]any{"template_id": tmpl.ID}, user.ID, tenant.ID)
+	rec = testutil.DoRequest(t, router, "GET", fmt.Sprintf("/api/projects/%d/settings", pid), nil, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusOK)
+	got := testutil.DecodeData[struct {
+		Project struct {
+			WorkflowID     *int64 `json:"workflow_id"`
+			WorkflowEdited bool   `json:"workflow_edited"`
+		} `json:"project"`
+	}](t, rec)
+	if got.Project.WorkflowID == nil || *got.Project.WorkflowID != wf || !got.Project.WorkflowEdited {
+		t.Errorf("want workflow %d marked edited, got %v edited=%v", wf, testutil.Show(got.Project.WorkflowID), got.Project.WorkflowEdited)
 	}
 }

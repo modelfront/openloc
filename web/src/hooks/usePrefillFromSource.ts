@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { getProjectSettings, getTemplate, getWorkflow, type Project, type WorkflowDetail } from '../api'
+import { getProjectSettings, getSegmentationProfile, getTemplate, getWorkflow, type Project, type WorkflowDetail } from '../api'
 import { projectSettingsToValues } from '../lib/settings-values'
 import { isPretranslateOnly, workflowDefinitionStepsToDrafts, workflowStepsFromApi } from '../lib/workflow-steps'
 import type { SettingsValues } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toTMLookupOrder } from '@/lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
 import { errorText } from '@/lib/error-text'
+import { isAnyLanguageDefault } from './useSegmentationProfiles'
 
 interface PrefillCallbacks {
   defaultSettings: SettingsValues
@@ -98,6 +99,16 @@ export function usePrefillFromSource(cb: PrefillCallbacks) {
       }
       c.applyLanguages(sources.size === 1 ? [...sources][0] : undefined, [...targets])
 
+      // A template without a source language that keeps the any-language
+      // built-in passes on nothing: the form picks the profile for its own
+      // language.
+      let segmentationProfileId = t.segmentation_profile_id ?? null
+      if (segmentationProfileId != null && !t.source_language) {
+        const profile = await getSegmentationProfile(segmentationProfileId)
+        if (seq !== reqSeq.current) return
+        if (isAnyLanguageDefault(profile)) segmentationProfileId = null
+      }
+
       c.applySettings({
         fuzzyThreshold: t.fuzzy_threshold,
         sublanguagePenaltyPct: t.sublanguage_penalty_pct ?? DEFAULT_PENALTY_PCT,
@@ -107,7 +118,9 @@ export function usePrefillFromSource(cb: PrefillCallbacks) {
         tmOnUpload: t.tm_on_upload,
         autoComplete: t.auto_complete ?? DEFAULT_AUTO_COMPLETE,
         inlineHTML: t.inline_html ?? DEFAULT_INLINE_HTML,
+        linguistTerms: toLinguistTerms(t.linguist_terms),
         qaProfileId: t.qa_profile_id ?? null,
+        segmentationProfileId,
         // A template that follows a TM profile hands the link to the new
         // project; its tm_assignments are the profile's and are shown read-only.
         tmProfileId: detail.tm_profile?.id ?? null,

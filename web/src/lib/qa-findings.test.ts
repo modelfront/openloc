@@ -136,9 +136,13 @@ describe('mergeQAReportRows', () => {
     expect(out.summary).toEqual({ error: 1, warning: 0, info: 0, ignored: 0 })
   })
   it('replaces only the given translation rows', () => {
-    const prev = { summary: EMPTY_QA_SUMMARY, results: [finding({ id: 1, translation_id: 10 }), finding({ id: 2, translation_id: 11 })] }
+    const prev = { summary: EMPTY_QA_SUMMARY, results: [finding({ id: 1, translation_id: 10 }), finding({ id: 2, translation_id: 11 })], profile_assigned: true }
     const out = mergeQAReportRows(prev, 10, [])
     expect(out.results.map(r => r.translation_id)).toEqual([11])
+  })
+  it("keeps the report's QA profile flag", () => {
+    const prev = { summary: EMPTY_QA_SUMMARY, results: [], profile_assigned: false }
+    expect(mergeQAReportRows(prev, 10, []).profile_assigned).toBe(false)
   })
 })
 

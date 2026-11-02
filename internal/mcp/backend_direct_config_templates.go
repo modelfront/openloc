@@ -81,8 +81,10 @@ func (b *directBackend) templateDetail(ctx context.Context, tenantID int64, t db
 		TemplateSummary: configTemplateSummary(t),
 		FuzzyThreshold:  p.FuzzyThreshold, MtOnUpload: p.MtOnUpload, TmOnUpload: p.TmOnUpload,
 		AutoComplete: p.AutoComplete, InlineHTML: p.InlineHtml, SublanguagePenaltyPct: p.SublanguagePenaltyPct,
+		LinguistTerms:       p.LinguistTerms,
 		NearExactPenaltyPct: p.NearExactPenaltyPct, QAProfileID: ptr.Deref(p.QaProfileID),
-		MTRouterID: ptr.Deref(p.MtRouterID), MTRouterName: ptr.Deref(settings.MTRouterName(ctx, b.q, tenantID, p.MtRouterID)),
+		SegmentationProfileID: ptr.Deref(p.SegmentationProfileID),
+		MTRouterID:            ptr.Deref(p.MtRouterID), MTRouterName: ptr.Deref(settings.MTRouterName(ctx, b.q, tenantID, p.MtRouterID)),
 		WorkflowID: ptr.Deref(p.WorkflowID), WorkflowName: ptr.Deref(settings.WorkflowName(ctx, b.q, tenantID, p.WorkflowID)),
 		WorkflowSteps: make([]string, 0, len(steps)), ProjectsCreated: created,
 	}
@@ -105,9 +107,9 @@ func (b *directBackend) CreateTemplate(ctx context.Context, in CreateTemplateIn)
 		ProjectName: ptr.NilIfZero(in.ProjectName), SourceLanguage: ptr.NilIfZero(in.SourceLanguage),
 		TargetLanguages: in.TargetLanguages, CustomerID: ptr.NilIfZero(in.CustomerID), Domain: ptr.NilIfZero(in.Domain),
 		Setup: settings.Setup{
-			AutoComplete: in.AutoComplete, InlineHTML: in.InlineHTML, WorkflowID: ptr.NilIfZero(in.WorkflowID),
+			AutoComplete: in.AutoComplete, InlineHTML: in.InlineHTML, LinguistTerms: in.LinguistTerms, WorkflowID: ptr.NilIfZero(in.WorkflowID),
 			MTRouterID: ptr.NilIfZero(in.MTRouterID), QaProfileID: ptr.NilIfZero(in.QAProfileID),
-			TMProfileID: ptr.NilIfZero(in.TMProfileID),
+			TMProfileID: ptr.NilIfZero(in.TMProfileID), SegmentationProfileID: ptr.NilIfZero(in.SegmentationProfileID),
 		},
 	})
 	if err != nil {
@@ -140,10 +142,11 @@ func configNullableID(id *int64) tmpl.NullableID {
 func (in UpdateTemplateIn) service() tmpl.UpdateInput {
 	return tmpl.UpdateInput{
 		Name: in.Name, MtOnUpload: in.MtOnUpload, TmOnUpload: in.TmOnUpload, AutoComplete: in.AutoComplete,
-		InlineHTML: in.InlineHTML, FuzzyThreshold: in.FuzzyThreshold, SublanguagePenaltyPct: in.SublanguagePenaltyPct,
+		InlineHTML: in.InlineHTML, LinguistTerms: in.LinguistTerms, FuzzyThreshold: in.FuzzyThreshold, SublanguagePenaltyPct: in.SublanguagePenaltyPct,
 		NearExactPenaltyPct: in.NearExactPenaltyPct, QAProfile: configNullableID(in.QAProfileID),
 		MTRouter: configNullableID(in.MTRouterID), LinkTMProfile: in.TMProfileID, Customer: configNullableID(in.CustomerID),
-		ProjectName: in.ProjectName, Domain: in.Domain,
+		SegmentationProfile: in.SegmentationProfileID,
+		ProjectName:         in.ProjectName, Domain: in.Domain,
 		SourceLanguage: in.SourceLanguage, TargetLanguages: in.TargetLanguages,
 	}
 }

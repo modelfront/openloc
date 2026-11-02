@@ -30,6 +30,8 @@ describe('unhandled promise rejections', () => {
     ['Playground refusal', new ApiError(403, 'This is the Playground. Changes won’t be saved.', { error: { code: 'demo_read_only' } })],
     ['404', new ApiError(404, 'not found')],
     ['409', new ApiError(409, 'conflict')],
+    ['400 user message', new ApiError(400, 'No TM configured for en → es-mx — add one in project settings')],
+    ['network failure', new ApiError(0, 'network')],
   ])('does not report an expected error: %s', (_, err) => {
     reject(err)
     expect(Honeybadger.notify).not.toHaveBeenCalled()
@@ -37,8 +39,7 @@ describe('unhandled promise rejections', () => {
 
   it.each([
     ['generic Error', new Error('something broke')],
-    ['ApiError 400', new ApiError(400, 'bad request')],
-    ['network failure', new ApiError(0, 'network')],
+    ['ApiError 405', new ApiError(405, 'method not allowed')],
   ])('reports an unexpected error: %s', (_, err) => {
     reject(err)
     expect(Honeybadger.notify).toHaveBeenCalledTimes(1)

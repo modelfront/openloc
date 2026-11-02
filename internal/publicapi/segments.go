@@ -74,16 +74,26 @@ var segmentStatuses = map[string]bool{
 	string(db.TranslationStatusNeedsReview): true, string(db.TranslationStatusAutoApproved): true, string(db.TranslationStatusApproved): true,
 }
 
-func (h Handlers) listSegments(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tenantID := auth.TenantIDFromContext(ctx)
+// jobFromRoute resolves the route's job in the caller's tenant, writing the
+// error response when it cannot.
+func (h Handlers) jobFromRoute(w http.ResponseWriter, r *http.Request) (db.Job, bool) {
 	jobID, err := httputil.ParseID(r, "jobID")
 	if err != nil {
 		httputil.BadRequest(w, "invalid job ID")
-		return
+		return db.Job{}, false
 	}
-	job, err := h.Queries.GetJobTenant(ctx, db.GetJobTenantParams{ID: jobID, TenantID: tenantID})
+	job, err := h.Queries.GetJobTenant(r.Context(), db.GetJobTenantParams{ID: jobID, TenantID: auth.TenantIDFromContext(r.Context())})
 	if httputil.DBError(w, err, "job") {
+		return db.Job{}, false
+	}
+	return job, true
+}
+
+func (h Handlers) listSegments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tenantID := auth.TenantIDFromContext(ctx)
+	job, ok := h.jobFromRoute(w, r)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -116,16 +126,38 @@ func (h Handlers) listSegments(w http.ResponseWriter, r *http.Request) {
 		httputil.ServerError(w, "list", "segments")
 		return
 	}
-	// The cursor is a position and the query starts AT it, so the next page
-	// starts one past the last row shown.
-	writePage(w, rows, page.Limit, func(s db.ListJobSegmentsPageRow) int64 { return int64(s.Position) + 1 },
-		func(row db.ListJobSegmentsPageRow) Segment {
-			seg := segmentDTO(row)
-			if e, ok := previous[row.TranslationID]; ok {
-				seg.PreviousStep = stepOutcomeDTO(e)
-			}
-			return seg
-		})
+	// The query returns whole positions (limit + 1 of them, to detect
+	// has_more), and the pieces of a split share one, so the page ends after
+	// its last whole position. The cursor is a position and the query starts
+	// AT it, so the next page starts one past the last position shown.
+	rows, hasMore := firstPositions(rows, page.Limit)
+	var cursor int64
+	if hasMore {
+		cursor = int64(rows[len(rows)-1].Position) + 1
+	}
+	out := make([]Segment, len(rows))
+	for i, row := range rows {
+		out[i] = segmentDTO(row)
+		if e, ok := previous[row.TranslationID]; ok {
+			out[i].PreviousStep = stepOutcomeDTO(e)
+		}
+	}
+	httputil.Paginated(w, out, cursor, hasMore, -1)
+}
+
+// firstPositions keeps the rows of the first limit positions of rows, which
+// are in document order; hasMore is true when rows held more.
+func firstPositions(rows []db.ListJobSegmentsPageRow, limit int32) ([]db.ListJobSegmentsPageRow, bool) {
+	var seen int32
+	for i, r := range rows {
+		if i == 0 || r.Position != rows[i-1].Position {
+			seen++
+		}
+		if seen > limit {
+			return rows[:i], true
+		}
+	}
+	return rows, false
 }
 
 // segmentWrite is the body of a draft save and of a confirm.

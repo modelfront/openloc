@@ -135,7 +135,7 @@ func TestLibreTranslate_FallbackLogsBatchError(t *testing.T) {
 	}
 
 	logs := buf.String()
-	if !strings.Contains(logs, "batch") || !strings.Contains(logs, "libretranslate returned 400") || strings.Contains(logs, "array q not supported") {
+	if !strings.Contains(logs, "batch") || !strings.Contains(logs, "libretranslate provider provider (status 400)") || strings.Contains(logs, "array q not supported") {
 		t.Errorf("expected a batch log with the upstream status and without the response body, got: %q", logs)
 	}
 }

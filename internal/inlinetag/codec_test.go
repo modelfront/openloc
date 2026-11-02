@@ -263,3 +263,15 @@ func TestDecode_WidenedAndSplitPairBothRoundTrip(t *testing.T) {
 		t.Fatalf("the two shapes should differ only in markup, got %q vs %q", Strip, textRuns(right))
 	}
 }
+
+func TestEncodeVisible(t *testing.T) {
+	tbl := NewTable()
+	src := EncodeVisible(tbl, `Tom &amp; <bpt id="1">&lt;b&gt;</bpt>Jerry<ept id="1">&lt;/b&gt;</ept> &lt;3`)
+	tgt := EncodeVisible(tbl, `<bpt id="1">&lt;b&gt;</bpt>Tom<ept id="1">&lt;/b&gt;</ept> &amp; Jerry`)
+	if src != "Tom & <1>Jerry</1> <3" || tgt != "<1>Tom</1> & Jerry" {
+		t.Errorf("got %q and %q", src, tgt)
+	}
+	if got := EncodeVisible(NewTable(), "a &amp; b"); got != "a & b" {
+		t.Errorf("no tags: got %q", got)
+	}
+}

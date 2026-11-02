@@ -11,8 +11,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { getJobLeverage, ANALYSIS_BANDS, type JobLeverage } from '../api/analyses'
 import { queryKeys } from '../lib/query-keys'
-import type { RepetitionStats } from '../lib/cat-editor-logic'
+import type { RepetitionStats } from '../types/editor'
 import { CountMeta } from '@/components/ui/count-meta'
+
+// Bottom padding a page needs so its content, scrollbars included, ends above
+// the bar. Matches the bar's h-7.
+export const LEVERAGE_BAR_CLEARANCE = 'pb-7'
 
 // The match bands from New up to 101%, then Repetitions last. Saved analyses
 // keep ANALYSIS_BANDS' own order; this bar reads left to right by leverage.
@@ -23,10 +27,9 @@ const BAR_BANDS = [
 
 interface Props {
   jobId: number
-  // Repetition stats computed client-side from the segments list (only
-  // later occurrences count). The backend's repetition bands are always 0,
-  // so this prop overrides the band's display when provided. Parent
-  // (CATEditor) owns the calculation via `computeRepetitionStats`.
+  // Repetition totals from the editor index (only later occurrences count).
+  // The backend's repetition bands are always 0, so this prop overrides the
+  // band's display when provided.
   localRepetitionStats?: RepetitionStats
   /** The job's size, shown first. */
   segmentCount: number
@@ -45,9 +48,9 @@ export default function JobLeverageStatusBar({ jobId, localRepetitionStats, segm
   })
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 bg-gray-900 text-gray-100 dark:bg-gray-950 border-t border-gray-700 dark:border-gray-800 text-[11px] font-mono">
+    <div className="fixed bottom-0 left-0 right-0 z-30 h-7 bg-gray-900 text-gray-100 dark:bg-gray-950 border-t border-gray-700 dark:border-gray-800 text-[11px] font-mono">
       {/* Equal flex-1 sides keep the bands centred on the bar. */}
-      <div className="px-4 py-1 flex items-center gap-4 overflow-x-auto" data-testid="job-leverage-bar">
+      <div className="no-scrollbar flex h-full items-center gap-4 overflow-x-auto overflow-y-hidden px-4" data-testid="job-leverage-bar">
         <CountMeta
           items={[{ count: segmentCount, noun: 'segment' }, { count: wordCount, noun: 'word' }]}
           className="flex-1 shrink-0 whitespace-nowrap text-white"

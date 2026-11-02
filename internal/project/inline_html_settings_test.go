@@ -116,6 +116,7 @@ func TestIntegrationProjectCreate_InlineHTML(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 				"name": "Create " + c.name, "source_language": "en", "target_languages": []string{"fr"}, "settings": c.settings,
+				"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 			}, user.ID, tenant.ID)
 			testutil.AssertStatus(t, rec, http.StatusCreated)
 			var resp struct {

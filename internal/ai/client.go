@@ -79,6 +79,17 @@ func (e *ProviderError) LogMessage() string {
 	return msg
 }
 
+// UserFixable reports whether the user fixes this in their vendor account (the
+// key, the plan, the request rate). The other kinds are the vendor failing,
+// which may be our integration, so they still reach error tracking.
+func (e *ProviderError) UserFixable() bool {
+	switch e.Kind {
+	case ProviderErrAuth, ProviderErrQuota, ProviderErrRateLimit:
+		return true
+	}
+	return false
+}
+
 func (e *ProviderError) Error() string {
 	if e.Detail != "" {
 		return fmt.Sprintf("%s provider %s (status %d): %s", e.Provider, e.Kind, e.Status, e.Detail)
@@ -492,6 +503,11 @@ func (t *HTTPTranslator) claude(ctx context.Context, cc callConfig, system, user
 func (t *HTTPTranslator) do(req *http.Request, provider string) ([]byte, int, error) {
 	resp, err := t.client.Do(req)
 	if err != nil {
+		// A canceled context (a user's Stop, a deleted job) keeps its cause in
+		// the chain, so the run reads as stopped, not as the provider failing.
+		if req.Context().Err() != nil {
+			return nil, 0, fmt.Errorf("%s: request failed: %w", provider, err)
+		}
 		return nil, 0, &ProviderError{Provider: provider, Kind: ProviderErrUnreachable, Detail: err.Error()}
 	}
 	defer resp.Body.Close()

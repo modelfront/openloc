@@ -1,5 +1,4 @@
 import { lazy, type ComponentType } from 'react'
-import { notifyThen } from '@/lib/errtrack'
 
 // ─── Stale-chunk recovery for lazy routes ──────────────────────────────────
 //
@@ -72,16 +71,11 @@ export function shouldReloadForChunkError(err: unknown, chunkKey: string, storag
   }
 }
 
-// Report the stale chunk, then reload, so deploy-window failures stay visible.
-// notifyThen reloads once delivery finishes or its timeout passes, so a hung
-// notice can't block recovery and the reload can't cancel the in-flight
-// notice. Exported for tests.
-export function reportStaleChunkAndReload(err: unknown, chunkKey: string): void {
-  notifyThen(
-    err,
-    { name: 'StaleChunkReload', fingerprint: `stale-chunk-${chunkKey}`, context: { chunkKey } },
-    () => window.location.reload(),
-  )
+// A stale chunk is expected in every deploy window, so it sends no notice; a
+// chunk that still fails after the reload reaches the ErrorBoundary, which
+// reports it as ChunkLoadError. Exported for tests.
+export function reloadForStaleChunk(): void {
+  window.location.reload()
 }
 
 function getSessionStorage(): Storage | null {
@@ -117,7 +111,7 @@ export function lazyWithReload<T extends ComponentType<any>>(
       .catch((err) => {
         const storage = getSessionStorage()
         if (storage && shouldReloadForChunkError(err, chunkKey, storage)) {
-          reportStaleChunkAndReload(err, chunkKey)
+          reloadForStaleChunk()
           // Return a never-resolving promise so nothing flashes before the
           // reload navigates away.
           return new Promise<{ default: T }>(() => {})

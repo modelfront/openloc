@@ -48,6 +48,25 @@ describe('ChoiceToggle', () => {
   })
 })
 
+describe('ChoiceToggle checked segment', () => {
+  it('raises only the checked option with a border and a shadow', () => {
+    render(
+      <ChoiceToggle
+        aria-label="Workflow mode"
+        value="a"
+        onChange={() => {}}
+        options={[{ value: 'a', label: 'Workflow' }, { value: 'b', label: 'Raw MT' }]}
+      />,
+    )
+    const checked = screen.getByRole('radio', { name: 'Workflow' })
+    const unchecked = screen.getByRole('radio', { name: 'Raw MT' })
+    expect(checked).toHaveAttribute('aria-checked', 'true')
+    expect(checked.className).toMatch(/(^|\s)border-border(\s|$)/)
+    expect(checked.className).toMatch(/(^|\s)shadow-sm(\s|$)/)
+    expect(unchecked.className).not.toMatch(/(^|\s)border-border(\s|$)/)
+  })
+})
+
 describe('ChoiceToggle caption', () => {
   it('renders each option\'s caption inside its radio, so it is part of the name', () => {
     render(
@@ -60,5 +79,24 @@ describe('ChoiceToggle caption', () => {
     )
     expect(screen.getByRole('radio', { name: 'Workflow Human and AI steps' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('radio', { name: 'Raw MT Pre-translation' })).toHaveAttribute('aria-checked', 'false')
+  })
+})
+
+describe('ChoiceToggle primary tone', () => {
+  it('outlines the checked option in the primary colour, without a fill', () => {
+    render(
+      <ChoiceToggle
+        aria-label="Workflow mode"
+        tone="primary"
+        value="a"
+        onChange={() => {}}
+        options={[{ value: 'a', label: 'Workflow' }, { value: 'b', label: 'Raw MT' }]}
+      />,
+    )
+    const checked = screen.getByRole('radio', { name: 'Workflow' })
+    expect(checked.className).toMatch(/(^|\s)border-primary(\s|$)/)
+    expect(checked.className).toMatch(/(^|\s)text-primary-ink(\s|$)/)
+    expect(checked.className).not.toMatch(/(^|\s)bg-primary(\s|$)/)
+    expect(screen.getByRole('radio', { name: 'Raw MT' }).className).not.toMatch(/(^|\s)border-primary(\s|$)/)
   })
 })

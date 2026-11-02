@@ -1,4 +1,5 @@
 import type { Editor } from '@tiptap/react'
+import { SEGMENT_BAR_CELL } from './SegmentRowAction'
 
 interface SegmentEditorToolbarProps {
   editor: Editor | null
@@ -43,7 +44,7 @@ export default function SegmentEditorToolbar({ editor }: SegmentEditorToolbarPro
   ]
 
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex">
       {buttons.map((btn) => (
         // eslint-disable-next-line no-restricted-syntax -- formatting toggle in the editor toolbar, not an action button
         <button
@@ -51,10 +52,10 @@ export default function SegmentEditorToolbar({ editor }: SegmentEditorToolbarPro
           type="button"
           title={btn.title}
           onClick={btn.onClick}
-          className={`h-4 px-1.5 py-0 text-xs leading-none rounded border cursor-pointer transition-colors ${
+          className={`${SEGMENT_BAR_CELL} min-w-4 text-[11px] cursor-pointer ${
             btn.active
-              ? 'bg-primary/10 border-primary text-primary'
-              : 'bg-card border-border text-gray-600 dark:text-gray-400 hover:bg-muted'
+              ? 'bg-primary/10 text-primary'
+              : 'text-gray-600 dark:text-gray-400 hover:bg-muted'
           } ${btn.className}`}
         >
           {btn.label}

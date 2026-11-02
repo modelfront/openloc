@@ -20,14 +20,14 @@ const defaultWorkflowName = "Default"
 
 var defaultWorkflowStepNames = []string{"Translation", "Review"}
 
-// ensureDefaultWorkflow gives a freshly-provisioned org its workflows: the
+// EnsureDefaultWorkflow gives a freshly-provisioned org its workflows: the
 // built-in Pre-translation workflow, and the default human step
 // definitions with a "Default" workflow composed of them. The Default steps
 // and workflow are ordinary library rows — editable and deletable like any
 // other. Runs in the provisioning transaction alongside the other per-org
 // defaults (mtdefaults.EnsureForTenant). Idempotent: skips the Default
 // workflow when a live library workflow by that name already exists.
-func ensureDefaultWorkflow(ctx context.Context, q db.Querier, tenantID int64) error {
+func EnsureDefaultWorkflow(ctx context.Context, q db.Querier, tenantID int64) error {
 	if err := systemworkflow.EnsurePretranslate(ctx, q, tenantID); err != nil {
 		return err
 	}

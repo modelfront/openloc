@@ -16,6 +16,7 @@ import type { ChipColor } from '@/components/ui/chip'
 import { currentStep, sentBack } from './current-task'
 import { computeDeadlinePill } from './deadline'
 import { isAutomatedStep } from './workflow-steps'
+import { capitalize } from './utils'
 
 // --- Task state ------------------------------------------------------------
 
@@ -129,7 +130,7 @@ export interface MatrixTask {
 }
 
 /** A step's name as a heading: workflow step names are stored lower-case. */
-export const stepLabel = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
+export const stepLabel = (name: string) => capitalize(name)
 
 /** One workflow step = one column. */
 export interface MatrixColumn {

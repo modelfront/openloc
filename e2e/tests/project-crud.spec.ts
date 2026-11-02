@@ -98,8 +98,8 @@ test.describe("Project CRUD", () => {
     await expect(page.getByRole("heading", { name: "Machine translation" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Terminology" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Quality assurance" })).toBeVisible();
-    // The seed has library workflows, so the wizard opens based on one.
-    await expect(page.getByTestId("use-workflow-select")).toBeVisible();
+    // The seed has library workflows, so the wizard opens with none picked.
+    await expect(page.getByTestId("use-workflow-select")).toContainText("Choose a workflow");
   });
 
   test("the template picker searches on the server", async ({ page }) => {

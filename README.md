@@ -71,7 +71,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, the project
 OpenLoc is **source-available**, licensed under the [Business Source License 1.1](LICENSE). In plain words:
 
 - **Free** to download, read, modify, self-host and run in production to translate content for your own business — including content you publish for others, such as listings on a marketplace or a store. Your contractors and freelance translators may work inside your instance.
-- **Needs a commercial license** if you translate for other companies as a service (an LSP or agency), host or run OpenLoc for someone else — paid or not — build a product on top of it, sell translation memories or datasets made with it, or use it to train AI models you offer to others.
+- **Your data is yours.** Translation memories, term bases and translations you create stay yours: use them with any MT or AI service, fine-tune your own engines, export them whenever you like. The one exception: using OpenLoc to produce training data for an AI model you then sell to others.
+- **Needs a commercial license** if you translate for other companies as a service (an LSP or agency), host or run OpenLoc for someone else — paid or not — build a product on top of it, sell translation memories or datasets made with it, or use it to train AI models you sell or provide to others.
 - Testing and evaluation are always free.
 - Each version becomes open source under the Apache License 2.0 four years after its release.
 

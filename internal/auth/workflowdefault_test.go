@@ -25,7 +25,7 @@ func TestEnsureDefaultWorkflow_SeedsAndIsIdempotent(t *testing.T) {
 
 	// Twice — the second call must be a no-op, not a duplicate or an error.
 	for i := 0; i < 2; i++ {
-		if err := auth.EnsureDefaultWorkflowForTest(ctx, q, tenant.ID); err != nil {
+		if err := auth.EnsureDefaultWorkflow(ctx, q, tenant.ID); err != nil {
 			t.Fatalf("EnsureDefaultWorkflow call %d: %v", i+1, err)
 		}
 	}

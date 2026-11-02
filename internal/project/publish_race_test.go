@@ -9,6 +9,7 @@ import (
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/project"
+	"openloc/internal/settings"
 	"openloc/internal/testutil"
 )
 
@@ -45,6 +46,9 @@ func TestIntegrationPublishLostRaceReadFails(t *testing.T) {
 	user := testutil.SeedUser(t, q, tenant.ID, "race@test.com", "pass123")
 	draft := testutil.SeedProject(t, q, tenant.ID, "Race", "en", []string{"fr"})
 	if _, err := pool.Exec(ctx, `UPDATE projects SET status = 'draft' WHERE id = $1`, draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.CreateDefaultWorkflowSteps(ctx, q, tenant.ID, draft.SettingsProfileID); err != nil {
 		t.Fatal(err)
 	}
 

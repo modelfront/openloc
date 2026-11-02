@@ -163,7 +163,7 @@ func (b *builder) templates() error {
 				return b.templateSteps(id, b.lib.HumanAI.ID, b.lib.Translation, b.lib.AIReview)
 			}, nil},
 	} {
-		sp, err := b.q.CreateSettingsProfile(b.ctx, db.CreateSettingsProfileParams{TenantID: b.tenantID, FuzzyThreshold: 0.75, MtOnUpload: true, TmOnUpload: true})
+		sp, err := settings.CreateProfileFor(b.ctx, b.q, db.CreateSettingsProfileParams{TenantID: b.tenantID, FuzzyThreshold: 0.75, MtOnUpload: true, TmOnUpload: true}, "en")
 		if err != nil {
 			return fmt.Errorf("template settings: %w", err)
 		}

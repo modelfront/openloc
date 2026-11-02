@@ -8,7 +8,7 @@ import { getSchema } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Node as PMNode } from '@tiptap/pm/model'
 import { XliffTag } from './tiptap-xliff-tag'
-import { plainOffsetToPm, pmToPlainOffset } from './pm-offset'
+import { caretOffsetToPm, plainOffsetToPm, pmToPlainOffset } from './pm-offset'
 
 // Schema mirrors RichTextCellEditor's extension list (nodes/marks only — the
 // SpellCheck / WhitespaceMarkers / Placeholder extensions add no schema).
@@ -114,5 +114,28 @@ describe('pmToPlainOffset', () => {
     for (const offset of [0, 1, 3, 4]) {
       expect(pmToPlainOffset(d, plainOffsetToPm(d, offset))).toBe(offset)
     }
+  })
+})
+
+describe('caretOffsetToPm', () => {
+  // "ab<1>cd": stops a|b|<1>|c|d — the chip is one stop.
+  const d = () => doc([para([text('ab'), tag('{1}'), text('cd')])])
+
+  it('puts the caret on either side of a tag chip', () => {
+    expect(caretOffsetToPm(d(), 2)).toBe(3) // before the chip
+    expect(caretOffsetToPm(d(), 3)).toBe(4) // after it
+    expect(caretOffsetToPm(d(), 4)).toBe(5) // between c and d
+  })
+
+  it('counts a block boundary as one stop, at the end of the block before it', () => {
+    const two = doc([para([text('One')]), para([text('Two')])])
+    expect(caretOffsetToPm(two, 3)).toBe(4) // end of "One"
+    expect(caretOffsetToPm(two, 4)).toBe(6) // start of "Two"
+    expect(caretOffsetToPm(two, 5)).toBe(7)
+  })
+
+  it('clamps past the end and before the start', () => {
+    expect(caretOffsetToPm(d(), 99)).toBe(6)
+    expect(caretOffsetToPm(d(), -1)).toBe(1)
   })
 })

@@ -3,11 +3,11 @@
 // internal/project/tm_upload_validation_test.go.
 //
 // What this file pins:
-//   1. Each combo round-trips: POST creates a template with the requested
-//      flags, GET reads back the same values; PATCH writes a flag, GET reads
-//      back the new value and preserves the others.
-//   2. Partial PATCH preserves untouched fields. A bug where a partial PATCH
-//      zeros out absent fields would surface in the partial-flip sub-test.
+//  1. Each combo round-trips: POST creates a template with the requested
+//     flags, GET reads back the same values; PATCH writes a flag, GET reads
+//     back the new value and preserves the others.
+//  2. Partial PATCH preserves untouched fields. A bug where a partial PATCH
+//     zeros out absent fields would surface in the partial-flip sub-test.
 //
 // Anti-tautology RED proofs:
 //   - Drop the `TmOnUpload` field from the UpdateSettingsProfileParams struct
@@ -41,6 +41,7 @@ func TestTemplateSettingsRoundTripsAllUploadCombos(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 	tenant := testutil.SeedTenant(t, q, "TmplRoundTrip")
 	user := testutil.SeedUser(t, q, tenant.ID, "u@tmplroundtrip.test", "pass")
+	standard := testutil.LibraryWorkflow(t, q, tenant.ID)
 
 	post := func(t *testing.T, path string, body map[string]any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -97,6 +98,7 @@ func TestTemplateSettingsRoundTripsAllUploadCombos(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				rr := post(t, "/api/templates", map[string]any{
 					"name":         "C-" + name,
+					"workflow_id":  standard,
 					"mt_on_upload": c.mt,
 					"tm_on_upload": c.tm,
 				})
@@ -119,7 +121,7 @@ func TestTemplateSettingsRoundTripsAllUploadCombos(t *testing.T) {
 
 	t.Run("Update round-trips every combo", func(t *testing.T) {
 		rr := post(t, "/api/templates", map[string]any{
-			"name": "UpdateProbe", "mt_on_upload": false, "tm_on_upload": false,
+			"name": "UpdateProbe", "mt_on_upload": false, "tm_on_upload": false, "workflow_id": standard,
 		})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("seed: want 201, got %d body=%s", rr.Code, rr.Body.String())
@@ -155,7 +157,7 @@ func TestTemplateSettingsRoundTripsAllUploadCombos(t *testing.T) {
 	// false never lands) or if the query drops its COALESCE (the unrelated
 	// PATCH resets it to true).
 	t.Run("auto_complete flips and survives an unrelated PATCH", func(t *testing.T) {
-		rr := post(t, "/api/templates", map[string]any{"name": "AutoCompleteProbe"})
+		rr := post(t, "/api/templates", map[string]any{"name": "AutoCompleteProbe", "workflow_id": standard})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("seed: want 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
@@ -204,7 +206,7 @@ func TestTemplateSettingsRoundTripsAllUploadCombos(t *testing.T) {
 
 	t.Run("partial PATCH preserves untouched fields", func(t *testing.T) {
 		rr := post(t, "/api/templates", map[string]any{
-			"name": "PartialProbe", "mt_on_upload": true, "tm_on_upload": true,
+			"name": "PartialProbe", "mt_on_upload": true, "tm_on_upload": true, "workflow_id": standard,
 		})
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("seed: want 201, got %d body=%s", rr.Code, rr.Body.String())

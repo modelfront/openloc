@@ -154,6 +154,24 @@ func TestBuild_TermStatusTravels(t *testing.T) {
 	}
 }
 
+// A term's definition, domain and notes travel when filled, so the model can
+// tell two concepts sharing one source term apart; empty ones are left out.
+func TestBuild_TermSenseTravelsWhenFilled(t *testing.T) {
+	body := Build(
+		Fields{KeyTerms},
+		Values{Terms: []Term{
+			{Source: "bank", Target: "Bank", Status: "approved", Definition: "financial institution", Domain: "finance", Notes: "feminine"},
+			{Source: "bank", Target: "Ufer", Status: "approved"},
+		}},
+	)
+	want := `{"terms":[` +
+		`{"source":"bank","target":"Bank","status":"approved","definition":"financial institution","domain":"finance","notes":"feminine"},` +
+		`{"source":"bank","target":"Ufer","status":"approved"}]}`
+	if string(body) != want {
+		t.Errorf("body mismatch\n got: %s\nwant: %s", body, want)
+	}
+}
+
 func TestBlank(t *testing.T) {
 	tests := []struct {
 		name string

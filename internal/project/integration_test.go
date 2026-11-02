@@ -23,6 +23,7 @@ func TestIntegrationProjectCRUD(t *testing.T) {
 		"name":             "Test Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr", "de"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -89,6 +90,7 @@ func TestIntegrationProjectLanguageNormalization(t *testing.T) {
 		"name":             "Lang Test",
 		"source_language":  "EN",
 		"target_languages": []string{"FR-FR", "pt_BR", "DE"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -131,6 +133,7 @@ func TestIntegrationProjectTenantIsolation(t *testing.T) {
 		"name":             "A's Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantA.ID),
 	}, userA.ID, tenantA.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -163,6 +166,7 @@ func TestIntegrationProjectValidation(t *testing.T) {
 			"name":             "Bad Project",
 			"source_language":  "en",
 			"target_languages": []string{"en"},
+			"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 		}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusBadRequest)
 	})
@@ -173,6 +177,7 @@ func TestIntegrationProjectValidation(t *testing.T) {
 			"name":             "Dup Project",
 			"source_language":  "en",
 			"target_languages": []string{"fr", "fr"},
+			"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 		}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusBadRequest)
 	})
@@ -183,6 +188,7 @@ func TestIntegrationProjectValidation(t *testing.T) {
 			"name":             "Case Project",
 			"source_language":  "en",
 			"target_languages": []string{"EN"},
+			"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 		}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusBadRequest)
 	})
@@ -193,6 +199,7 @@ func TestIntegrationProjectValidation(t *testing.T) {
 			"name":             "Good Project",
 			"source_language":  "en",
 			"target_languages": []string{"fr", "de"},
+			"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 		}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 	})
@@ -224,6 +231,7 @@ func TestIntegrationProjectDelete_RollsBackOnSettingsProfileFKViolation(t *testi
 		"name":             "Rollback Project",
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var created struct {

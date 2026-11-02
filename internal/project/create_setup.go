@@ -29,6 +29,7 @@ type SetupConfig = settings.Setup
 // leaves no project behind. Setup inputs that can be checked up front are
 // validated before the transaction opens.
 func CreateWithSetup(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tenantID, userID int64, p CreateParams, templateID *int64, cfg SetupConfig) (db.Project, error) {
+	cfg.Language = p.SourceLanguage
 	if err := settings.ValidateSetup(ctx, q, tenantID, cfg); err != nil {
 		return db.Project{}, err
 	}
@@ -63,6 +64,9 @@ func CreateWithSetup(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tena
 			}
 		}
 		if err := applySetup(ctx, tx, q, tenantID, project, cfg, extra); err != nil {
+			return err
+		}
+		if err := requireSteps(ctx, q, project); err != nil {
 			return err
 		}
 		return emitCreated(ctx, q, project, tenantID, userID, extra)

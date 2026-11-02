@@ -1,0 +1,55 @@
+{
+  "id": "builtin:ru@1",
+  "name": "Russian",
+  "source_language": "ru",
+  "description": "Russian abbreviations (Unicode CLDR, curated) and sentence-ending punctuation.",
+  "rule_set": {
+    "mode": "sentence",
+    "rules": [
+      {
+        "before": "(?:^|\\P{L})\\p{Ll}\\.",
+        "after": "",
+        "break": false
+      },
+      {
+        "before": "[.!?…][\\p{Pe}\\p{Pf}\"']*",
+        "after": "[\\t\\n\\v\\f\\r\\x{85}\\p{Z}]+[\\p{Lu}\\p{Lt}\\p{Lo}\\p{Nd}\\p{Ps}\\p{Pi}\"'¿¡]",
+        "break": true
+      },
+      {
+        "before": "[。！？｡]",
+        "after": "[^\\p{Pe}\\p{Pf}。！？｡]",
+        "break": true
+      }
+    ],
+    "abbreviations": [
+      "руб",
+      "янв",
+      "до н. э",
+      "сент",
+      "тел",
+      "дек",
+      "февр",
+      "нояб",
+      "апр",
+      "н. э",
+      "окт",
+      "тыс",
+      "авг",
+      "проф",
+      "н.э",
+      "кв",
+      "ул",
+      "отд"
+    ],
+    "number_abbreviations": [
+      "с",
+      "стр",
+      "рис",
+      "гл",
+      "т",
+      "ст",
+      "п"
+    ]
+  }
+}

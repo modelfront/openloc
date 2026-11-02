@@ -18,11 +18,7 @@ import (
 func htmlFeed(segs []Segment, edit func(string) string) map[string]string {
 	out := map[string]string{}
 	for _, s := range segs {
-		text := s.Text
-		if s.RichText != "" {
-			text = s.RichText
-		}
-		out[s.Key] = edit(text)
+		out[s.Key] = edit(sourceOf(s))
 	}
 	return out
 }

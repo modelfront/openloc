@@ -8,6 +8,7 @@ import (
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/projectevents"
+	"openloc/internal/settings"
 )
 
 // projectMetaMap flattens the audit-relevant metadata fields of a project
@@ -44,6 +45,7 @@ func settingsMap(p db.SettingsProfile) map[string]any {
 		"near_exact_penalty_pct":  p.NearExactPenaltyPct,
 		"auto_complete":           p.AutoComplete,
 		"inline_html":             p.InlineHtml,
+		"linguist_terms":          p.LinguistTerms,
 		"tm_lookup_order":         p.TmLookupOrder,
 	}
 	if p.TmProfileID != nil {
@@ -60,6 +62,11 @@ func settingsMap(p db.SettingsProfile) map[string]any {
 		m["qa_profile_id"] = *p.QaProfileID
 	} else {
 		m["qa_profile_id"] = nil
+	}
+	if p.SegmentationProfileID != nil {
+		m["segmentation_profile_id"] = *p.SegmentationProfileID
+	} else {
+		m["segmentation_profile_id"] = nil
 	}
 	return m
 }
@@ -96,6 +103,15 @@ func qaProfileName(ctx context.Context, q db.Querier, tenantID int64, id *int64)
 		return nil
 	}
 	return p.Name
+}
+
+// segmentationProfileName resolves a segmentation profile id to its name,
+// a deleted profile included; nil when unset or unresolvable.
+func segmentationProfileName(ctx context.Context, q db.Querier, tenantID int64, id *int64) any {
+	if name := settings.SegmentationProfileName(ctx, q, tenantID, id); name != nil {
+		return *name
+	}
+	return nil
 }
 
 // idFromChange coerces a Change side (any) back to *int64 for name lookups.

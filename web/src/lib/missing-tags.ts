@@ -1,4 +1,4 @@
-import { richTextToTipTapContent } from './xliff-tiptap'
+import { flattenInlineNodes, richTextToTipTapContent } from './xliff-tiptap'
 
 /**
  * A tag the target is missing from the source. The structure mirrors the
@@ -49,7 +49,7 @@ function extractChips(richText: string): ChipAttrs[] {
 // ctype and the closing flag tell the halves apart: `</g>` chips share
 // tagType='g' and inherit their opening tag's id, so the pair is distinguished
 // by direction rather than by display text.
-function chipKey(c: ChipAttrs): string {
+export function chipKey(c: ChipAttrs): string {
   return `${c.tagType}|${c.tagId}|${c.ctype}|${c.closing ? 'close' : 'open'}`
 }
 
@@ -91,4 +91,27 @@ export function getMissingTags(sourceRich: string, targetRich: string): MissingT
     })
   }
   return missing
+}
+
+/**
+ * Where each source chip sits in the flattened source text (the text the
+ * reader sees, chips contributing nothing), grouped by chipKey, in source
+ * order. Lets tags be ordered among other things found in that text.
+ */
+export function chipOffsets(sourceRich: string): Map<string, number[]> {
+  const out = new Map<string, number[]>()
+  const nodes = richTextToTipTapContent(sourceRich).content?.[0]?.content ?? []
+  const { offsets } = flattenInlineNodes(nodes)
+  nodes.forEach((node, i) => {
+    if (node.type !== 'xliffTag' || !node.attrs) return
+    const key = chipKey({
+      tagType: String(node.attrs.tagType ?? ''),
+      tagId: String(node.attrs.tagId ?? ''),
+      ctype: String(node.attrs.ctype ?? ''),
+      rawXml: '',
+      closing: Boolean(node.attrs.closing),
+    })
+    out.set(key, [...(out.get(key) ?? []), offsets[i]])
+  })
+  return out
 }

@@ -45,7 +45,7 @@ func TestIntegrationTemplateInlineHTML(t *testing.T) {
 	}
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Plain strings", "settings": map[string]any{"inline_html": false},
+		"name": "Plain strings", "settings": map[string]any{"inline_html": false}, "workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var created struct {

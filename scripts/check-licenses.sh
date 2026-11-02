@@ -25,7 +25,7 @@ die() { echo "check-licenses: $*" >&2; exit 1; }
 # files it covers, which OpenLoc ships unmodified. "BSD" alone is what Python's
 # classifier says for the 2- and 3-clause variants.
 allowed="MIT MIT-0 MIT-CMU Apache-2.0 BSD-2-Clause BSD-3-Clause BSD ISC MPL-2.0
-         0BSD CC0-1.0 OFL-1.1 PSF-2.0 Python-2.0 Unlicense Zlib BlueOak-1.0.0"
+         0BSD CC0-1.0 OFL-1.1 PSF-2.0 Python-2.0 Unlicense Zlib BlueOak-1.0.0 Unicode-3.0"
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 trim()  { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }

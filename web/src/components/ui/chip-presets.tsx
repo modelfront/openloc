@@ -1,7 +1,9 @@
 import { KeyRound, Languages, PowerOff, Sparkles, User, UserCog } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 import { Chip, type ChipAnyColor, type ChipProps } from './chip'
+import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip'
 
 // Preset chips — named labels, not freeform ones.
 //
@@ -178,20 +180,28 @@ export const STEP_TYPE_CHIPS: Record<StepTypePresetKey, ReturnType<typeof preset
  */
 export function OverflowChip({
   count,
-  title,
+  tooltip,
   size,
   className,
 }: {
   count: number
-  /** Spell out what is hidden, when the caller has it. */
-  title?: string
+  /** Shown on hover and keyboard focus, when the caller has it: what is
+   *  hidden, or the whole list in its own styling. */
+  tooltip?: ReactNode
   /** Match the chips around it; a dense cell uses `small`. */
   size?: ChipProps['size']
   className?: string
 }) {
-  return (
-    <Chip size={size} className={cn('px-1.5 ring-0', className)} title={title}>
+  const chip = (
+    <Chip size={size} className={cn('px-1.5 ring-0', tooltip != null && 'cursor-help', className)} tabIndex={tooltip != null ? 0 : undefined}>
       +{count}
     </Chip>
+  )
+  if (tooltip == null) return chip
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   )
 }

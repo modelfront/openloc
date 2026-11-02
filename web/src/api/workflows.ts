@@ -128,6 +128,22 @@ export const setProjectWorkflowSteps = (projectId: number, steps: WorkflowStepPa
     method: 'PUT', body: JSON.stringify({ steps }),
   }).then(r => r.data)
 
+/** What a project step save would do (POST /workflow-steps/preview runs the
+ *  same write and rolls it back). `effects` says it in sentences. */
+export interface WorkflowPreview {
+  added: number
+  removed: number
+  changed: number
+  open_jobs: number
+  start_now: { step_name: string; runs_ai: boolean; jobs: number }[]
+  effects: string[]
+}
+
+export const previewProjectWorkflowSteps = (projectId: number, steps: WorkflowStepPayload[]) =>
+  request<{ data: WorkflowPreview }>(`/projects/${projectId}/workflow-steps/preview`, {
+    method: 'POST', body: JSON.stringify({ steps }),
+  }).then(r => r.data)
+
 export interface ApplyWorkflowResult {
   workflow_id: number
   workflow_name: string | null

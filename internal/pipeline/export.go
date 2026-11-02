@@ -79,12 +79,13 @@ func (s *Service) ExportFile(ctx context.Context, tenantID, fileID int64, target
 	if err != nil {
 		return nil, "", fmt.Errorf("list translations: %w", err)
 	}
+	rows = joinSplitPieces(rows)
 
-	layout, err := parser.FileXLSXLayout(file.XlsxLayout)
+	opts, err := parser.FileOptions(file.InlineHtml, file.XlsxLayout, file.Segmentation)
 	if err != nil {
-		return nil, "", fmt.Errorf("read stored xlsx layout: %w", err)
+		return nil, "", err
 	}
-	p, err := exportParser(string(file.Format), parser.ParseOptions{InlineHTML: file.InlineHtml, XLSXLayout: layout}, original, rows)
+	p, err := exportParser(string(file.Format), opts, original, rows)
 	if err != nil {
 		return nil, "", fmt.Errorf("get parser: %w", err)
 	}
@@ -134,7 +135,7 @@ func exportParser(format string, opts parser.ParseOptions, original []byte, rows
 				stored[*r.SegmentKey] = parser.StoredSource{Text: r.SourceText, RichText: ptr.Deref(r.SourceRichText)}
 			}
 		}
-		return parser.HTMLWithStoredSource(stored), nil
+		return parser.HTMLWithStoredSource(stored, opts.Segmenter), nil
 	}
 	if format != "android_xml" {
 		return parser.GetParserWith(format, opts)
@@ -275,23 +276,16 @@ func (s *Service) ExportBilingualXLIFF(ctx context.Context, tenantID, fileID int
 			seg.TargetText = *row.ActiveText
 		}
 
-		// status comes from translations.status (NULL when no row
-		// exists for this language → empty string → mapped to
-		// needs-translation by the serializer). Same nil-check for
-		// locked, which is also nullable from the LEFT JOIN.
-		//
 		// Untranslated rows carry status='needs_review' with active_text NULL
 		// (untranslated is derived from empty text). For XLIFF export
 		// an empty target MUST still map to
 		// needs-translation, so only propagate the status when there's actual
 		// text — otherwise leave it empty so the serializer emits
 		// needs-translation.
-		if row.Status.Valid && (seg.TargetText != "" || seg.TargetRichText != "") {
-			seg.Status = string(row.Status.TranslationStatus)
+		if seg.TargetText != "" || seg.TargetRichText != "" {
+			seg.Status = string(row.Status)
 		}
-		if row.Locked != nil {
-			seg.Locked = *row.Locked
-		}
+		seg.Locked = row.Locked
 
 		// Pre-translation lineage: becomes state-qualifier, the TM score
 		// and the matched TM unit (<alt-trans>).

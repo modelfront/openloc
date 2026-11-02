@@ -1,6 +1,7 @@
 // Step + workflow libraries: /workflows (Workflows |
-// Steps), a project's Workflow tab (pick a library workflow; its steps are a
-// read-only copy), and the template twin. Every test cleans up what it makes.
+// Steps), a project's Workflow tab (pick a library workflow, then edit the
+// steps no job has reached), and the template twin (read-only steps). Every
+// test cleans up what it makes.
 import { test, expect, type Page } from "@playwright/test";
 import {
   login,
@@ -21,6 +22,9 @@ import {
   createProjectViaAPI,
   getProjectSettingsViaAPI,
   submitProjectWizard,
+  pickProjectWorkflow,
+  standardWorkflow,
+  uploadFileViaAPI,
 } from "./helpers";
 
 
@@ -69,10 +73,9 @@ test.describe("Workflow libraries", () => {
       await page.getByTestId("new-step-definition").click();
       const dialog = page.getByTestId("step-definition-dialog");
       await dialog.getByTestId("step-definition-name").fill(name);
-      // Type: hybrid without a router is refused inline; back to human submits.
+      // Type: hybrid without a router cannot be created; back to human submits.
       await dialog.getByTestId("step-type-option-hybrid").click();
-      await dialog.getByTestId("step-definition-submit").click();
-      await expect(dialog.getByText("AI router is required")).toBeVisible();
+      await expect(dialog.getByTestId("step-definition-submit")).toBeDisabled();
       // The router picker lists the seeded router by name.
       await dialog.getByTestId("step-definition-router").click();
       const popover = page.locator('[data-slot="popover-content"]');
@@ -194,7 +197,11 @@ test.describe("Workflow libraries", () => {
     try {
       proofreadId = await ensureStepDefinitionViaAPI(page, { name: proofread });
       libraryId = await createWorkflowViaAPI(page, `E2E lib ${stamp}`, [{ name: "Translation" }, { name: proofread }]);
-      projectId = await createProjectViaAPI(page, `E2E wf project ${stamp}`);
+      // Translation → Review sent as steps, with no library workflow linked.
+      const standard = await standardWorkflow(page);
+      projectId = await createProjectViaAPI(page, `E2E wf project ${stamp}`, {
+        workflow_steps: standard.steps.map((st) => ({ step_definition_id: st.step_definition_id })),
+      });
 
       await page.goto(`/projects/${projectId}/workflow`);
       // Steps with no library workflow behind them: the field is empty and the
@@ -202,17 +209,14 @@ test.describe("Workflow libraries", () => {
       await expect(page.getByTestId("use-workflow-select")).toContainText("Choose a workflow");
       await expect(page.getByTestId("workflow-step-badge-1")).toContainText("Review");
 
-      // The picker offers library workflows and nothing else — the tab has the
-      // wizard's shape, so there is no Custom entry, no detach, no save-as and
-      // no step editor.
+      // The picker offers library workflows and nothing else: no Custom entry,
+      // no detach, no save-as.
       await page.getByTestId("use-workflow-select").click();
       const wfPopover = page.locator('[data-slot="popover-content"]');
       await expect(wfPopover.getByRole("option", { name: /^Custom$/ })).toHaveCount(0);
       await expect(wfPopover.getByTestId("use-workflow-select-action-detach")).toHaveCount(0);
       await expect(wfPopover.getByTestId("use-workflow-select-action-save-as")).toHaveCount(0);
       await page.keyboard.press("Escape");
-      await expect(page.getByRole("button", { name: /^edit$/i })).toHaveCount(0);
-      await expect(page.getByTestId("workflow-add-step")).toHaveCount(0);
 
       // Use the library workflow: confirmed first, because a live project's
       // steps may already be in flight.
@@ -300,6 +304,7 @@ test.describe("Workflow libraries", () => {
       await selectTargetLanguages(page, page.getByRole("button", { name: /add target languages/i }), ["fr"]);
 
       // The dialog opens seeded with the steps on screen; one more goes on top.
+      await pickProjectWorkflow(page);
       await clickComboboxAction(page, "use-workflow-select", "create");
       const dialog = page.getByTestId("workflow-create-dialog");
       await expect(dialog).toBeVisible();
@@ -349,7 +354,7 @@ test.describe("Workflow libraries", () => {
     try {
       proofreadId = await ensureStepDefinitionViaAPI(page, { name: proofread });
       libraryId = await createWorkflowViaAPI(page, `E2E tpl wf ${stamp}`, [{ name: proofread }]);
-      const tpl = await page.request.post(`/api/templates`, { headers, data: { name: `E2E tpl ${stamp}` } });
+      const tpl = await page.request.post(`/api/templates`, { headers, data: { name: `E2E tpl ${stamp}`, workflow_id: (await standardWorkflow(page)).id } });
       expect(tpl.status()).toBe(201);
       templateId = (await tpl.json()).data.id;
 
@@ -453,5 +458,143 @@ test.describe("Workflow picker with long step names", () => {
       scrollWidth: el.scrollWidth,
     }));
     expect(trigBox.scrollWidth, "trigger must not overflow its field").toBeLessThanOrEqual(trigBox.clientWidth);
+  });
+});
+
+test.describe("Editing a live project's workflow", () => {
+  let projectId: number | undefined;
+  let libraryId: number | undefined;
+  let proofreadId: number | undefined;
+
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    if (projectId) await deleteProjectViaAPI(page, projectId).catch(() => {});
+    if (libraryId) await deleteWorkflowViaAPI(page, libraryId).catch(() => {});
+    if (proofreadId) await deleteStepDefinitionViaAPI(page, proofreadId).catch(() => {});
+    projectId = libraryId = proofreadId = undefined;
+  });
+
+  test("a step a job reached is locked; the steps after it can be added and removed", async ({ page }) => {
+    test.setTimeout(30_000);
+    const stamp = Date.now();
+    const proofread = `Proofread ${stamp}`;
+    proofreadId = await ensureStepDefinitionViaAPI(page, { name: proofread });
+    libraryId = await createWorkflowViaAPI(page, `E2E live ${stamp}`, [{ name: "Translation" }, { name: "Review" }]);
+    projectId = await createProjectViaAPI(page, `E2E live wf ${stamp}`, { workflow_id: libraryId });
+    // A file puts a job on step 1, so step 1 is reached.
+    await uploadFileViaAPI(page, projectId, "live.txt", "Hello world.\n");
+
+    // Shown read-only until Edit steps.
+    await page.goto(`/projects/${projectId}/workflow`);
+    await expect(page.getByTestId("workflow-step-picker-0")).toHaveCount(0);
+    await page.getByTestId("workflow-steps-edit").click();
+    const row0 = page.getByTestId("workflow-step-row-0");
+    await expect(row0).toHaveAttribute("data-locked", "true");
+    await expect(page.getByTestId("workflow-step-locked-0")).toBeVisible();
+    await expect(page.getByTestId("workflow-step-picker-0")).toBeDisabled();
+    await expect(page.getByTestId("workflow-step-remove-0")).toHaveCount(0);
+    await expect(page.getByTestId("workflow-step-row-1")).not.toHaveAttribute("data-locked", "true");
+    await expect(page.getByTestId("workflow-step-remove-1")).toBeVisible();
+    await expect(page.getByTestId("workflow-edited")).toHaveCount(0);
+
+    // Add Proofread and drop Review: a draft, saved only after the preview.
+    await page.getByTestId("workflow-add-step").click();
+    await pickComboboxOption(page, page.getByTestId("workflow-step-picker-2"), proofread);
+    await page.getByTestId("workflow-step-remove-1").click();
+    const [preview] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes(`/projects/${projectId}/workflow-steps/preview`)),
+      page.getByTestId("workflow-steps-save").click(),
+    ]);
+    expect(preview.status()).toBe(200);
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("This save changes 1 step.");
+    await expect(dialog.getByTestId("workflow-steps-preview")).toContainText("1 job is in progress");
+    const [saved] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes(`/projects/${projectId}/workflow-steps`) && r.request().method() === "PUT"),
+      dialog.getByTestId("workflow-steps-confirm").click(),
+    ]);
+    expect(saved.status()).toBe(200);
+    await expect(page.getByTestId("workflow-steps-save")).toHaveCount(0);
+    await expect(page.getByTestId("workflow-steps-edit")).toBeVisible();
+    await expect(page.getByTestId("workflow-edited")).toBeVisible();
+
+    // The job follows the new steps: Proofread waits where Review was.
+    const settings = await getProjectSettingsViaAPI(page, projectId);
+    expect((settings.data.workflow_steps as { name: string }[]).map((s) => s.name)).toEqual(["Translation", proofread]);
+    expect(settings.data.project.workflow_edited).toBe(true);
+    const token = await page.evaluate(() => localStorage.getItem("token"));
+    const headers = { Authorization: `Bearer ${token}` };
+    const jobs = await (await page.request.get(`/api/projects/${projectId}/jobs`, { headers })).json();
+    const jobId = (jobs.data as { id: number }[])[0].id;
+    const steps = await (await page.request.get(`/api/jobs/${jobId}/workflow/steps`, { headers })).json();
+    expect((steps.data as { step_name: string; status: string }[]).map((s) => [s.step_name, s.status])).toEqual([
+      ["Translation", "in_progress"],
+      [proofread, "pending"],
+    ]);
+  });
+
+  test("dragging a step by its grip reorders the steps after the locked one", async ({ page }) => {
+    test.setTimeout(30_000);
+    const stamp = Date.now();
+    const proofread = `Proofread ${stamp}`;
+    proofreadId = await ensureStepDefinitionViaAPI(page, { name: proofread });
+    libraryId = await createWorkflowViaAPI(page, `E2E drag ${stamp}`, [{ name: "Translation" }, { name: "Review" }, { name: proofread }]);
+    projectId = await createProjectViaAPI(page, `E2E drag wf ${stamp}`, { workflow_id: libraryId });
+    await uploadFileViaAPI(page, projectId, "drag.txt", "Hello world.\n");
+
+    await page.goto(`/projects/${projectId}/workflow`);
+    await page.getByTestId("workflow-steps-edit").click();
+    await expect(page.getByTestId("workflow-step-row-0")).toHaveAttribute("data-locked", "true");
+    await expect(page.getByTestId("workflow-step-drag-0")).toHaveCount(0);
+    const row1 = page.getByTestId("workflow-step-row-1");
+    await expect(page.getByTestId("workflow-step-picker-2")).toContainText(proofread);
+
+    // dnd-kit's pointer sensor needs real pointer travel: press the grip,
+    // cross the 4px activation distance, wait for the drag to start, then land
+    // the dragged row's centre on row 1's centre (closestCenter).
+    const handle = page.getByTestId("workflow-step-drag-2");
+    await handle.scrollIntoViewIfNeeded();
+    const hb = (await handle.boundingBox())!;
+    const r1 = (await row1.boundingBox())!;
+    const x = hb.x + hb.width / 2;
+    const startY = hb.y + hb.height / 2;
+    await page.mouse.move(x, startY);
+    await page.mouse.down();
+    await page.mouse.move(x, startY - 6);
+    await expect(page.locator('[data-dragging="true"]')).toHaveCount(1);
+    const targetY = r1.y + r1.height / 2;
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(x, startY - 6 + ((targetY - startY + 6) * i) / 8);
+    }
+    await page.mouse.up();
+    await expect(page.getByTestId("workflow-step-picker-1")).toContainText(proofread);
+    await expect(page.getByTestId("workflow-step-picker-2")).toContainText("Review");
+    await expect(page.getByTestId("workflow-step-picker-0")).toContainText("Translation");
+
+    // dnd-kit swallows clicks for 50 ms after a drop, and the checks above
+    // pass at once, so the first click can land inside that window: retry the
+    // click until it sends the preview request (not until the server answers,
+    // which a slow node could take longer than a retry to do).
+    const isPreview = (r: { url(): string }) => r.url().includes(`/projects/${projectId}/workflow-steps/preview`);
+    const previewResponse = page.waitForResponse(isPreview);
+    await expect(async () => {
+      await Promise.all([
+        page.waitForRequest(isPreview, { timeout: 1000 }),
+        page.getByTestId("workflow-steps-save").click(),
+      ]);
+    }).toPass({ timeout: 10_000 });
+    expect((await previewResponse).status()).toBe(200);
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("This save changes 2 steps.");
+    const [saved] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes(`/projects/${projectId}/workflow-steps`) && r.request().method() === "PUT"),
+      dialog.getByTestId("workflow-steps-confirm").click(),
+    ]);
+    expect(saved.status()).toBe(200);
+    const settings = await getProjectSettingsViaAPI(page, projectId);
+    expect((settings.data.workflow_steps as { name: string }[]).map((s) => s.name)).toEqual(["Translation", proofread, "Review"]);
   });
 });

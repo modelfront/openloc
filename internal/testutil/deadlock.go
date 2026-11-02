@@ -33,15 +33,25 @@ func WaitLockWait(t testing.TB, pool *pgxpool.Pool, pid uint32) {
 }
 
 // blockedQuery polls until some backend waits on a lock pid holds, and
-// returns the statement it waits in.
+// returns the statement it waits in. pg_stat_activity reads each backend's
+// statement from a snapshot taken when the reading transaction first touches
+// the view, while pg_blocking_pids and wait_event_type are live, so one query
+// can pair a backend's previous statement with its current wait. The text is
+// read in a second statement, whose snapshot is taken after the wait was seen;
+// pid holds its locks until this returns, so the backend is still in it.
 func blockedQuery(t testing.TB, pool *pgxpool.Pool, pid uint32) string {
 	t.Helper()
+	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		var query string
-		err := pool.QueryRow(context.Background(),
-			`SELECT query FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1`, pid).Scan(&query)
+		var waiter uint32
+		err := pool.QueryRow(ctx,
+			`SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1`, pid).Scan(&waiter)
 		if err == nil {
+			var query string
+			if err := pool.QueryRow(ctx, `SELECT query FROM pg_stat_activity WHERE pid = $1`, waiter).Scan(&query); err != nil {
+				t.Fatalf("read the waiting statement: %v", err)
+			}
 			return query
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {

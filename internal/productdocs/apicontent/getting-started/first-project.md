@@ -3,7 +3,7 @@ title: "Your first project"
 summary: "Create a project, upload a file, wait for its jobs, and download the translation."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-27
 sources:
   - internal/publicapi/**
 related: [getting-started/authentication, reference/pagination]
@@ -16,10 +16,12 @@ Project management needs the **Owner**, **Admin** or **Project manager** role. A
 curl {app_url}/api/v1/projects \
   -H "Authorization: Bearer $OPENLOC_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Spring catalog", "source_language": "en", "target_languages": ["de", "fr"]}'
+  -d '{"name": "Spring catalog", "source_language": "en", "target_languages": ["de", "fr"], "workflow_id": 7}'
 ```
 
-The response holds the new project under `data`. Keep its `id`. Pass `template_id` to set the project up from one of your templates.
+A project needs a workflow. Take a `workflow_id` from `GET /api/v1/workflows`, or pass `template_id` to set the project up from one of your templates; a template with a workflow brings it. Without a workflow from either, the create is refused with `workflow_id is required`.
+
+The response holds the new project under `data`. Keep its `id`.
 
 The customer and the domain are labels. Find the value ids with `GET /api/v1/labels` (the built-in labels have `key` `customer` and `domain`), then set them:
 

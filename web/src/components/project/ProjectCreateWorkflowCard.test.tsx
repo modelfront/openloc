@@ -142,15 +142,16 @@ describe('ProjectCreateWorkflowCard — mode toggle', () => {
     await waitFor(() => expect(onPickWorkflow).toHaveBeenLastCalledWith('4', undefined))
   })
 
-  it('with no earlier choice, Workflow goes to the first library workflow', async () => {
+  it('with no earlier choice, Workflow leaves the workflow unpicked', async () => {
     const { onPickWorkflow } = renderCard(undefined, { workflows: library, workflowId: '77', steps: preSteps })
     fireEvent.click(await modeOption('workflow'))
-    await waitFor(() => expect(onPickWorkflow).toHaveBeenCalledWith('3', undefined))
+    await waitFor(() => expect(onPickWorkflow).toHaveBeenCalledWith(''))
+    expect(onPickWorkflow).toHaveBeenCalledTimes(1)
   })
 
-  it('offers no way back with an empty library', async () => {
-    renderCard(undefined, { workflows: [], workflowId: '77', steps: preSteps })
-    await waitFor(() => expect(screen.getByTestId('workflow-mode-raw_mt')).toBeEnabled())
-    expect(screen.getByTestId('workflow-mode-workflow')).toBeDisabled()
+  it('with an empty library, Workflow still clears Raw MT', async () => {
+    const { onPickWorkflow } = renderCard(undefined, { workflows: [], workflowId: '77', steps: preSteps })
+    fireEvent.click(await modeOption('workflow'))
+    await waitFor(() => expect(onPickWorkflow).toHaveBeenCalledWith(''))
   })
 })

@@ -58,7 +58,8 @@ type Querier interface {
 	// step's last closed round produced still belongs to the step when it is
 	// reopened: the new round counts it as its own, not as an earlier step's.
 	CarryStepPredictions(ctx context.Context, assignmentID int64) error
-	// Moves a failed job to queued for a Re-run of the automation that failed.
+	// Moves a failed job to queued for a Re-run of the automation that failed,
+	// without the failed run's progress counts.
 	// 0 rows = the job is not failed, or a concurrent Re-run claimed it first
 	// → 409. Tenant scoping happens in resolveJob before this by-ID write.
 	ClaimFailedJobForRerun(ctx context.Context, arg ClaimFailedJobForRerunParams) (int64, error)
@@ -67,7 +68,7 @@ type Querier interface {
 	// another run holds the job → 409. The running-state predicate is the SQL
 	// twin of pipeline.IsPipelineRunning (translate.go) — keep the two in sync.
 	// Clears error_message like UpdateJobStatus does (a new run makes any prior
-	// failure stale). Tenant-scoped: a job outside the tenant claims nothing.
+	// failure stale), and the progress counts like StartJobRun. Tenant-scoped: a job outside the tenant claims nothing.
 	//
 	// Returns the status, step, error_message and updated_at the claim replaced,
 	// read under the row lock: a pre-flight rejection puts back exactly these,
@@ -80,6 +81,9 @@ type Querier interface {
 	// updated_at at least once per 30-segment chunk (the sync handlers' progress
 	// writer and the worker's makeProgressFunc), far inside 30 minutes.
 	ClaimJobPipeline(ctx context.Context, arg ClaimJobPipelineParams) (ClaimJobPipelineRow, error)
+	// Takes a deleted profile off the tenant's projects: their next upload asks
+	// for another profile.
+	ClearSegmentationProfileFromProjects(ctx context.Context, arg ClearSegmentationProfileFromProjectsParams) (int64, error)
 	// Internal: caller must have tenant-verified the job.
 	ClearStepEdited(ctx context.Context, jobID int64) error
 	// Caller MUST check locked=false first — this query trusts the caller.
@@ -157,6 +161,10 @@ type Querier interface {
 	// CountHeldClearableByJob for ClearTranslationsByProject: run after the clear,
 	// in its transaction.
 	CountHeldClearableByProject(ctx context.Context, arg CountHeldClearableByProjectParams) (int64, error)
+	// Tenant-scoped: how many of the job's rows lie strictly between
+	// @from_position and @to_position, counted up to @row_cap: a join only needs
+	// to know whether that is more than the rows it names.
+	CountJobRowsInside(ctx context.Context, arg CountJobRowsInsideParams) (int32, error)
 	// Total matching the same filters as ListJobSegmentsPage (cursor excluded), so
 	// a caller can tell it is looking at 50 of 12,431 and should narrow.
 	CountJobSegmentsPage(ctx context.Context, arg CountJobSegmentsPageParams) (int64, error)
@@ -201,19 +209,13 @@ type Querier interface {
 	// Count how many settings profiles reference this QA profile.
 	// Used to warn before deletion.
 	CountQAProfileReferences(ctx context.Context, qaProfileID *int64) (int32, error)
-	// The per-user rate limit: issues this user filed since @since, in any org.
-	CountRecentIssuesByReporter(ctx context.Context, arg CountRecentIssuesByReporterParams) (int64, error)
-	// The per-member comment limit: comments this user wrote on the org's side
-	// since @since, in any org.
-	CountRecentMemberComments(ctx context.Context, arg CountRecentMemberCommentsParams) (int64, error)
-	CountSegmentsByFile(ctx context.Context, fileID int64) (int64, error)
+	// Internal: caller must have tenant-verified the profile (GetQAProfile).
+	CountQARegexRules(ctx context.Context, profileID int64) (int64, error)
+	// How many live projects and templates of the tenant name a profile.
+	CountSegmentationProfileUses(ctx context.Context, arg CountSegmentationProfileUsesParams) (CountSegmentationProfileUsesRow, error)
 	// What a reset would destroy, so the confirmation can name a number instead of
 	// asking the user to guess.
 	CountSharedDashboards(ctx context.Context, tenantID int64) (int64, error)
-	// Assignments on a step that a job has already reached (anything but
-	// pending). A step nobody reached may still be swapped or removed by a
-	// workflow edit; a reached one may not.
-	CountStartedAssignmentsForStep(ctx context.Context, workflowStepID int64) (int64, error)
 	// How many steps still point at this router: live library definitions plus
 	// profile snapshots (project and template settings). HandleDelete refuses
 	// with 409 instead of silently NULLing them.
@@ -299,7 +301,9 @@ type Querier interface {
 	CreateDemoTenant(ctx context.Context, arg CreateDemoTenantParams) (Tenant, error)
 	// inline_html is nil-keeps-default (on): a struct literal that omits it must
 	// not parse a file as plain text. xlsx_layout is NULL for every file but an
-	// Excel workbook the uploader laid out (parser.XLSXLayout).
+	// Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
+	// the rule set the file was split with (segmentation.Snapshot); NULL means
+	// the conservative built-in set.
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error)
 	// Issues a user reports to the platform operators, and their conversation.
@@ -333,6 +337,11 @@ type Querier interface {
 	CreateJobStepAssignment(ctx context.Context, arg CreateJobStepAssignmentParams) (JobStepAssignment, error)
 	CreateLabelDefinition(ctx context.Context, arg CreateLabelDefinitionParams) (LabelDefinition, error)
 	CreateLabelValue(ctx context.Context, arg CreateLabelValueParams) (LabelValue, error)
+	// Internal: a segment that exists only in one language's job, made by a split
+	// or join; the caller has checked the job in the tenant. Its key is
+	// "<export key>@<id>": unique in the file, and the same for the row's life, so
+	// a bilingual XLIFF exported before a later split still finds it.
+	CreateLanguageSegment(ctx context.Context, arg CreateLanguageSegmentParams) (Segment, error)
 	// settings COALESCEs so a caller with no options to set may pass nil rather
 	// than the literal `{}` every time — the column is NOT NULL and an empty object
 	// is what "no options" means.
@@ -371,12 +380,15 @@ type Querier interface {
 	// UpdateProjectMetadata. client + domain are free-text taxonomy labels.
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateQAProfile(ctx context.Context, arg CreateQAProfileParams) (QaProfile, error)
+	// Internal: caller must have tenant-verified the profile (GetQAProfile).
+	CreateQARegexRule(ctx context.Context, arg CreateQARegexRuleParams) (QaRule, error)
 	CreateSegment(ctx context.Context, arg CreateSegmentParams) (Segment, error)
+	CreateSegmentationProfile(ctx context.Context, arg CreateSegmentationProfileParams) (int64, error)
 	// ============================================================
 	// Settings Profile CRUD
 	// ============================================================
-	// Penalties, auto_complete and inline_html are deliberately absent: they take
-	// the column defaults (1% / 1% / on / on). Adding them as params would make every existing
+	// Penalties, auto_complete, inline_html and linguist_terms are deliberately
+	// absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
 	// struct-literal caller pass a silent zero value — 0 means "locales are
 	// equivalent" (new projects would start auto-confirming sublanguage variants)
 	// and false would switch auto-completion or HTML strings off. Callers that need non-defaults
@@ -468,7 +480,13 @@ type Querier interface {
 	DeleteInvite(ctx context.Context, arg DeleteInviteParams) error
 	// Internal: platform sweep across tenants. Called after the files are gone.
 	DeleteIssueAttachmentBlobPurges(ctx context.Context, storageKeys []string) error
+	// Internal: platform sweep across tenants. Called once the card is blanked.
+	DeleteIssueSlackBlank(ctx context.Context, issueID int64) error
 	DeleteJob(ctx context.Context, id int64) error
+	// Internal: the segments a split or join made for one file + target language.
+	// The job delete runs it after resolving the job with GetJobTenant and after
+	// DeleteJobTranslations, so their translations are already gone.
+	DeleteJobLanguageSegments(ctx context.Context, arg DeleteJobLanguageSegmentsParams) error
 	// Scoped by tenant as SaveJobRunOutcome. A scratch row with no history of its
 	// own, so it is deleted, not soft-deleted.
 	DeleteJobRunOutcome(ctx context.Context, arg DeleteJobRunOutcomeParams) error
@@ -478,6 +496,14 @@ type Querier interface {
 	// Needed because translations FK to segments (not jobs), so deleting
 	// a job row alone would leave translations orphaned.
 	DeleteJobTranslations(ctx context.Context, arg DeleteJobTranslationsParams) error
+	// Internal: the translations a join folded into another row, after their
+	// comments and history moved there. Their QA results, step statuses and holds
+	// go with them. One statement, so the job's stats are recounted once.
+	DeleteJoinedTranslations(ctx context.Context, ids []int64) error
+	// Internal: the language rows a split or join replaced, after their
+	// translations moved off them; shared rows in @ids stay. One statement, so
+	// the job's stats are recounted once.
+	DeleteLanguageSegments(ctx context.Context, ids []int64) error
 	// Internal: rules are replaced wholesale on every router save.
 	DeleteMTRouterRules(ctx context.Context, routerID int64) error
 	// Remove a user from ONE org (per-org "remove member"), leaving the global
@@ -503,6 +529,8 @@ type Querier interface {
 	// Unsets a deleted value on every project of the tenant that picked it. Link
 	// rows, so a hard delete.
 	DeleteProjectLabelsForValue(ctx context.Context, arg DeleteProjectLabelsForValueParams) error
+	// A rule is a child row of its profile, so it is deleted outright.
+	DeleteQARegexRule(ctx context.Context, arg DeleteQARegexRuleParams) (int64, error)
 	// Internal: caller must have tenant-verified the job (GetJobTenant).
 	// Only for the "no enabled rules" path: with no rules there are no findings,
 	// so there is no ignore state worth preserving.
@@ -515,6 +543,9 @@ type Querier interface {
 	// which claims nothing about whatever replaces it.
 	DeleteQAResultsForTranslations(ctx context.Context, translationIds []int64) error
 	DeleteQARule(ctx context.Context, id int64) error
+	// Internal: caller must have tenant-verified the profile (GetQAProfile). Used
+	// by an import that replaces every rule of a profile.
+	DeleteQARulesForProfile(ctx context.Context, profileID int64) error
 	// Internal: clears a draft file's segments so publish can store a fresh parse.
 	// The caller has already resolved the file within the tenant; a draft file has
 	// no jobs, so only its own translations (none yet) cascade.
@@ -651,6 +682,10 @@ type Querier interface {
 	FindTMEntriesForFR(ctx context.Context, arg FindTMEntriesForFRParams) ([]TranslationMemory, error)
 	// Any enabled MT engine in the tenant. Used by seed (attribute dashboard history).
 	FindTenantMTEngine(ctx context.Context, tenantID int64) (MtEngine, error)
+	// Internal: a split or join changes the source under these translations, so
+	// a step rollback must not restore a status a round ended with on the old
+	// source: with no end text, the text never reads as unchanged.
+	ForgetStepRoundTexts(ctx context.Context, translationIds []int64) error
 	// Stage 1 of the find/score split: @threshold MUST stay low for
 	// recall — the application Scorer rescores and applies the display threshold
 	// after. Bumping @threshold drops short-sentence fuzzy candidates (Bug 2).
@@ -658,7 +693,8 @@ type Querier interface {
 	// Sublanguage-aware on both sides (see LookupTM). Callers rescore with
 	// translationmemory.PenalizeSublanguage before comparing against the display
 	// threshold, so a variant candidate has to clear a slightly higher bar.
-	// prev/next_source_hash let an exact hit score 101% in context.
+	// prev/next_source_hash let an exact hit score 101% in context; the created/
+	// updated stamps are what the editor's match card shows.
 	//
 	// `%` is what lets idx_tm_source_trgm serve the search; it compares against
 	// pg_trgm.similarity_threshold, so run it through
@@ -737,6 +773,10 @@ type Querier interface {
 	GetDeletedProject(ctx context.Context, arg GetDeletedProjectParams) (GetDeletedProjectRow, error)
 	// Internal: the one demo tenant, not scoped by a caller's tenant.
 	GetDemoTenant(ctx context.Context) (Tenant, error)
+	// The source language of a file's project: how the editor reads the
+	// numbers and dates of its placeables. Tenant scoping is structural via
+	// files→projects.
+	GetEditorSourceLanguage(ctx context.Context, arg GetEditorSourceLanguageParams) (string, error)
 	GetExtension(ctx context.Context, arg GetExtensionParams) (Extension, error)
 	GetExtensionIcon(ctx context.Context, arg GetExtensionIconParams) ([]byte, error)
 	// Internal: used by pipeline. For user-facing handlers, use GetFileTenant.
@@ -763,6 +803,9 @@ type Querier interface {
 	GetIssueCaptureForPlatform(ctx context.Context, issueID int64) (GetIssueCaptureForPlatformRow, error)
 	// Internal: platform operators only (RequirePlatformAdmin).
 	GetIssueForPlatform(ctx context.Context, id int64) (GetIssueForPlatformRow, error)
+	// Internal: the worker's Slack post, platform-wide like the issues it serves.
+	// The message that announced the issue; no row when none was posted.
+	GetIssueSlackMessage(ctx context.Context, issueID int64) (GetIssueSlackMessageRow, error)
 	// Internal: used by pipeline. For user-facing handlers, use GetJobTenant.
 	GetJob(ctx context.Context, id int64) (Job, error)
 	// Bands compute from the new `origin` column (sticky
@@ -776,6 +819,8 @@ type Querier interface {
 	// defense). Joins through files+projects so a single round-trip carries
 	// everything; the worker doesn't have to make 3 lookups per job.
 	GetJobForAnalysis(ctx context.Context, jobID int64) (GetJobForAnalysisRow, error)
+	// Internal: keyed by a job the caller already loaded tenant-scoped.
+	GetJobLastClearStepOrder(ctx context.Context, jobID int64) (int32, error)
 	// Per-band needs-review count for the CAT-editor status bar (planning
 	// doc §"Live job-level view"). Returns one row per band whose segments
 	// contain at least one status='needs_review' translation — bands with
@@ -803,6 +848,9 @@ type Querier interface {
 	GetJobRunState(ctx context.Context, id int64) (GetJobRunStateRow, error)
 	// Tenant-scoped: returns job only if it belongs to the caller's tenant.
 	GetJobTenant(ctx context.Context, arg GetJobTenantParams) (Job, error)
+	// Tenant-scoped: a job's project, settings profile, language pair and whether
+	// its linguists may add terms, for the editor's term quick-add.
+	GetJobTermContext(ctx context.Context, arg GetJobTermContextParams) (GetJobTermContextRow, error)
 	// Tenant-scoped: job_timings carries its own tenant_id, so the breakdown for a
 	// job can be fetched without joining back through files → projects.
 	GetJobTiming(ctx context.Context, arg GetJobTimingParams) (JobTiming, error)
@@ -937,6 +985,10 @@ type Querier interface {
 	// fall back to. A template profile belongs to no project and returns no row,
 	// which callers read as "no language list to check against, and no fallback".
 	GetProjectForProfile(ctx context.Context, settingsProfileID int64) (GetProjectForProfileRow, error)
+	// One project as ListProjectsFiltered returns it (creator and customer names
+	// included), for GET /api/projects/{id}. Its own statement, so the lookup
+	// always plans on the primary key.
+	GetProjectListRow(ctx context.Context, arg GetProjectListRowParams) (GetProjectListRowRow, error)
 	GetProjectRepetitions(ctx context.Context, projectID int64) ([]GetProjectRepetitionsRow, error)
 	// The value a project carries for a built-in label (customer, domain), which is
 	// where those two are stored. Empty result = the project has no pick.
@@ -958,13 +1010,14 @@ type Querier interface {
 	//   tm_100    — t.origin='tm' AND tm_match_percent=100
 	//   tm_85_99  — t.origin='tm' AND tm_match_percent BETWEEN 85 AND 99
 	//   tm_65_84  — t.origin='tm' AND tm_match_percent BETWEEN 65 AND 84
-	//   new       — anything else (MT-filled, no-match, below-65 fuzzy, OR no
-	//               translation row at all via LEFT JOIN)
+	//   new       — anything else (MT-filled, no-match, below-65 fuzzy)
 	//
 	// Repetitions are NOT computed here (behavior deferred; see planning doc).
 	//
-	// is_auto_approved is FALSE for segments with no translation row (LEFT JOIN
-	// yields NULL status) and for any status other than 'auto_approved' —
+	// A job's rows are the segments with a translation in its language, so a
+	// shared segment a split or join replaced in this language is not counted.
+	//
+	// is_auto_approved is FALSE for any status other than 'auto_approved' —
 	// including 'approved' (human-confirmed) and 'needs_review'.
 	GetSavedAnalysisBands(ctx context.Context, jobID int64) ([]GetSavedAnalysisBandsRow, error)
 	// Batch worker query for the saved analysis: aggregates the per-(band,
@@ -989,17 +1042,18 @@ type Querier interface {
 	GetSegment(ctx context.Context, id int64) (Segment, error)
 	// File- and tenant-scoped: returns the segment only if it belongs to the file
 	// in the route, so file-level access to one file does not open another's segments.
+	// Shared segments only, like ListSegmentsByFileTenant.
 	GetSegmentInFileTenant(ctx context.Context, arg GetSegmentInFileTenantParams) (Segment, error)
-	// The source text of the segments immediately before/after the given
-	// segment in document order (nearest lower/higher position) within the same
-	// file; NULL at the document boundaries. Equivalent to array-adjacency over
-	// position, matching the lookup side (ListSegmentSourcesByFile). Used at TM
-	// write-back time to compute the 101% context-match hashes stored on the
-	// entry (last-write-wins context).
+	// The source text of the job rows immediately before/after the given segment
+	// in document order within the same file and language; '' at the document
+	// boundaries. Equivalent to array-adjacency over (position, sub_position),
+	// matching the lookup side (ListSegmentSourcesByFile). Used at TM write-back
+	// time to compute the 101% context-match hashes stored on the entry
+	// (last-write-wins context).
 	// Boundaries COALESCE to '' (non-null) so a document-start/end segment hashes
 	// the empty string on both write and lookup sides; a genuinely-missing segment
 	// surfaces as a query error the caller maps to "no context" (stores NULL).
-	GetSegmentNeighborSources(ctx context.Context, segmentID int64) (GetSegmentNeighborSourcesRow, error)
+	GetSegmentNeighborSources(ctx context.Context, arg GetSegmentNeighborSourcesParams) (GetSegmentNeighborSourcesRow, error)
 	// Internal: the segment's source rich text for one translation, for the CAT
 	// sidebar's live MT preview. Scoped to the job's file + target language (the
 	// caller has already tenant-verified the job via GetJobTenant) so a
@@ -1007,7 +1061,15 @@ type Querier interface {
 	GetSegmentRichTextForTranslation(ctx context.Context, arg GetSegmentRichTextForTranslationParams) (*string, error)
 	// Tenant-scoped: returns segment only if it belongs to the caller's tenant.
 	GetSegmentTenant(ctx context.Context, arg GetSegmentTenantParams) (Segment, error)
+	// An org profile of the tenant, or a built-in.
+	GetSegmentationProfile(ctx context.Context, arg GetSegmentationProfileParams) (SegmentationProfileCatalog, error)
+	// The profile a project or template names, deleted or not: an upload that
+	// read its project's settings before a delete still resolves the profile.
+	GetSegmentationProfileForImport(ctx context.Context, arg GetSegmentationProfileForImportParams) (SegmentationProfileCatalog, error)
 	GetSettingsProfile(ctx context.Context, id int64) (SettingsProfile, error)
+	// Internal: the file's shared segment with this key at this position; the
+	// caller has checked the file in the tenant.
+	GetSharedSegmentByKey(ctx context.Context, arg GetSharedSegmentByKeyParams) (Segment, error)
 	GetStepDefinition(ctx context.Context, arg GetStepDefinitionParams) (StepDefinition, error)
 	// Resolves a definition regardless of deleted_at (provenance lookups).
 	GetStepDefinitionAny(ctx context.Context, arg GetStepDefinitionAnyParams) (StepDefinition, error)
@@ -1200,6 +1262,9 @@ type Querier interface {
 	// its rich text and edit distance, or `approved` with none of them when the
 	// confirm left the text as it was. No editing time is recorded (0).
 	InsertHumanHistoryBatch(ctx context.Context, arg InsertHumanHistoryBatchParams) error
+	// Internal: the worker's Slack post. The first message announcing an issue
+	// stays its thread.
+	InsertIssueSlackMessage(ctx context.Context, arg InsertIssueSlackMessageParams) error
 	// Worker writes one breakdown row per (analysis_id, job_id, target_language).
 	// 48 metric columns — verbose but flat. Auto-approved values are subsets of
 	// the band totals; CHECK constraints on the table fail loud if the worker
@@ -1303,13 +1368,13 @@ type Querier interface {
 	// the same rule as taskedit's edit guard and the editor's currentTask, so the
 	// matrix cell, Open and the job row agree. Completed-workflow jobs
 	// (current_step_id NULL) still surface a step assignment to carry/edit a
-	// deadline. `step_order` backs first-step-only gating (Apply TM/MT);
+	// deadline. `step_order` backs first-step-only gating (Apply TM/MT) and,
+	// with `last_clear_step_order`, the clear gate;
 	// `step_assignment_id` + `deadline` back the inline deadline editor; `is_ai_step`
 	// gates the manager QE+APE re-run button.
 	ListActiveStepsForProject(ctx context.Context, arg ListActiveStepsForProjectParams) ([]ListActiveStepsForProjectRow, error)
-	// Bilingual XLIFF export: EVERY segment of the file (LEFT JOIN, so
-	// untranslated ones appear too) with its source rich text, the translation
-	// for the requested language, its lock and status, and its pre-translation
+	// Bilingual XLIFF export: every row of the job (file + language), untranslated
+	// ones too, with its source rich text, the translation, its lock and status, and its pre-translation
 	// lineage (origin + TM score).
 	// For a TM pre-translation, match_* is the TM unit that was matched, taken
 	// from the latest `tm` history event. It is NULL when that unit or its
@@ -1326,6 +1391,8 @@ type Querier interface {
 	// Analysis Weights (per-tenant configurable match band weights)
 	// ============================================================
 	ListAnalysisWeights(ctx context.Context, tenantID int64) ([]AnalysisWeight, error)
+	// Every row of one job, in document order. The pieces of a split carry the
+	// original key they rebuild (export_key), with their gap and chip base.
 	ListApprovedForExport(ctx context.Context, arg ListApprovedForExportParams) ([]ListApprovedForExportRow, error)
 	// All human-approved translations for a file + language, for TM write-back.
 	// Includes source_rich_text + active_rich_text so the write path can preserve
@@ -1339,12 +1406,15 @@ type Querier interface {
 	// write needs: human-approved (status='approved', confirmed by a user, never
 	// auto_approved or assistant-confirmed) and with text. Others are left out.
 	ListApprovedForTMByIDs(ctx context.Context, arg ListApprovedForTMByIDsParams) ([]ListApprovedForTMByIDsRow, error)
+	// The built-ins, newest first.
+	ListBuiltinSegmentationProfiles(ctx context.Context) ([]SegmentationProfileCatalog, error)
 	ListChatConversations(ctx context.Context, arg ListChatConversationsParams) ([]ChatConversation, error)
 	ListChatMessages(ctx context.Context, arg ListChatMessagesParams) ([]ChatMessage, error)
 	// Internal: platform sweep across tenants. One batch of queued blob keys.
 	ListChatUploadBlobPurges(ctx context.Context, batchSize int32) ([]string, error)
 	// LEFT JOIN: a NULL user_id is an AI/system comment — the
-	// frontend renders those authored "AI".
+	// frontend renders those authored "AI". from_segment is the number of the row
+	// a comment was written on, when a join moved it here.
 	ListCommentsByTranslation(ctx context.Context, translationID int64) ([]ListCommentsByTranslationRow, error)
 	// Internal: batched comment fetch for the <comments> segment-prompt placeholder.
 	// Called only when the tenant's segment prompt uses the
@@ -1394,6 +1464,43 @@ type Querier interface {
 	// Internal: the tenant-delete sweep.
 	ListDeletingTenants(ctx context.Context) ([]int64, error)
 	ListDemoWorkspaceItems(ctx context.Context, tenantID int64) ([]ListDemoWorkspaceItemsRow, error)
+	// Internal: the caller soft-deletes @original_id and holds
+	// LockIssueDuplicates. The duplicates ReopenDuplicatesOf sends back to the
+	// queue.
+	ListDuplicatesToReopen(ctx context.Context, originalID int64) ([]int64, error)
+	// One row per segment of a job, in document order, without the text the grid
+	// renders: what the CAT editor counts, filters and navigates on. A job's rows
+	// are the segments that own a translation in its language, so a shared segment
+	// a split or join replaced in this language is left out. The source text is
+	// read only to find repetitions, and is not sent on. Tenant scoping is
+	// structural via files→projects.
+	ListEditorIndex(ctx context.Context, arg ListEditorIndexParams) ([]ListEditorIndexRow, error)
+	// For each of @translation_ids, the text it held when its most recently closed
+	// step round ended: the newest history text at or before the round's end,
+	// skipping `cleared` and the history a join moved here from the rows it
+	// removed (details.from_segment), which is another row's text. The step
+	// handoff and a reject write the text a person left unconfirmed, so history
+	// holds every handed-over version. A translation with no closed round, or no
+	// text when it ended, is not returned.
+	ListEditorPreviousStepTexts(ctx context.Context, arg ListEditorPreviousStepTextsParams) ([]ListEditorPreviousStepTextsRow, error)
+	// Tagged sources of a job's segments that carry a cross-reference chip.
+	ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]string, error)
+	// The segments of @ids that belong to the job's file and language; others are
+	// not returned.
+	ListEditorSegmentsByIDs(ctx context.Context, arg ListEditorSegmentsByIDsParams) ([]Segment, error)
+	// The job's segments with these original keys, and their translation. A key
+	// a split replaced in this language comes back once per piece, keyed by the
+	// original key, in document order.
+	ListEditorSegmentsByKeys(ctx context.Context, arg ListEditorSegmentsByKeysParams) ([]ListEditorSegmentsByKeysRow, error)
+	// Source and target text of every segment of a job, for the editor's text
+	// search.
+	ListEditorTexts(ctx context.Context, arg ListEditorTextsParams) ([]ListEditorTextsRow, error)
+	// Internal: the translations of @segment_ids in one language. The ids come from
+	// ListEditorSegmentsByIDs (tenant-scoped), which is the tenant scope here.
+	ListEditorTranslationsBySegments(ctx context.Context, arg ListEditorTranslationsBySegmentsParams) ([]Translation, error)
+	// Translations of a job's file whose target contains @word anywhere (case
+	// sensitive). The caller narrows to whole words.
+	ListEditorWordCandidates(ctx context.Context, arg ListEditorWordCandidatesParams) ([]ListEditorWordCandidatesRow, error)
 	ListExtensions(ctx context.Context, tenantID int64) ([]Extension, error)
 	// Jobs whose pipeline ended in an error, newest first.
 	ListFailedJobs(ctx context.Context, arg ListFailedJobsParams) ([]ListFailedJobsRow, error)
@@ -1422,25 +1529,28 @@ type Querier interface {
 	// support team marked as duplicates of @original_id, in any org, oldest first.
 	ListIssueDuplicatesForPlatform(ctx context.Context, originalID int64) ([]ListIssueDuplicatesForPlatformRow, error)
 	// Internal: platform operators only (RequirePlatformAdmin). The orgs that have
-	// issues, for the operators' organization filter.
+	// issues, for the operators' reporter filter.
 	ListIssueOrgsForPlatform(ctx context.Context) ([]ListIssueOrgsForPlatformRow, error)
+	// Internal: platform operators only (RequirePlatformAdmin). Everyone who has
+	// issues, with the orgs they reported in, for the operators' reporter filter.
+	ListIssueReportersForPlatform(ctx context.Context) ([]ListIssueReportersForPlatformRow, error)
+	// Internal: platform sweep across tenants. One batch of the queued Slack cards
+	// of deleted issues, after @after_id in issue order.
+	ListIssueSlackBlanks(ctx context.Context, arg ListIssueSlackBlanksParams) ([]ListIssueSlackBlanksRow, error)
 	// Internal: platform operators only (RequirePlatformAdmin). Every tag in use,
 	// for the tag filter and the tag picker.
 	ListIssueTagsForPlatform(ctx context.Context) ([]string, error)
-	// Internal: platform operators only (RequirePlatformAdmin). Every org's issues,
-	// paged and searched like ListMemberIssuesNewest. An empty filter list matches
-	// any value; a severity filter matches bugs only; a tag filter matches an issue
-	// with any of the tags. The assignee filter matches the listed assignees, plus
-	// the unassigned issues when @unassigned. A verification filter matches the
-	// reports the assistant checked with one of those results.
-	ListIssuesForPlatformNewest(ctx context.Context, arg ListIssuesForPlatformNewestParams) ([]ListIssuesForPlatformNewestRow, error)
-	// Internal: platform operators only (RequirePlatformAdmin).
-	// ListIssuesForPlatformNewest in the other order.
-	ListIssuesForPlatformOldest(ctx context.Context, arg ListIssuesForPlatformOldestParams) ([]ListIssuesForPlatformOldestRow, error)
 	// All breakdown rows for an analysis, deterministic order so the detail
 	// view renders the same way every time. job_id NULLs (deleted jobs) sort
 	// last via NULLS LAST.
 	ListJobAnalysisByAnalysis(ctx context.Context, analysisID int64) ([]JobAnalysis, error)
+	// Tenant-scoped: the job's rows at @position (a row and the pieces of its
+	// split), in document order, with what a split or join reads.
+	ListJobEditRowsAt(ctx context.Context, arg ListJobEditRowsAtParams) ([]ListJobEditRowsAtRow, error)
+	// Tenant-scoped: the job's rows whose translation is one of @translation_ids,
+	// in document order, with what a split or join reads. Rows of another job
+	// are not returned.
+	ListJobEditRowsByTranslations(ctx context.Context, arg ListJobEditRowsByTranslationsParams) ([]ListJobEditRowsByTranslationsRow, error)
 	// Tenant-scoped: the live holds in a job, with the holders' names.
 	ListJobHolds(ctx context.Context, arg ListJobHoldsParams) ([]ListJobHoldsRow, error)
 	// Translations whose AI outcome predates the job's current step round. The
@@ -1464,6 +1574,11 @@ type Querier interface {
 	// and an omitted cursor arrives as 0, so an exclusive `>` would silently skip
 	// the very first segment of every file. Callers advance by passing
 	// last_position + 1, which the backend returns as next_cursor.
+	//
+	// A page holds @row_limit whole positions: the pieces of a split share their
+	// position, so a page never ends between them and may hold a few more rows
+	// than @row_limit. The page's last position comes from an ordered, limited
+	// scan of the matching positions, so a page reads only its own rows.
 	ListJobSegmentsPage(ctx context.Context, arg ListJobSegmentsPageParams) ([]ListJobSegmentsPageRow, error)
 	ListJobStepAssignments(ctx context.Context, jobID int64) ([]ListJobStepAssignmentsRow, error)
 	// Tenant-scoped via the projects join. Powers the per-project "where is time
@@ -1494,6 +1609,10 @@ type Querier interface {
 	// handler compares result-length to request-length to detect that case.
 	ListJobsByIDsForProject(ctx context.Context, arg ListJobsByIDsForProjectParams) ([]ListJobsByIDsForProjectRow, error)
 	ListJobsByProject(ctx context.Context, projectID int64) ([]ListJobsByProjectRow, error)
+	// Internal: no tenant filter. job.Service.ListByProjectIDs checks the project
+	// with the tenant-scoped GetProject before calling it. The jobs of the project
+	// among job_ids; same columns and order as ListJobsByProject.
+	ListJobsByProjectIDs(ctx context.Context, arg ListJobsByProjectIDsParams) ([]ListJobsByProjectIDsRow, error)
 	// Internal: no tenant filter. job.Service.ListPageByProject checks the
 	// project with the tenant-scoped GetProject before calling it. One keyset page
 	// of a project's jobs, oldest first; same columns as ListJobsByProject.
@@ -1611,14 +1730,6 @@ type Querier interface {
 	ListMemberIssueAttachments(ctx context.Context, issueID int64) ([]IssueAttachment, error)
 	// The conversation without the support team's internal entries.
 	ListMemberIssueComments(ctx context.Context, arg ListMemberIssueCommentsParams) ([]ListMemberIssueCommentsRow, error)
-	// The org's issues the viewer may see, most recently updated first (ties by
-	// id). An empty filter list matches any value; a NULL search matches any
-	// text, else a part of the title or description (wildcards escaped by the
-	// caller). The cursor is the previous page's last (updated_at, id); a NULL
-	// cursor_at is the first page.
-	ListMemberIssuesNewest(ctx context.Context, arg ListMemberIssuesNewestParams) ([]ListMemberIssuesNewestRow, error)
-	// ListMemberIssuesNewest in the other order: least recently updated first.
-	ListMemberIssuesOldest(ctx context.Context, arg ListMemberIssuesOldestParams) ([]ListMemberIssuesOldestRow, error)
 	// Members of an org (membership-based). Role comes from the membership,
 	// not the user row. Default: active users only; pass include_inactive=true to
 	// also return deactivated users (admin "deactivated members" view).
@@ -1632,7 +1743,7 @@ type Querier interface {
 	// compromised JWT with a guessable user_id) can't leak rows. Matches
 	// the rest of the codebase's tenant-isolation invariant.
 	ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error)
-	// One row per live token family for the Settings "Connected apps" list.
+	// One row per live token family for the AI settings "Connected apps" list.
 	ListOAuthConnections(ctx context.Context, arg ListOAuthConnectionsParams) ([]ListOAuthConnectionsRow, error)
 	// ============================================================
 	// Segments + translations for QA batch processing
@@ -1694,6 +1805,9 @@ type Querier interface {
 	// (a prefix like 'file.' filters a category, a full type like 'file.uploaded'
 	// filters exactly — LIKE prefix% covers both).
 	ListProjectEvents(ctx context.Context, arg ListProjectEventsParams) ([]ListProjectEventsRow, error)
+	// Internal: every file id of a project, for the LLM call log's project filter.
+	// Callers check the project's tenant first, or are the support team.
+	ListProjectFileIDs(ctx context.Context, projectID int64) ([]int64, error)
 	// Every job in the project with the status fields the promotion gate needs
 	// (mirrors the manual gate's readiness check). Internal: tenant scoping is done
 	// by the caller before this runs.
@@ -1741,22 +1855,50 @@ type Querier interface {
 	// QA Rules
 	// ============================================================
 	ListQARules(ctx context.Context, profileID int64) ([]QaRule, error)
+	// The steps of a settings profile that a job has reached at least once, with
+	// how many jobs reached each. A task counts once it is past pending, or while
+	// pending with a round on record: a reject resets the steps it skips back
+	// over, and a clear resets a finished workflow, and both keep the rounds.
+	// A reached step keeps its place in a workflow edit.
+	// Served by idx_jsa_reached (partial, covering job_id), so it reads only the
+	// reached tasks; the tenant check is on the profile.
+	ListReachedStepsForProfile(ctx context.Context, arg ListReachedStepsForProfileParams) ([]ListReachedStepsForProfileRow, error)
 	// Internal: not tenant-scoped; callers pass segment ids taken from
 	// tenant-scoped rows (ListApprovedForTMByIDs, or ListApprovedForTM after
 	// GetFileTenant).
 	// GetSegmentNeighborSources for many segments in one statement: each listed
-	// segment's previous/next source text in its file ('' at a boundary).
-	ListSegmentNeighborSourcesByIDs(ctx context.Context, segmentIds []int64) ([]ListSegmentNeighborSourcesByIDsRow, error)
-	// Every segment's source text for a file, in document order. The TM
+	// segment's previous/next source text among its job's rows (same file, a
+	// translation in @target_languages at the same index), '' at a boundary,
+	// with the language it was read for.
+	ListSegmentNeighborSourcesByIDs(ctx context.Context, arg ListSegmentNeighborSourcesByIDsParams) ([]ListSegmentNeighborSourcesByIDsRow, error)
+	// Every source text of one job (file + language), in document order. The TM
 	// phase builds a per-segment neighbor-context map from this (neighbors by
 	// array-adjacency, so gaps in `position` don't matter) to detect 101%
-	// (in-context exact) matches. Source-only — no translation join.
-	ListSegmentSourcesByFile(ctx context.Context, fileID int64) ([]ListSegmentSourcesByFileRow, error)
-	// Returns all segments for a file. Not paginated by design: the CATEditor needs
-	// all segments in memory for keyboard navigation, search, and jump-to-segment.
-	// Virtual scroll handles rendering. Files rarely exceed 5K segments.
+	// (in-context exact) matches. A job's rows are the segments with a
+	// translation in its language, so the pieces of a split are neighbours.
+	ListSegmentSourcesByFile(ctx context.Context, arg ListSegmentSourcesByFileParams) ([]ListSegmentSourcesByFileRow, error)
+	// The source languages ('' for none) of the tenant's templates that name a
+	// profile.
+	ListSegmentationProfileTemplateLanguages(ctx context.Context, arg ListSegmentationProfileTemplateLanguagesParams) ([]string, error)
+	// ============================================================
+	// Segmentation profiles
+	// ============================================================
+	// Reads go through segmentation_profile_catalog: the built-ins (tenant_id
+	// NULL, read by every org) and the org's own profiles, so reads take
+	// tenant_id = $tenant OR tenant_id IS NULL. Writes touch the org's table
+	// alone, scoped by tenant_id. Org profiles are soft-deleted: live reads
+	// filter deleted_at IS NULL.
+	// The built-ins, then the org's own profiles.
+	ListSegmentationProfiles(ctx context.Context, tenantID *int64) ([]SegmentationProfileCatalog, error)
+	// One page by id: the built-ins and the org's profiles after @cursor; when
+	// @source_language is set, those that suit it (the language or its base
+	// language is on the profile's list, or the list is empty: any language).
+	ListSegmentationProfilesPage(ctx context.Context, arg ListSegmentationProfilesPageParams) ([]SegmentationProfileCatalog, error)
+	// Internal: the file's shared segments, as imported, for server-side work over
+	// the whole file. Rows a split or join made for one language are left out.
 	ListSegmentsByFile(ctx context.Context, fileID int64) ([]Segment, error)
-	// Tenant-scoped: returns segments only if file belongs to caller's tenant.
+	// Tenant-scoped: returns the file's shared segments, as imported, only if the
+	// file belongs to caller's tenant, at most @row_limit of them.
 	ListSegmentsByFileTenant(ctx context.Context, arg ListSegmentsByFileTenantParams) ([]Segment, error)
 	// ============================================================
 	// Settings TM Assignments
@@ -1875,6 +2017,9 @@ type Querier interface {
 	// Sort by id DESC for stable cursor pagination (newest-created first).
 	// Caller passes limit+1 to detect has_more in the handler.
 	ListTemplatesFiltered(ctx context.Context, arg ListTemplatesFilteredParams) ([]Template, error)
+	// The ids among @ids whose file belongs to the tenant: the LLM call log
+	// carries file ids but no tenant, so this decides which calls an org may read.
+	ListTenantFileIDsIn(ctx context.Context, arg ListTenantFileIDsInParams) ([]int64, error)
 	// The org's owners, admins and project managers: who hears that one of the
 	// org's issues was resolved.
 	ListTenantManagerIDs(ctx context.Context, tenantID int64) ([]int64, error)
@@ -1919,9 +2064,9 @@ type Querier interface {
 	// Every closed step round of one translation, oldest first: how each step
 	// ended for the segment. Tenant-scoped on the row itself.
 	ListTranslationStepStatuses(ctx context.Context, arg ListTranslationStepStatusesParams) ([]ListTranslationStepStatusesRow, error)
-	// Returns all translations for a file+language. Not paginated by design: loaded
-	// in lockstep with segments for the CATEditor. The UNIQUE(segment_id, target_language)
-	// constraint provides a composite index for this query pattern.
+	// Internal: every translation of a file in one language, for server-side work
+	// over the whole file. The UNIQUE(segment_id, target_language) constraint
+	// provides a composite index for this query pattern.
 	ListTranslationsByFile(ctx context.Context, arg ListTranslationsByFileParams) ([]Translation, error)
 	// Returns the minimal projection the XLIFF re-import diff needs:
 	// segment_key (the match key against incoming trans-unit IDs), translation
@@ -1930,11 +2075,13 @@ type Querier interface {
 	// the caller via GetFileTenant before invoking this. held_by_other: a user
 	// other than @actor_id (the importer) has the row open.
 	ListTranslationsByFileForReimport(ctx context.Context, arg ListTranslationsByFileForReimportParams) ([]ListTranslationsByFileForReimportRow, error)
-	// Tenant-scoped: returns translations only if file belongs to caller's tenant.
+	// Tenant-scoped: returns translations only if file belongs to caller's tenant,
+	// at most @row_limit of them.
 	ListTranslationsByFileTenant(ctx context.Context, arg ListTranslationsByFileTenantParams) ([]Translation, error)
 	// Internal: caller must have tenant-verified the job (GetJobTenant).
-	// One page of the job's rows in segment order. Positions can repeat within a
-	// file, so the page key is (position, segment id).
+	// One page of the job's rows in segment order. A position holds a row and the
+	// pieces of its split, whose ids need not follow their order, so the page key
+	// is the whole sort key (position, sub-position, segment id).
 	ListTranslationsForQAPage(ctx context.Context, arg ListTranslationsForQAPageParams) ([]ListTranslationsForQAPageRow, error)
 	// ── Attention and progress (MCP insight tools) ──────────────────────────────
 	// Every query here is tenant-scoped structurally through projects.tenant_id.
@@ -2026,6 +2173,11 @@ type Querier interface {
 	// Live library workflows that reference a definition — surfaced in the 409
 	// when a PM tries to delete a step that is still composed into a workflow.
 	ListWorkflowsUsingStepDefinition(ctx context.Context, arg ListWorkflowsUsingStepDefinitionParams) ([]ListWorkflowsUsingStepDefinitionRow, error)
+	// Tenant-scoped: the live term bases a settings profile assigns to a language
+	// pair with Write allowed (the term quick-add writes only to these), matched
+	// like LookupSettingsTermsByTokens (exact code or same base language), best
+	// priority first.
+	ListWritableTermBasesForPair(ctx context.Context, arg ListWritableTermBasesForPairParams) ([]ListWritableTermBasesForPairRow, error)
 	// Locks the rows of @ids in the file + target language and approves them:
 	// a locked segment is always Approved or Auto-approved. The caller resolved
 	// @file_id tenant-scoped. Empty and already-locked rows are left alone and
@@ -2072,6 +2224,10 @@ type Querier interface {
 	LockProfileJobsForWrite(ctx context.Context, arg LockProfileJobsForWriteParams) ([]int64, error)
 	// LockJobsForWrite for every job of a project.
 	LockProjectJobsForWrite(ctx context.Context, arg LockProjectJobsForWriteParams) ([]int64, error)
+	// Internal: a row a join removes, locked for the transaction. Matches nothing
+	// when it changed since @expected_updated_at, is locked, is being
+	// pre-translated or another user holds it.
+	LockRowForJoin(ctx context.Context, arg LockRowForJoinParams) (int64, error)
 	// Row-locks a live definition (FOR UPDATE) so a delete and a concurrent
 	// workflow-compose serialize on it: whichever commits second observes the
 	// other's effect (a removed workflow, or a now-deleted definition) instead of
@@ -2169,6 +2325,10 @@ type Querier interface {
 	// projectdelete purges it. draft_only refuses a live project in the same
 	// statement, so a draft published since the caller read it stays.
 	MarkProjectDeleted(ctx context.Context, arg MarkProjectDeletedParams) (int64, error)
+	// Internal: keyed by settings_profile_id with no tenant filter; callers get the
+	// id from a tenant-scoped project or template lookup.
+	// The profile's steps no longer match the library workflow they came from.
+	MarkSettingsProfileWorkflowEdited(ctx context.Context, id int64) error
 	// The owner closes the organization: from now on no member can use it, and
 	// tenantdelete removes its data in the background. Its domain is freed at
 	// once, so a new organization for it can be created meanwhile.
@@ -2177,9 +2337,25 @@ type Querier interface {
 	// here covers the SOURCE dashboard only; the destination is resolved and
 	// checked by the handler (dashboardFor + mayWrite) before this runs.
 	MoveDashboardChart(ctx context.Context, arg MoveDashboardChartParams) (int64, error)
+	// Internal: the caller has checked the job in the tenant. Moves a translation
+	// onto the segment a split or join made (or back onto the shared segment) and
+	// sets its text. The source changed, so a QE verdict and a TM score no longer
+	// apply and the row needs review. Matches nothing when the row changed since
+	// @expected_updated_at, is locked, is being pre-translated or another user
+	// holds it.
+	MoveEditedTranslation(ctx context.Context, arg MoveEditedTranslationParams) (Translation, error)
 	MovePinnedChart(ctx context.Context, arg MovePinnedChartParams) (int64, error)
+	// Internal: a join moves the comments of the row it removes to the row it
+	// keeps, each labelled with the number of the row it was written on.
+	MoveSegmentComments(ctx context.Context, arg MoveSegmentCommentsParams) error
 	// A tab holds one segment at a time: taking a new one drops the tab's others.
 	MoveTabHold(ctx context.Context, arg MoveTabHoldParams) error
+	// Internal: a join moves the history of the row it removes to the row it
+	// keeps. Each event keeps the number of the row it happened on, the
+	// translation it was written for and that row's source words and
+	// characters, so metrics of past periods do not change; values an earlier
+	// split or join stored stay.
+	MoveTranslationHistory(ctx context.Context, arg MoveTranslationHistoryParams) error
 	// Internal: caller must have tenant-verified the job. One row per translation
 	// of the step's job for the assignment's current round, recording the
 	// predict_outcome the round starts with.
@@ -2232,6 +2408,10 @@ type Querier interface {
 	PurgeDeletedProjectSegmentBatch(ctx context.Context, arg PurgeDeletedProjectSegmentBatchParams) (int64, error)
 	// Internal: projectdelete. Up to @lim AI usage events of a deleted project.
 	PurgeDeletedProjectUsageBatch(ctx context.Context, arg PurgeDeletedProjectUsageBatchParams) (int64, error)
+	// Internal: the caller soft-deletes @issue_id. Its card waits for the sweep
+	// besides its refresh, so a refresh that read the issue before the delete
+	// cannot leave the issue's text in Slack.
+	QueueIssueSlackBlank(ctx context.Context, issueID int64) error
 	ReactivateUser(ctx context.Context, id int64) (User, error)
 	// Internal: the ids come from ListJobTranslationsByIDs (tenant-scoped job).
 	// Puts machine-approved rows back to auto_approved, each only while it is
@@ -2319,6 +2499,9 @@ type Querier interface {
 	RenameFileTenant(ctx context.Context, arg RenameFileTenantParams) (File, error)
 	RenamePinnedDashboard(ctx context.Context, arg RenamePinnedDashboardParams) (int64, error)
 	RenameTMCollection(ctx context.Context, arg RenameTMCollectionParams) (TmCollection, error)
+	// Internal: numbers one job's language rows at @position 0, 1, 2… in their
+	// order (sub-position, then the order they were made).
+	RenumberLanguageRows(ctx context.Context, arg RenumberLanguageRowsParams) error
 	// Puts a completed task back in progress. Refuses (0 rows) when the task is no
 	// longer completed or another task of the job is already in progress, so a job
 	// never has two tasks in progress.
@@ -2343,6 +2526,8 @@ type Querier interface {
 	// @id. The duplicates of an issue that becomes a duplicate itself follow it to
 	// @original_id, so no duplicate points at another duplicate.
 	RepointDuplicates(ctx context.Context, arg RepointDuplicatesParams) ([]int64, error)
+	// Whether the user has an issue in the org that is not deleted.
+	ReporterHasIssue(ctx context.Context, arg ReporterHasIssueParams) (bool, error)
 	// Cooperative stop: flags a RUNNING job (same predicate as ClaimJobPipeline,
 	// the SQL twin of pipeline.IsPipelineRunning) that has no pending request, and
 	// reports whether the run it flagged was already stale — a row untouched for
@@ -2361,6 +2546,11 @@ type Querier interface {
 	//
 	// Tenant scoping happens in the handler via GetJobTenant before this by-ID write.
 	RequestJobStop(ctx context.Context, id int64) (bool, error)
+	// A workflow edit put a different step at this position: the tasks still
+	// waiting on it take the new step's default assignee, NULL included. Only
+	// pending tasks are touched; a position with any other task is locked and
+	// never changes its step. Tenant-scoped like ReassignInFlightStepAssignments.
+	ReseedWaitingStepAssignments(ctx context.Context, arg ReseedWaitingStepAssignmentsParams) error
 	// Swaps in a new token and expiry, but only while the invite is pending and
 	// still holds the token the caller read, so of two concurrent resends one wins.
 	ResendInvite(ctx context.Context, arg ResendInviteParams) (Invite, error)
@@ -2392,11 +2582,16 @@ type Querier interface {
 	// ClaimJobPipeline.
 	// Undo an eager ClaimJobPipeline after a pre-flight 400 (no work actually
 	// ran): put back what the claim replaced — status, step, error_message (the
-	// claim nulled it — a previously-failed job must keep its explanation) and
-	// updated_at, so a dead run's job stays reclaimable. Conditional on the
+	// claim nulled it — a previously-failed job must keep its explanation), the
+	// progress counts (also nulled) and updated_at, so a dead run's job stays
+	// reclaimable. Conditional on the
 	// claim's own step so a concurrent writer (worker enqueue, feedback
 	// completion) that moved the job since the claim is never clobbered.
 	RestoreJobPipelineState(ctx context.Context, arg RestoreJobPipelineStateParams) error
+	// Internal: the caller loaded the job tenant-scoped before queueing it.
+	// Puts back the progress counts queueing cleared when the queue then refused
+	// the task, so nothing ran.
+	RestoreJobProgress(ctx context.Context, arg RestoreJobProgressParams) error
 	// Internal: caller must have tenant-verified the job. A reopened step looks as
 	// its last closed round left it: status, confirmed_via and the edit mark come
 	// back. Text a later step rewrote comes back unconfirmed and marked edited, so
@@ -2494,12 +2689,23 @@ type Querier interface {
 	// Pre-translation profiles always fill in MT on upload; the step-replace
 	// path switches it on with the workflow.
 	SetSettingsProfileMtOnUpload(ctx context.Context, arg SetSettingsProfileMtOnUploadParams) error
+	// Internal: callers pass the settings profile id of a project or template
+	// they read with its tenant. The segmentation profile the row's uploads are
+	// split with; separate from UpdateSettingsProfile for the same reason as
+	// SetSettingsProfileTMProfile. It stores only a built-in or a live org
+	// profile, holding a share lock on the profile row until the caller commits,
+	// so a delete either waits and then clears a project row or refuses a
+	// template row, or runs first and this write stores nothing (no row
+	// returned).
+	SetSettingsProfileSegmentationProfile(ctx context.Context, arg SetSettingsProfileSegmentationProfileParams) (SettingsProfile, error)
 	// Links (or, with NULL, unlinks) a settings row to a TM profile. Separate from
 	// UpdateSettingsProfile on purpose: a nullable FK cannot be nil-keeps-stored,
 	// and that query's struct-literal callers would all have to learn the field.
 	SetSettingsProfileTMProfile(ctx context.Context, arg SetSettingsProfileTMProfileParams) (SettingsProfile, error)
+	// Internal: keyed by settings_profile_id with no tenant filter; callers get the
+	// id from a tenant-scoped project or template lookup.
 	// Stamps which library workflow a profile's steps were copied from
-	// (provenance). NULL clears it.
+	// (provenance), and whether they were edited since. NULL clears it.
 	SetSettingsProfileWorkflow(ctx context.Context, arg SetSettingsProfileWorkflowParams) error
 	SetTemplateLabel(ctx context.Context, arg SetTemplateLabelParams) error
 	SetTenantDomain(ctx context.Context, arg SetTenantDomainParams) error
@@ -2525,6 +2731,11 @@ type Querier interface {
 	// EXISTS (semi-join): a base with multiple matching assignment rows must not
 	// multiply concordance hits (see LookupSettingsTerms). No priority needed here.
 	SettingsTermConcordanceSearch(ctx context.Context, arg SettingsTermConcordanceSearchParams) ([]SettingsTermConcordanceSearchRow, error)
+	// Internal: before a split or join moves a translation to another segment,
+	// its history keeps the source words and characters of the segment it was
+	// written for, so metrics of past periods do not change; values an earlier
+	// split or join stored stay.
+	SnapshotHistoryCounts(ctx context.Context, translationID int64) error
 	SoftDeleteAIEngine(ctx context.Context, arg SoftDeleteAIEngineParams) error
 	SoftDeleteAIRouter(ctx context.Context, arg SoftDeleteAIRouterParams) error
 	// Soft delete. A user deletes their own comments; AI
@@ -2560,6 +2771,7 @@ type Querier interface {
 	SoftDeleteMemberIssue(ctx context.Context, arg SoftDeleteMemberIssueParams) (int64, error)
 	SoftDeletePinnedDashboard(ctx context.Context, arg SoftDeletePinnedDashboardParams) error
 	SoftDeleteQAProfile(ctx context.Context, arg SoftDeleteQAProfileParams) error
+	SoftDeleteSegmentationProfile(ctx context.Context, arg SoftDeleteSegmentationProfileParams) (int64, error)
 	// Marks every live SHARED dashboard for a tenant deleted.
 	// Personal ones are untouched: a reset of what the org sees must not reach into
 	// anyone's private workspace. Their charts and share links go dark with them,
@@ -2585,7 +2797,8 @@ type Querier interface {
 	SoftDeleteWorkflow(ctx context.Context, arg SoftDeleteWorkflowParams) error
 	// Worker-side start transition. Refuses (0 rows) when a stop was requested
 	// while the task sat in the queue: the handler then marks the job stopped and
-	// returns nil, so asynq does not retry it.
+	// returns nil, so asynq does not retry it. A run starts without progress
+	// counts, so the counter never shows the last run's numbers.
 	StartJobRun(ctx context.Context, arg StartJobRunParams) (int64, error)
 	// Internal: caller must have tenant-verified the job (AdvanceJob).
 	// Starts the step a hand-off moves the job onto. assigned_to is the person
@@ -2671,6 +2884,10 @@ type Querier interface {
 	// gate before calling — this predicate only keeps the write tenant-scoped.
 	UpdateDashboardFilters(ctx context.Context, arg UpdateDashboardFiltersParams) (int64, error)
 	UpdateFileSegmentCount(ctx context.Context, arg UpdateFileSegmentCountParams) error
+	// A draft file's segmentation snapshot, resolved again at publish when the
+	// draft's source language changed after the upload. Tenant-scoped through the
+	// file's project.
+	UpdateFileSegmentation(ctx context.Context, arg UpdateFileSegmentationParams) (File, error)
 	// Tenant-scoped through the file's project.
 	UpdateFileXLSXLayout(ctx context.Context, arg UpdateFileXLSXLayoutParams) (File, error)
 	// Internal: callers load and lock the issue first. A visible entry: bumps
@@ -2693,6 +2910,8 @@ type Querier interface {
 	// a pending stop request is stale there too. The worker's start transition is
 	// StartJobRun instead, which must NOT clear it (a stop requested while the
 	// task sat in the queue has to be honoured at pickup).
+	// Queueing a run clears the progress counts, so a waiting job reads as queued
+	// and not as the last run's "Translating N / M".
 	UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) error
 	UpdateMTEngine(ctx context.Context, arg UpdateMTEngineParams) (MtEngine, error)
 	UpdateMTRouter(ctx context.Context, arg UpdateMTRouterParams) (MtRouter, error)
@@ -2719,6 +2938,10 @@ type Querier interface {
 	// so a separate clear-flag isn't worth its weight.
 	UpdateProjectMetadata(ctx context.Context, arg UpdateProjectMetadataParams) (Project, error)
 	UpdateQAProfile(ctx context.Context, arg UpdateQAProfileParams) (QaProfile, error)
+	UpdateQARegexRule(ctx context.Context, arg UpdateQARegexRuleParams) (QaRule, error)
+	// Full replace, only while updated_at still equals @expected_updated_at: a
+	// mismatch (someone saved in between) returns no row.
+	UpdateSegmentationProfile(ctx context.Context, arg UpdateSegmentationProfileParams) (int64, error)
 	// The penalty columns are nil-keeps-stored (sqlc.narg + COALESCE), not
 	// full-replace like the fields above: a zero-valued struct literal must not
 	// reset them — with 0 meaning "locales are equivalent", that would quietly
@@ -2728,6 +2951,7 @@ type Querier interface {
 	// that omits it would silently switch auto-completion off.
 	// tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
 	// inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
+	// linguist_terms is nil-keeps-stored like tm_lookup_order.
 	UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsProfileParams) (SettingsProfile, error)
 	// Update a workflow step IN PLACE (keeps its id). Used by the diff-based
 	// workflow editor so that steps kept across an edit retain their id and thus
@@ -2900,6 +3124,8 @@ type Querier interface {
 	// UpsertQAResult for many rows at once; (translation_id, check_type) pairs
 	// must be unique within one call.
 	UpsertQAResults(ctx context.Context, arg UpsertQAResultsParams) error
+	// Built-in check types only: a regex rule has no natural key and is written by
+	// CreateQARegexRule / UpdateQARegexRule.
 	UpsertQARule(ctx context.Context, arg UpsertQARuleParams) (QaRule, error)
 	// UpsertTMPipelineEntry for many entries of ONE TM in one statement, plus
 	// the history snapshot of every entry whose target it changes (what

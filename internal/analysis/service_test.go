@@ -15,8 +15,10 @@ import (
 //   - Each band's boundary lands segments in the right column.
 //   - auto_approved metrics are a SUBSET of the band totals (a single
 //     auto-approved segment increments BOTH columns, never just the subset).
-//   - LEFT JOIN handling: a segment with NO translation row counts as `new`
-//     and does NOT contribute to any `_auto_approved` column.
+//   - An untranslated row counts as `new` and does NOT contribute to any
+//     `_auto_approved` column; a segment with no translation in the job's
+//     language (a shared row a split replaced) is not a row of the job and
+//     counts nowhere.
 //   - Status transitions: pending → running → completed; on tenant mismatch,
 //     pending → failed with error_message populated.
 //
@@ -45,25 +47,28 @@ func TestAnalysisWorker_BandBoundariesAndAutoApprovedSubset(t *testing.T) {
 	//   seg 5: TM 84  + needs_review  (top of low fuzzy band)
 	//   seg 6: TM 65  + needs_review  (bottom of low fuzzy band)
 	//   seg 7: TM 64  + needs_review  (just under threshold → 'new' band)
-	//   seg 8: NO translation row     (LEFT JOIN → 'new' band, NOT in subset)
+	//   seg 8: untranslated           ('new' band, NOT in subset)
 	//   seg 9: TM 101 + approved      (in-context exact → 'tm_101' band)
+	//   seg 10: no row in 'de'        (not a row of the job: counted nowhere)
 	type segSpec struct {
 		text         string
-		matchPct     *int16 // nil → no translation row
+		matchPct     *int16 // nil → an untranslated row
 		status       db.TranslationStatus
 		origin       db.NullTranslationOrigin
 		autoApproved bool
+		noRow        bool
 	}
 	specs := []segSpec{
-		{"alpha bravo charlie delta echo", ptr.To[int16](100), db.TranslationStatusAutoApproved, tmOrigin(), true},
-		{"foxtrot golf hotel india juliet", ptr.To[int16](100), db.TranslationStatusNeedsReview, tmOrigin(), false},
-		{"kilo lima mike november oscar", ptr.To[int16](99), db.TranslationStatusAutoApproved, tmOrigin(), true},
-		{"papa quebec romeo sierra tango", ptr.To[int16](85), db.TranslationStatusNeedsReview, tmOrigin(), false},
-		{"uniform victor whiskey xray yankee", ptr.To[int16](84), db.TranslationStatusNeedsReview, tmOrigin(), false},
-		{"zulu one two three four", ptr.To[int16](65), db.TranslationStatusNeedsReview, tmOrigin(), false},
-		{"five six seven eight nine", ptr.To[int16](64), db.TranslationStatusNeedsReview, tmOrigin(), false},
-		{"ten eleven twelve thirteen fourteen", nil, "", db.NullTranslationOrigin{}, false},
-		{"context match alpha beta gamma", ptr.To[int16](101), db.TranslationStatusApproved, tmOrigin(), false},
+		{"alpha bravo charlie delta echo", ptr.To[int16](100), db.TranslationStatusAutoApproved, tmOrigin(), true, false},
+		{"foxtrot golf hotel india juliet", ptr.To[int16](100), db.TranslationStatusNeedsReview, tmOrigin(), false, false},
+		{"kilo lima mike november oscar", ptr.To[int16](99), db.TranslationStatusAutoApproved, tmOrigin(), true, false},
+		{"papa quebec romeo sierra tango", ptr.To[int16](85), db.TranslationStatusNeedsReview, tmOrigin(), false, false},
+		{"uniform victor whiskey xray yankee", ptr.To[int16](84), db.TranslationStatusNeedsReview, tmOrigin(), false, false},
+		{"zulu one two three four", ptr.To[int16](65), db.TranslationStatusNeedsReview, tmOrigin(), false, false},
+		{"five six seven eight nine", ptr.To[int16](64), db.TranslationStatusNeedsReview, tmOrigin(), false, false},
+		{"ten eleven twelve thirteen fourteen", nil, "", db.NullTranslationOrigin{}, false, false},
+		{"context match alpha beta gamma", ptr.To[int16](101), db.TranslationStatusApproved, tmOrigin(), false, false},
+		{"replaced by a split piece here", nil, "", db.NullTranslationOrigin{}, false, true},
 	}
 
 	for i, sp := range specs {
@@ -73,7 +78,11 @@ func TestAnalysisWorker_BandBoundariesAndAutoApprovedSubset(t *testing.T) {
 		if _, err := pool.Exec(ctx, `UPDATE segments SET word_count = 5 WHERE id = $1`, seg.ID); err != nil {
 			t.Fatalf("set word_count: %v", err)
 		}
-		if sp.matchPct != nil {
+		switch {
+		case sp.noRow:
+		case sp.matchPct == nil:
+			testutil.SeedTranslation(t, q, seg.ID, "de", db.TranslationStatusNeedsReview)
+		default:
 			_, err := pool.Exec(ctx, `
 				INSERT INTO translations (segment_id, target_language, status, origin, tm_match_percent)
 				VALUES ($1, 'de', $2, $3, $4)`,
@@ -216,8 +225,8 @@ func TestAnalysisWorker_RepetitionsSubtractBand(t *testing.T) {
 			t.Fatalf("set word_count: %v", err)
 		}
 	}
-	// Both shared occurrences are TM-100 auto_approved; the unique one has no
-	// translation row (LEFT JOIN → new).
+	// Both shared occurrences are TM-100 auto_approved; the unique one is
+	// untranslated (new).
 	for _, segID := range []int64{segA.ID, segB.ID} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO translations (segment_id, target_language, status, origin, tm_match_percent)
@@ -225,6 +234,7 @@ func TestAnalysisWorker_RepetitionsSubtractBand(t *testing.T) {
 			t.Fatalf("seed translation: %v", err)
 		}
 	}
+	testutil.SeedTranslation(t, q, segUnique.ID, "de", db.TranslationStatusNeedsReview)
 
 	a, err := q.InsertAnalysis(ctx, db.InsertAnalysisParams{
 		TenantID:         tenant.ID,

@@ -1,25 +1,20 @@
-// Workflow tab shared by ProjectDetail and TemplateDetail:
-// one card holding the picker and, under it, the steps it produced, read-only.
-// A template also gets the mode toggle; a created project does not — the
-// server refuses the switch after setup, so a Raw MT project stays locked.
-// The same shape the New project wizard uses — the steps of a project or
-// template come from the Workflows library and are changed by picking a
-// different workflow, never edited in place.
+// Workflow tab shared by ProjectDetail and TemplateDetail: one card holding
+// the library picker and, under it, the steps.
 //
-// A project's deadlines are the exception, because they are scheduling rather
-// than part of the workflow's identity: each step's date
-// sits at the right of its own row and is editable here. A template has no
-// deadlines, so it gets the plain chips.
-import { useEffect, useRef, useState } from 'react'
+// A project's steps are shown with their deadlines and change through Edit
+// steps (ProjectWorkflowSteps): the steps its jobs have reached are locked,
+// the rest can change, and each step's deadline sits at the right of its row. A template's steps come from the library and
+// change only by picking another workflow; a template also gets the mode
+// toggle. A created Raw MT project keeps the built-in step, read-only — the
+// server refuses the switch after setup.
+import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { listWorkflows } from '../../api'
+import { listWorkflows, type WorkflowPreview } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
-import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
-import { DRAFT_SAVE_DELAY_MS } from '../../hooks/useProjectDraft'
-import { sameWorkflowSteps, workflowMode } from '../../lib/workflow-steps'
+import { workflowMode } from '../../lib/workflow-steps'
 import type { WorkflowStep } from '../WorkflowStepsEditor'
-import { WorkflowStepsWithDeadlines } from './WorkflowDeadlines'
+import { ProjectWorkflowSteps } from './ProjectWorkflowSteps'
 import { WorkflowPicker } from './WorkflowPicker'
 import { WorkflowStepChips } from './WorkflowStepChips'
 import { PretranslateWorkflowIcon, WorkflowModeToggle } from './WorkflowModeToggle'
@@ -30,9 +25,11 @@ interface Props {
   steps: WorkflowStep[]
   workflowId: number | null | undefined
   workflowName: string | null | undefined
-  /** Project context: only decides how the picker words its help text. */
+  /** The steps were changed after the workflow was applied. */
+  workflowEdited?: boolean
+  /** Project context: the steps are edited in place. */
   sourceLang?: string
-  /** A project's target languages — enables the per-language deadline rows. */
+  /** A project's target languages — the assignee filter and the per-language deadline rows. */
   targetLangs?: string[]
   /** The MT router and whether MT runs on upload, for the Pre-translation row. */
   mtRouterName?: string | null
@@ -40,80 +37,22 @@ interface Props {
   /** Takes the user to the MT router picker (it is on the Settings tab). */
   onPickRouter?: () => void
   onApplyWorkflow: (workflowId: number) => Promise<void>
-  /** Persists a deadline edit. Absent for a template, which has no deadlines. */
+  /** A project's step writes: the save, its preview and a re-read after a
+   *  refused one. Absent for a template. */
   onSaveSteps?: (steps: WorkflowStep[]) => Promise<void>
+  onPreviewSteps?: (steps: WorkflowStep[]) => Promise<WorkflowPreview>
+  onRefresh?: () => void
   /** Extra sentence in the "use this workflow" confirmation — projects mention in-flight jobs. */
   applyWarning?: string
 }
 
 export function WorkflowTab({
-  steps, workflowId, workflowName, sourceLang, targetLangs, onApplyWorkflow, onSaveSteps, applyWarning, mtRouterName, mtOnUpload, onPickRouter,
+  steps, workflowId, workflowName, workflowEdited, sourceLang, targetLangs, onApplyWorkflow, onSaveSteps, onPreviewSteps, onRefresh,
+  applyWarning, mtRouterName, mtOnUpload, onPickRouter,
 }: Props) {
   const { data: workflows } = useQuery({ queryKey: queryKeys.workflows.all, queryFn: listWorkflows })
   const isProject = !!sourceLang
-  const schedulable = isProject && !!onSaveSteps
-
-  // Deadlines autosave. The draft holds what the fields show until the save
-  // lands and the refetched steps take over; a debounce keeps a typed date
-  // from re-dating the project's live jobs once per keystroke.
-  const [deadlineDraft, setDeadlineDraft] = useState<WorkflowStep[] | null>(null)
-  const [savingDeadlines, setSavingDeadlines] = useState(false)
-  // True from the edit until its save resolves. The steps-changed effect below
-  // reads it so an unrelated refetch mid-edit cannot throw the draft away.
-  const unsavedRef = useRef(false)
-  // The save is a full-replace PUT, so two in flight at once can land out of
-  // order and resurrect an older list. Chain them instead.
-  const inFlightRef = useRef<Promise<void>>(Promise.resolve())
-
-  const saveDeadlines = useDebouncedCallback((next: WorkflowStep[]) => {
-    inFlightRef.current = inFlightRef.current.then(async () => {
-      setSavingDeadlines(true)
-      try {
-        await onSaveSteps?.(next)
-        unsavedRef.current = false
-        // One id for every autosave, so editing several steps in a row replaces
-        // the same toast instead of stacking one per save.
-        toast.success('Deadlines saved', { id: 'workflow-deadlines-saved' })
-      } catch (err) {
-        // Drop the draft so the fields snap back to what is actually stored,
-        // rather than showing a date the server rejected as if it were saved.
-        unsavedRef.current = false
-        setDeadlineDraft(null)
-        toast.error(errorText(err, 'Deadlines not saved'))
-      } finally {
-        setSavingDeadlines(false)
-      }
-    })
-  }, DRAFT_SAVE_DELAY_MS)
-
-  const changeDeadlines = (next: WorkflowStep[]) => {
-    setDeadlineDraft(next)
-    // The list reports itself on mount and after every sync, and adding a
-    // blank override row changes nothing that gets sent. Only a real
-    // difference is worth a request.
-    if (sameWorkflowSteps(next, steps)) {
-      unsavedRef.current = false
-      saveDeadlines.cancel()
-      return
-    }
-    unsavedRef.current = true
-    saveDeadlines(next)
-  }
-
-  // Leaving the tab mid-debounce must not lose the last edit.
-  useEffect(() => () => saveDeadlines.flush(), [saveDeadlines])
-
-  // A pending draft is a whole step list, so keeping it after the steps
-  // themselves changed underneath (a workflow applied) would send back the list
-  // as it was and undo that change. Drop the draft instead — unless it is an
-  // edit still on its way to the server.
-  const prevStepsRef = useRef(steps)
-  useEffect(() => {
-    if (steps !== prevStepsRef.current) {
-      prevStepsRef.current = steps
-      if (!unsavedRef.current) setDeadlineDraft(null)
-    }
-  }, [steps])
+  const [stepsDraftOpen, setStepsDraftOpen] = useState(false)
 
   const applyWorkflow = async (id: number) => {
     try {
@@ -142,19 +81,18 @@ export function WorkflowTab({
   const pretranslation = mtOnUpload && mtRouterName && !rawMT
     ? <MTRouterLink mtRouterName={mtRouterName} onPickRouter={onPickRouter} />
     : undefined
-  const stepRows = schedulable ? (
-    <WorkflowStepsWithDeadlines
-      steps={deadlineDraft ?? steps}
-      targetLanguages={targetLangs ?? []}
-      onChange={changeDeadlines}
+  const editable = isProject && !rawMT && onSaveSteps && onPreviewSteps
+  const stepRows = editable ? (
+    <ProjectWorkflowSteps
+      steps={steps}
+      sourceLang={sourceLang}
+      targetLangs={targetLangs ?? []}
       pretranslation={pretranslation}
-    >
-      {savingDeadlines && (
-        <p className="pt-3 text-xs text-gray-500 dark:text-gray-400" data-testid="workflow-deadlines-saving">
-          Saving…
-        </p>
-      )}
-    </WorkflowStepsWithDeadlines>
+      onSave={onSaveSteps}
+      onPreview={onPreviewSteps}
+      onRefresh={() => onRefresh?.()}
+      onDraftOpen={setStepsDraftOpen}
+    />
   ) : (
     <WorkflowStepChips steps={steps} pretranslation={pretranslation} />
   )
@@ -170,6 +108,9 @@ export function WorkflowTab({
           workflows={library}
           value={workflowId ?? null}
           valueName={workflowName}
+          edited={workflowEdited}
+          disabled={stepsDraftOpen}
+          disabledReason={stepsDraftOpen ? 'Save or discard your changes to the steps first.' : undefined}
           valueIcon={rawMT ? <PretranslateWorkflowIcon /> : undefined}
           locked={rawMT}
           heading={heading}

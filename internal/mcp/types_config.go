@@ -62,6 +62,8 @@ type configTools interface {
 	UpdateQAProfile(ctx context.Context, in UpdateQAProfileIn) (QAProfileDetail, error)
 	PreviewUpsertQARules(ctx context.Context, in UpsertQARulesIn) (Preview, error)
 	UpsertQARules(ctx context.Context, in UpsertQARulesIn) (QAProfileDetail, error)
+	PreviewDeleteQARule(ctx context.Context, in DeleteQARuleIn) (Preview, error)
+	DeleteQARule(ctx context.Context, in DeleteQARuleIn) (QAProfileDetail, error)
 	PreviewDeleteQAProfile(ctx context.Context, in DeleteQAProfileIn) (Preview, error)
 	DeleteQAProfile(ctx context.Context, in DeleteQAProfileIn) (DeletedConfig, error)
 }

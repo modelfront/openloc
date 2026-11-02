@@ -46,12 +46,23 @@ func Encode(rich string) (string, *Table) {
 // assigned to tags it has seen. This is how a segment's source and target end
 // up speaking the same chip vocabulary.
 func EncodeWith(t *Table, rich string) string {
+	return encode(t, rich, func(s string) string { return s })
+}
+
+// EncodeVisible is EncodeWith with the XML escaping of the text undone, so the
+// result reads as the editor shows the segment: "Tom & Jerry <1>here</1>".
+// For matching only; Decode cannot turn it back into rich text.
+func EncodeVisible(t *Table, rich string) string {
+	return encode(t, rich, decodeEntities)
+}
+
+func encode(t *Table, rich string, text func(string) string) string {
 	if rich == "" {
 		return ""
 	}
 	tags := Tags(rich)
 	if len(tags) == 0 {
-		return rich
+		return text(rich)
 	}
 	t.literal += textRuns(rich)
 
@@ -74,11 +85,11 @@ func EncodeWith(t *Table, rich string) string {
 	b.Grow(len(rich))
 	pos := 0
 	for _, tg := range tags {
-		b.WriteString(rich[pos:tg.Start])
+		b.WriteString(text(rich[pos:tg.Start]))
 		b.WriteString(t.byKey[tagIdentity(tg)])
 		pos = tg.End
 	}
-	b.WriteString(rich[pos:])
+	b.WriteString(text(rich[pos:]))
 	return b.String()
 }
 

@@ -17,10 +17,12 @@ import (
 	"openloc/internal/file"
 	"openloc/internal/issues"
 	"openloc/internal/langcode"
+	"openloc/internal/llmdebug"
 	"openloc/internal/mtengine"
 	"openloc/internal/productdocs"
 	"openloc/internal/ptr"
 	"openloc/internal/qa"
+	"openloc/internal/segmentedit"
 	"openloc/internal/stepround"
 	"openloc/internal/terminology"
 )
@@ -86,6 +88,9 @@ type directBackend struct {
 	// read a provider engine's catalog. Optional: without it a router saves
 	// without the language check, same as an engine whose key is unreadable.
 	dec mtengine.Decryptor
+	// llmLog is the captured AI provider calls (WireLLMLog). Optional: the log
+	// tools answer that there is no log when it is nil.
+	llmLog llmdebug.Snapshotter
 }
 
 // NewDirectBackend builds the in-process Backend implementation.
@@ -105,6 +110,9 @@ func NewDirectBackendWithPool(q db.Querier, pool *pgxpool.Pool, docs *productdoc
 // tenant" — the MCP layer turns it into one message, so a caller can't probe
 // for the existence of other tenants' data.
 var errNotFound = errors.New("not found")
+
+// notFoundText is what the caller sees for errNotFound.
+const notFoundText = "not found, or not accessible with your current access"
 
 // scope pulls the caller's tenant and user from the auth claims that
 // auth.Middleware placed in the request context. The MCP SDK propagates request
@@ -332,6 +340,8 @@ func (b *directBackend) ListSegments(ctx context.Context, in ListSegmentsIn) (Se
 			TranslationID: r.TranslationID,
 			SegmentID:     r.SegmentID,
 			Position:      r.Position,
+			SubPosition:   r.SubPosition,
+			Number:        segmentedit.Number(r.Position, r.SubPosition),
 			SourceText:    r.SourceText,
 			TargetText:    ptr.Deref(r.TargetText),
 			Status:        string(r.Status),

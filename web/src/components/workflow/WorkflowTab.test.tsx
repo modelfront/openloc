@@ -1,15 +1,6 @@
-// The Workflow tab's deadline autosave.
-//
-// Steps themselves are library-only; deadlines are the one
-// thing still editable here, and they save with no button. What that has to get
-// right, and what these pin:
-//   - An edit that nets to no change must NOT write — a blank override row
-//     added and removed sends the same list back, and writing it would re-date
-//     the project's live jobs for nothing.
-//   - One write per settled edit, after the debounce, not one per keystroke.
-//   - Leaving mid-debounce still saves.
-//   - A rejected save drops the draft, so the field shows what is stored rather
-//     than a date the server refused.
+// The Workflow tab: the mode toggle a template gets, the Pre-translation row,
+// and the workflow picker shut while a project's steps are being edited (the
+// editing itself: ProjectWorkflowSteps.test.tsx).
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react'
@@ -18,7 +9,6 @@ import { MemoryRouter } from 'react-router-dom'
 import type { ComponentProps } from 'react'
 import { WorkflowTab } from './WorkflowTab'
 import type { WorkflowStep } from '../WorkflowStepsEditor'
-import { pickDeadline, PICKER_FLOW_TIMEOUT } from '@/test/deadline-picker'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -55,70 +45,6 @@ function renderTab(props: Partial<ComponentProps<typeof WorkflowTab>> = {}, work
   return { rerender: (p: Partial<ComponentProps<typeof WorkflowTab>>) => rerender(ui(p)) }
 }
 
-function setup(onSaveSteps = vi.fn().mockResolvedValue(undefined)) {
-  renderTab({ sourceLang: 'en', targetLangs: ['de', 'fr'], onSaveSteps })
-  return onSaveSteps
-}
-
-/** Set the step's deadline through its picker: "yyyy-MM-ddTHH:mm", in the browser's zone. */
-function setDeadline(value: string) {
-  const [day, time] = value.split('T')
-  pickDeadline('workflow-deadline-input-0', day, time)
-}
-
-describe('WorkflowTab deadline autosave', () => {
-  it('does not write when an edit nets to no change', async () => {
-    const onSaveSteps = setup()
-    // Opening the per-language section seeds a blank override row; removing it
-    // reports a list identical to the stored one.
-    act(() => { fireEvent.click(screen.getByTestId('workflow-deadline-langs-toggle-0')) })
-    act(() => { fireEvent.click(screen.getByTestId('workflow-deadline-override-remove-0-0')) })
-    await act(async () => { vi.advanceTimersByTime(5000) })
-    expect(onSaveSteps, 'wrote a list identical to the stored one').not.toHaveBeenCalled()
-  })
-
-  it('writes once, after the debounce, for a settled edit', async () => {
-    const onSaveSteps = setup()
-    setDeadline('2027-03-15T12:00')
-    expect(onSaveSteps, 'wrote before the debounce elapsed').not.toHaveBeenCalled()
-
-    await act(async () => { vi.advanceTimersByTime(2000) })
-    expect(onSaveSteps).toHaveBeenCalledTimes(1)
-    expect(onSaveSteps.mock.calls[0][0][0].deadline).toContain('2027-03-15')
-  }, PICKER_FLOW_TIMEOUT)
-
-  it('collapses rapid edits into one write carrying the last value', async () => {
-    const onSaveSteps = setup()
-    setDeadline('2027-03-15T12:00')
-    setDeadline('2027-03-16T12:00')
-    setDeadline('2027-03-17T12:00')
-    await act(async () => { vi.advanceTimersByTime(2000) })
-    expect(onSaveSteps).toHaveBeenCalledTimes(1)
-    expect(onSaveSteps.mock.calls[0][0][0].deadline).toContain('2027-03-17')
-  }, PICKER_FLOW_TIMEOUT)
-
-  it('flushes a pending edit when the tab unmounts', async () => {
-    const onSaveSteps = setup()
-    setDeadline('2027-03-15T12:00')
-    expect(onSaveSteps).not.toHaveBeenCalled()
-    await act(async () => { cleanup() })
-    expect(onSaveSteps, 'the last edit was lost on unmount').toHaveBeenCalledTimes(1)
-  }, PICKER_FLOW_TIMEOUT)
-
-  it('drops the draft when the save is rejected, so the field stops showing a date the server refused', async () => {
-    const onSaveSteps = vi.fn().mockRejectedValue(new Error('nope'))
-    setup(onSaveSteps)
-    setDeadline('2027-03-15T12:00')
-    expect(screen.getByTestId('workflow-deadline-input-0'))
-      .toHaveAttribute('data-value', new Date('2027-03-15T12:00').toISOString())
-
-    await act(async () => { vi.advanceTimersByTime(2000) })
-    expect(onSaveSteps).toHaveBeenCalledTimes(1)
-    // Back to the stored list, which has no deadline.
-    expect(screen.getByTestId('workflow-deadline-input-0')).toHaveAttribute('data-value', '')
-  }, PICKER_FLOW_TIMEOUT)
-})
-
 describe('WorkflowTab mode toggle', () => {
   const library = [
     { id: 7, name: 'Standard', steps: [{ step_definition_id: 1, name: 'Translation', step_type: 'human' }] },
@@ -126,7 +52,7 @@ describe('WorkflowTab mode toggle', () => {
   ]
 
   it('is not offered on a project', () => {
-    setup()
+    renderTab({ sourceLang: 'en', targetLangs: ['de', 'fr'], onSaveSteps: vi.fn(), onPreviewSteps: vi.fn(), onRefresh: vi.fn() })
     expect(screen.queryByTestId('workflow-mode')).not.toBeInTheDocument()
   })
 
@@ -144,6 +70,19 @@ describe('WorkflowTab mode toggle', () => {
     // top of it would name it twice.
     expect(screen.queryByTestId('workflow-pretranslation')).not.toBeInTheDocument()
     expect(screen.getByTestId('workflow-step-badge-0')).toHaveTextContent('Pre-translation')
+  })
+
+  it("ends the picker's line with an icon that opens the chosen workflow in the library, in a new tab", () => {
+    renderTab({}, library)
+    const open = screen.getByTestId('workflow-open')
+    expect(open).toHaveAttribute('href', '/workflows?edit=7')
+    expect(open).toHaveAttribute('target', '_blank')
+    expect(open).toHaveAccessibleName('Open workflow (opens in a new tab)')
+  })
+
+  it('offers no open icon for a built-in workflow the library does not hold', () => {
+    renderTab({ steps: [pretranslateStep], workflowId: 99, workflowName: 'Pre-translation', sourceLang: 'en', targetLangs: ['de'], mtOnUpload: true, mtRouterName: 'Default MT router' }, library)
+    expect(screen.queryByTestId('workflow-open')).not.toBeInTheDocument()
   })
 
   it('heads a template workflow with the Pre-translation row while MT runs on upload', () => {
@@ -186,5 +125,17 @@ describe('WorkflowTab mode toggle', () => {
     expect(screen.getByTestId('workflow-mode-raw_mt')).toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByTestId('use-workflow-select')).not.toBeInTheDocument()
     expect(screen.getByTestId('raw-mt-router-link')).toHaveTextContent('Default MT router')
+  })
+})
+
+describe('WorkflowTab while project steps are edited', () => {
+  it('shuts the workflow picker and says why, so an applied workflow cannot hide under the draft', () => {
+    renderTab({ sourceLang: 'en', targetLangs: ['de'], onSaveSteps: vi.fn(), onPreviewSteps: vi.fn(), onRefresh: vi.fn() })
+    expect(screen.getByTestId('use-workflow-select')).toBeEnabled()
+    act(() => { fireEvent.click(screen.getByTestId('workflow-steps-edit')) })
+    expect(screen.getByTestId('use-workflow-select')).toBeDisabled()
+    expect(screen.getByTestId('workflow-picker-disabled-reason')).toHaveTextContent('Save or discard your changes')
+    act(() => { fireEvent.click(screen.getByTestId('workflow-steps-discard')) })
+    expect(screen.getByTestId('use-workflow-select')).toBeEnabled()
   })
 })

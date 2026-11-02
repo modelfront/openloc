@@ -65,6 +65,8 @@ test.describe("Phone layout", () => {
     await expect(current).toBeVisible();
     const right = await current.evaluate((el) => el.getBoundingClientRect().right);
     expect(right).toBeLessThanOrEqual(393);
+    // The menu its hover opened still closes on Escape.
     await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toBeHidden();
   });
 });

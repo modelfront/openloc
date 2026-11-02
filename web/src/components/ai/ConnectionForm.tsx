@@ -1,8 +1,9 @@
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import type { AIProviderId, AIConnection, AIConnectionInput, AIVendorExtension } from '../../api'
-import { Button } from '@/components/ui/button'
+import { Button, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { extensionSetting } from './vendor-catalog'
@@ -60,12 +61,17 @@ export function ConnectionForm({ provider, extension, initial, onSubmit, isPendi
 }) {
   const schema = z.object({ base_url: z.string() })
   const extSetting = extensionSetting(extension, 'base_url')
-  const { register, handleSubmit } = useForm<z.infer<typeof schema>>({
+  // An extension's endpoint starts at its manifest default; a blank one
+  // falls back to that default anyway.
+  const savedBaseURL = initial?.base_url || extSetting?.default || ''
+  const { register, handleSubmit, reset, formState: { isDirty } } = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    // An extension's endpoint starts at its manifest default; a blank one
-    // falls back to that default anyway.
-    defaultValues: { base_url: initial?.base_url || extSetting?.default || '' },
+    defaultValues: { base_url: savedBaseURL },
   })
+  // A save comes back as a new `initial`; the field is clean again.
+  useEffect(() => { reset({ base_url: savedBaseURL }) }, [savedBaseURL, reset])
+  // A saved connection has nothing to update until the field changes.
+  const unchanged = !!initial && !isDirty
   const hint = BASE_URL_HINT[provider] ?? { placeholder: extSetting?.default || 'https://…', help: '' }
 
   // `name` is deliberately absent from the payload. Blank means "keep the
@@ -96,7 +102,14 @@ export function ConnectionForm({ provider, extension, initial, onSubmit, isPendi
         <FormField label={extSetting?.label || 'Custom endpoint'} className="flex-1">
           <Input {...register('base_url')} placeholder={hint.placeholder} autoComplete="off" data-testid="ai-connection-base-url" />
         </FormField>
-        <Button type="submit" size="sm" className="h-input" disabled={isPending} data-testid="ai-connection-save">
+        <Button
+          type="submit"
+          size="sm"
+          className="h-input"
+          disabled={isPending || unchanged}
+          disabledReason={unchanged ? NOTHING_CHANGED_REASON : undefined}
+          data-testid="ai-connection-save"
+        >
           {isPending ? 'Saving…' : 'Update'}
         </Button>
       </div>

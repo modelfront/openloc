@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"openloc/internal/ai"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/errtrack"
+	"openloc/internal/httputil"
 	"openloc/internal/logging"
+	"openloc/internal/pipeline"
 )
 
 // ErrorHandler returns the asynq.ErrorHandler wired into the server in
@@ -21,7 +24,8 @@ import (
 // and Honeybadger counts every occurrence with no server-side dedup, against a
 // quota shared with every other service in the org. Transient attempts are
 // logged and left alone; the notice fires when retries are exhausted, or
-// immediately for a panic, which no retry will fix.
+// immediately for a panic, which no retry will fix. A failure the user fixes
+// (userFacing) is logged, never reported: the job already shows it to them.
 //
 // Deliberately no honeybadger.Monitor() in the task handlers themselves:
 // Monitor re-panics by design, asynq's own recovery converts that into an error
@@ -65,6 +69,13 @@ func reportTaskError(ctx context.Context, q db.Querier, t *asynq.Task, err error
 		return
 	}
 
+	// The user already sees this failure on the job, with what to fix; a
+	// notice is for our own faults.
+	if !isPanic && userFacing(err) {
+		logging.Warn(ctx, err, fmt.Sprintf("task %s failed for a reason the user fixes", t.Type()), "worker-task-failed-user")
+		return
+	}
+
 	// Terminal only: resolve the triggering user's email for the notice
 	// (user_email next to user_id in Honeybadger, matching the HTTP paths).
 	// Best-effort — a failed lookup drops the email, never the notice. GetUser
@@ -92,6 +103,28 @@ func reportTaskError(ctx context.Context, q db.Querier, t *asynq.Task, err error
 		Subsystem: "worker",
 		Event:     t.Type(),
 	})
+}
+
+// userFacing reports whether err is the user's to fix: a message for them
+// (missing configuration, an unsupported pair), an engine that cannot run, or
+// a vendor refusing their key, plan or request rate. A vendor outage is not:
+// it may be our integration.
+func userFacing(err error) bool {
+	if _, ok := httputil.AsClientError(err); ok {
+		return true
+	}
+	if _, ok := httputil.AsConflictError(err); ok {
+		return true
+	}
+	if _, ok := httputil.AsForbiddenError(err); ok {
+		return true
+	}
+	var unusable *pipeline.EngineUnusableError
+	if errors.As(err, &unusable) {
+		return true
+	}
+	var pe *ai.ProviderError
+	return errors.As(err, &pe) && pe.UserFixable()
 }
 
 // terminalFailure reports whether asynq is done with a task that returned err

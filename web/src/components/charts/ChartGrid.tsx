@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useSortableSensors } from '@/hooks/useSortableSensors'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { DragHandle } from '@/components/ui/drag-handle'
 
@@ -20,10 +21,7 @@ export function ChartGrid<T extends { id: number; title: string }>({ charts, can
   children: (chart: T) => ReactNode
 }) {
   const [order, setOrder] = useState<number[] | null>(null)
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
+  const sensors = useSortableSensors()
 
   const byId = new Map(charts.map(c => [c.id, c]))
   const known = (order ?? []).filter(id => byId.has(id))

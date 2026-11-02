@@ -3,7 +3,7 @@ title: "Your first project"
 summary: "Create a project, upload a file, pre-translate it, edit in the CAT editor and download the result."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-16
+updated_at: 2026-10-29
 sources:
   - web/src/components/SegmentFilterBar.tsx
   - web/src/pages/ProjectCreate.tsx
@@ -59,7 +59,7 @@ Open OpenLoc in your browser. Depending on how your organization is set up, you 
 
 1. Click **New project** in the top right.
 2. Choose **From scratch**. The form appears. **From template** fills it from a saved template instead — see [Start a project from a template](/docs/guides/templates#start-a-project-from-a-template).
-3. In the **Project settings** block, fill in the basics:
+3. At the top of the form, fill in the basics:
    - **Project name** — for example "My first project". **Deadline (optional)** sits next to it.
    - **Source language** — the language of your file.
    - **Target languages** — one or more languages you want. Each one becomes a job.
@@ -68,9 +68,9 @@ Open OpenLoc in your browser. Depending on how your organization is set up, you 
    - **Apply translation memory on start or upload** — reuse past translations first.
    - **Fill in machine translation on start or upload** — send the rest to machine translation.
    Both are on, and each stays locked until you tell its block where to work from. Leave them on.
-5. Under each checkbox, choose that source. In **Translation memory**, the **TM profile** dropdown starts empty: pick a shared profile, or **From scratch** for a list of memories that belongs to this project alone. The TM list and the match scoring appear once you pick. In **Machine translation**, pick your **MT router** if you have one. A warning beside it names any target language the router has no engine for ([details](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template)).
-6. The **Workflow** card decides which steps each job goes through. Keep the toggle on **Workflow**: the dropdown shows a workflow from your organization's library, and its steps are listed under it in order. A new organization has one workflow, **Default**, with the steps **Translation** and **Review**. Each step carries its deadline at the right of its row, with a globe beside it for a target language due on a different date; files you upload later inherit them ([Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines)). Once you have picked an MT router and left machine translation on, a **Pre-translation** row headed by the router's name opens the list; click the name to jump to the **Machine translation** card. **Raw MT** drops the dropdown and the steps for one automated **Pre-translation** step that machine-translates the file and completes the job by itself ([details](/docs/guides/workflows-and-tasks#pre-translate-only-with-no-linguist)); leave it for this lesson.
-7. Under **Files (optional)**, drag your file into the box or click it to browse. It uploads right away and appears in the list with its segment count. Leave **Run analysis on upload** checked.
+5. Under each checkbox, choose that source. In **Translation memory**, the **TM profile** dropdown starts empty: pick a shared profile, or **From scratch** for a list of memories that belongs to this project alone. The TM list and the match scoring appear once you pick. In **Machine translation**, pick your **MT router** if you have one. A warning beside it names any target language the router has no engine for ([details](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template)). Once a profile or router is picked, an icon after its dropdown opens it in a new tab.
+6. The **Workflow** card decides which steps each job goes through. Keep the toggle on **Workflow** and pick a workflow from your organization's library in the dropdown, which starts empty; its steps are then listed under it in order. An icon at the end of the line opens that workflow in the library. **Create project** needs a workflow: with none picked it frames the dropdown red and takes you to it. A new organization has one workflow, **Default**, with the steps **Translation** and **Review**. Each step carries its deadline at the right of its row, with a globe beside it for a target language due on a different date; files you upload later inherit them ([Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines)). Once you have picked an MT router and left machine translation on, a **Pre-translation** row headed by the router's name opens the list; click the name to jump to the **Machine translation** card. **Raw MT** drops the dropdown and the steps for one automated **Pre-translation** step that machine-translates the file and completes the job by itself ([details](/docs/guides/workflows-and-tasks#pre-translate-only-with-no-linguist)); leave it for this lesson.
+7. Under **Files (optional)**, drag your file into the box or click it to browse. It uploads right away and appears in the list with its segment count; once files exist the card is headed **Files (N)** with the total. Leave **Run analysis on upload** checked.
 8. Click **Create project**.
 
 The form saves itself as a draft while you fill it in — a grey **Draft** badge appears next to the title. If you leave the page, the draft waits in the **Projects** list (as **Untitled draft** if it has no name yet) and opens in the same form. See [Create a project](/docs/guides/projects-and-files#create-a-project).
@@ -99,13 +99,17 @@ On the **Tasks** tab, open the **Translation** section and click your file's row
 
 ![The CAT editor](assets/cat-editor.png)
 
-Each row has a status badge. The ones you see now are:
+Every row has a status. The status column, right after **Match**, marks a row that has moved on with an icon, and shows its name when you hover over it. The ones you see now are:
 
-- **Pretranslated** — filled by translation memory or machine translation, not checked by a person yet.
-- **Approved** — confirmed. Exact TM matches start here.
-- **Untranslated** — empty, because nothing matched and no MT router was set.
+- **Pretranslated** — filled by translation memory or machine translation, not checked by a person yet. No icon; the **Match** column says where the text came from.
+- **Approved** — confirmed, shown as a green check. Exact TM matches start here.
+- **Untranslated** — empty, because nothing matched and no MT router was set. No icon.
+
+A **Draft** shows a yellow pencil. The other statuses are in [Segment statuses](/docs/reference/segment-statuses).
 
 The status filters above the grid show in brackets how many segments have each status. On the right, the sidebar shows TM matches, terms and, under **QA findings**, the quality issues found on the active segment.
+
+If you open the editor while the pre-translation still runs, segments fill in as they arrive — see [Open the editor and find your way around](/docs/guides/cat-editor#open-the-editor-and-find-your-way-around).
 
 ## Step 5: Translate and confirm a segment
 
@@ -120,7 +124,7 @@ Repeat for a few rows. Some useful keys while you work:
 | Ctrl/Cmd+Enter | Confirm the segment and go to the next one |
 | Tab / Shift+Tab | Move to the next or previous segment without confirming |
 | Ctrl/Cmd+Shift+S | Copy the source text into the target |
-| Ctrl/Cmd+1 to 5 | Insert TM match 1 to 5 from the sidebar; it is saved as a **Draft** at once |
+| Ctrl/Cmd+1 to 5 | Insert TM match 1 to 5 from the sidebar; it is saved as a **Draft** at once, and an exact match is then approved |
 | Ctrl/Cmd+Z | Undo |
 | Escape | Stop editing this row |
 

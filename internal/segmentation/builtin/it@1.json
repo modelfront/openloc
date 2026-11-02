@@ -1,0 +1,82 @@
+{
+  "id": "builtin:it@1",
+  "name": "Italian",
+  "source_language": "it",
+  "description": "Italian abbreviations (Unicode CLDR, curated) and sentence-ending punctuation.",
+  "rule_set": {
+    "mode": "sentence",
+    "rules": [
+      {
+        "before": "(?:^|\\P{L})\\p{Ll}\\.",
+        "after": "",
+        "break": false
+      },
+      {
+        "before": "[.!?…][\\p{Pe}\\p{Pf}\"']*",
+        "after": "[\\t\\n\\v\\f\\r\\x{85}\\p{Z}]+[\\p{Lu}\\p{Lt}\\p{Lo}\\p{Nd}\\p{Ps}\\p{Pi}\"'¿¡]",
+        "break": true
+      },
+      {
+        "before": "[。！？｡]",
+        "after": "[^\\p{Pe}\\p{Pf}。！？｡]",
+        "break": true
+      }
+    ],
+    "abbreviations": [
+      "N.B",
+      "div",
+      "a.C",
+      "fig",
+      "d.p.R",
+      "c.c.p",
+      "Cfr",
+      "vol",
+      "Geom",
+      "O.d.G",
+      "S.p.A",
+      "ver",
+      "N.d.A",
+      "dott",
+      "arch",
+      "d.C",
+      "N.d.T",
+      "rag",
+      "Sig",
+      "Mod",
+      "pag",
+      "dr",
+      "tav",
+      "N.d.E",
+      "DC",
+      "mitt",
+      "Ing",
+      "int",
+      "C.P",
+      "ag",
+      "L",
+      "U.S",
+      "S.M.A.R.T",
+      "p.i",
+      "tab",
+      "Ltd",
+      "Liv",
+      "D",
+      "U.S.A",
+      "sez",
+      "avv",
+      "S.A.R",
+      "p"
+    ],
+    "number_abbreviations": [
+      "n",
+      "N",
+      "art",
+      "Art",
+      "cap",
+      "Cap",
+      "pag",
+      "vol",
+      "Vol"
+    ]
+  }
+}

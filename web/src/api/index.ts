@@ -30,3 +30,6 @@ export * from './debug'
 export * from './tm-profiles';
 export * from './docs'
 export * from './issues'
+export * from './editor'
+export * from './segmentation'
+export * from './segment-edit'

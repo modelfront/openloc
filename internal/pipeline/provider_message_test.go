@@ -6,6 +6,7 @@ import (
 
 	"openloc/internal/ai"
 	"openloc/internal/enginehealth"
+	"openloc/internal/mt"
 )
 
 // MT and AI-step failures name the vendor as users see it and give one next
@@ -29,6 +30,12 @@ func TestProviderFailureMessages(t *testing.T) {
 			"OpenAI is having a problem right now. Try again in a few minutes."},
 		{"other status", ai.ProviderError{Provider: ai.ProviderOpenAI, Status: 400, Kind: ai.ProviderErrProvider, Detail: detail},
 			"OpenAI did not accept the request (error 400). Check the engine settings in AI settings."},
+		// The server provides LibreTranslate, key and endpoint both: nothing
+		// for the user to fix in AI settings.
+		{"server-provided refusal", ai.ProviderError{Provider: mt.ProviderLibreTranslate, Status: 403, Kind: ai.ProviderErrProvider, Detail: detail},
+			"LibreTranslate, which this server provides, failed (error 403). If it keeps failing, tell your administrator."},
+		{"server-provided unreachable", ai.ProviderError{Provider: mt.ProviderLibreTranslate, Kind: ai.ProviderErrUnreachable},
+			"Could not reach LibreTranslate, which this server provides. If it keeps failing, tell your administrator."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

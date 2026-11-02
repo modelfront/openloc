@@ -24,6 +24,9 @@ export interface SpellMatch {
 export interface SpellcheckSegmentResult {
   translation_id: number
   matches: SpellMatch[]
+  /** The target text that was checked; match offsets index into it. */
+  text: string
+  source_text: string
 }
 
 export interface SpellcheckJobResult {

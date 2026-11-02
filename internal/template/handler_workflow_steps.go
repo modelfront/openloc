@@ -17,7 +17,7 @@ func (h *Handler) HandleListSteps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	steps, err := settings.ListStepsWithDeadlines(r.Context(), h.queries, profileID)
+	steps, err := settings.ListStepsWithDeadlines(r.Context(), h.queries, auth.TenantIDFromContext(r.Context()), profileID)
 	if err != nil {
 		httputil.ServerError(w, "list", "workflow steps")
 		return

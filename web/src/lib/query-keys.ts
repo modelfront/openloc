@@ -7,7 +7,7 @@
  * - Easy to find all usages via "queryKeys.xxx"
  */
 
-import type { IssueScope } from '@/api'
+import type { EditorSearch, IssueScope } from '@/api'
 import type { TextSearchOptions } from './text-search'
 
 export const queryKeys = {
@@ -20,6 +20,7 @@ export const queryKeys = {
     issues: ['platform', 'issues'] as const,
     issue: (id: number) => ['platform', 'issues', id] as const,
     issueOrgs: ['platform', 'issues', 'orgs'] as const,
+    issueReporters: ['platform', 'issues', 'reporters'] as const,
     issueAssignees: ['platform', 'issue-assignees'] as const,
     issueTags: ['platform', 'issue-tags'] as const,
   },
@@ -45,6 +46,8 @@ export const queryKeys = {
   // --- Projects ---
   projects:          {
     all: ['projects'] as const,
+    /** One project (GET /projects/{id}). Under `all`, so every invalidation of the list reaches it. */
+    detail: (id: number) => ['projects', 'detail', id] as const,
     /**
      * String-prefix key for the paginated/filtered project list
      * (useInfiniteQuery). The full key is `[paginated, filtersKey]`
@@ -70,6 +73,8 @@ export const queryKeys = {
   },
   files:             {
     byProject: (pid: number) => ['files', pid] as const,
+    /** The cursor pages of a project's files (useInfiniteQuery). Under byProject. */
+    pages: (pid: number) => ['files', pid, 'pages'] as const,
     /** Under byProject, so a project's file invalidation reaches it. */
     xlsxLayout: (pid: number, fileId: number) => ['files', pid, 'xlsx-layout', fileId] as const,
   },
@@ -96,8 +101,22 @@ export const queryKeys = {
   // --- Single Job ---
   job: {
     detail:       (id: number) => ['job', id] as const,
+    // Prefix of every CAT editor cache below, so one invalidation refetches
+    // the index and only the pages on screen.
     translations: (id: number) => ['job-translations', id] as const,
+    editorIndex:  (id: number) => ['job-translations', id, 'index'] as const,
+    /** Prefix of every loaded page of rows. */
+    editorRows:   (id: number) => ['job-translations', id, 'rows'] as const,
+    /** One page of rows, keyed on the segments it holds (editorPageKey): a
+     *  split or join changes them, and the page is fetched again. */
+    editorPage:   (id: number, page: number, segmentIds: string) => ['job-translations', id, 'rows', page, segmentIds] as const,
+    editorSearch: (id: number, search: EditorSearch) => ['job-translations', id, 'search', search] as const,
+    editorRefs:   (id: number) => ['job-translations', id, 'refs'] as const,
+    editorWord:   (id: number, word: string) => ['job-translations', id, 'word', word] as const,
     steps:        (id: number) => ['job-steps', id] as const,
+    /** Mutation key of a request that runs a phase on the job (Apply TM/MT,
+     *  AI step): the request stays open until the run ends. */
+    runRequest:   (id: number) => ['job-run-request', id] as const,
     /** Prefix key for invalidating the step panels of every job at once. */
     allSteps:     ['job-steps'] as const,
     analysis:     (id: number) => ['job-analysis', id] as const,
@@ -118,9 +137,6 @@ export const queryKeys = {
     // Changes only when a step starts, ends or is rejected.
     stepStatuses: (id: number) => ['job-step-statuses', id] as const,
   },
-
-  // --- Segments ---
-  segments:          { byFile: (fileId: number) => ['segments', fileId] as const },
 
   // --- Translation memory ---
   tms:               { all: ['tms'] as const },
@@ -154,6 +170,8 @@ export const queryKeys = {
     allByBase: (gid: number) => ['term-entries', gid] as const,
   },
   termBaseLanguages: (gid: number) => ['term-base-languages', gid] as const,
+  /** The term bases a job's project uses for its pair (the editor's quick-add). */
+  jobTermBases: (jobId: number) => ['job-term-bases', jobId] as const,
   concepts: {
     byBase: (gid: number, search?: string, langs?: string[]) => ['concepts', gid, search, langs] as const,
     /** Prefix key for invalidating all concepts of a base (any search/lang). */
@@ -201,6 +219,15 @@ export const queryKeys = {
 
   // --- QA ---
   qaProfiles:        { all: ['qa-profiles'] as const },
+  // --- Segmentation profiles ---
+  // `lists` covers every list, whatever its source language.
+  segmentationProfiles: {
+    all: ['segmentation-profiles'] as const,
+    lists: ['segmentation-profiles', 'list'] as const,
+    list: (sourceLanguage?: string) => ['segmentation-profiles', 'list', sourceLanguage ?? ''] as const,
+    detail: (id: number) => ['segmentation-profiles', 'detail', id] as const,
+    preview: (input: unknown) => ['segmentation-profiles', 'preview', input] as const,
+  },
   qaProfile:         { detail: (id: number) => ['qa-profile', id] as const },
 
   // --- Languages ---

@@ -23,7 +23,10 @@ import type { ConfirmState } from './ConfirmAction'
 import { MessageBubble, type DisplayMessage } from './ChatMessageBubble'
 import { ChatHistoryMenu } from './ChatHistoryMenu'
 import { ModePicker } from './ModePicker'
-import { ChatAttachButton, ChatAttachmentChips } from './ChatAttachments'
+import { ChatAttachButton, ChatAttachmentChips, MAX_CHAT_ATTACHMENTS, useChatUploads } from './ChatAttachments'
+import { useFileDrop } from '@/hooks/useFileDrop'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { FileDropOverlay } from '@/components/ui/file-drop-overlay'
 import { useChatPanelSize } from './useChatPanelSize'
 import { loadActiveConversation, saveActiveConversation, toDisplayMessages } from './chat-history'
 import { ApiError } from '../../api/request'
@@ -110,11 +113,20 @@ export function ChatPanel() {
 // Watchdog budget: the backend pings every 25s, so 60s of total silence means
 // the stream is dead (LB cut it, network dropped), not slow.
 const STALL_TIMEOUT_MS = 60_000
+// A broken answer's reply button. The question is already saved in the
+// conversation, so this short message is enough for the assistant to answer it.
+const RETRY_REPLY = 'Try again'
 
 function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, modelLabel, onMinimize, onClose }: { hidden: boolean; pendingPrompt: { text?: string; hint?: string; seq: number } | null; model: string; onSelectModel: (m: string) => void; provider: string; modelLabel: string; onMinimize: () => void; onClose: () => void }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [input, setInput] = useState('')
+  // A phone keyboard has no Shift+Enter, so on a touch screen Enter adds a
+  // line and the Send button sends.
+  const touchScreen = useMediaQuery('(pointer: coarse)')
   const [attachments, setAttachments] = useState<ChatUpload[]>([])
+  const addAttachment = useCallback((u: ChatUpload) => setAttachments(prev => [...prev, u]), [])
+  const uploads = useChatUploads(attachments.length, addAttachment)
+  const uploading = uploads.progress !== null
   // suggest_replies buttons shown above the input when no highlight card
   // is showing them.
   const [replies, setReplies] = useState<string[]>([])
@@ -149,6 +161,13 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
     saveActiveConversation(id)
   }, [])
   const abortRef = useRef<AbortController | null>(null)
+  // What a Try again after a cut may do: in write mode a tool that started may
+  // have changed data the conversation never recorded, so it is not offered;
+  // a screenshot the cut message carried goes again.
+  const retryRef = useRef<{ safe: boolean; screenshotUploadId?: string }>({ safe: false })
+  const offerRetry = useCallback(() => {
+    if (retryRef.current.safe) setReplies([RETRY_REPLY])
+  }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // Prompt-card prefill (chat-bus). A prompt replaces the draft (the click IS
@@ -201,23 +220,29 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
           error: 'The connection went quiet and was closed. Try again.',
           runningTool: undefined,
         }))
+        offerRetry()
         abortRef.current?.abort()
       }
     }, 1000)
     return () => clearInterval(timer)
-  }, [streaming, patchLast])
+  }, [streaming, patchLast, offerRetry])
 
   // text overrides the input box (an example question from the empty state,
   // the answer to an ask); a screenshot the user approved goes with it.
   // Resolves to whether the assistant answered.
   const send = useCallback(async (text?: string, extra?: { screenshotUploadId?: string }): Promise<boolean> => {
     const typed = (text ?? input).trim()
-    if (!typed || streaming) return false
+    // While files upload the message box waits, so a batch never splits across
+    // two messages; a button's answer goes now and leaves the files for later.
+    if (uploading && text === undefined) return false
+    const files = uploading ? [] : attachments
+    if ((!typed && files.length === 0) || streaming) return false
     let answered = false
-    const message = [typed, ...attachments.map(attachmentNote)].join('\n\n')
+    const message = [typed, ...files.map(attachmentNote)].filter(Boolean).join('\n\n')
     setInput('')
-    setAttachments([])
+    if (!uploading) setAttachments([])
     setReplies([])
+    retryRef.current = { safe: true, screenshotUploadId: extra?.screenshotUploadId }
     setStreaming(true)
     setMessages(prev => [
       ...prev,
@@ -235,7 +260,10 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
         },
         {
           onText: delta => patchLast(m => ({ ...m, content: m.content + delta })),
-          onToolStart: tool => patchLast(m => ({ ...m, runningTool: tool })),
+          onToolStart: tool => {
+            if (allowWrites) retryRef.current.safe = false
+            patchLast(m => ({ ...m, runningTool: tool }))
+          },
           onToolEnd: (tool, ok) => {
             patchLast(m => ({
               ...m,
@@ -254,7 +282,11 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
             setConversation(info.conversation_id)
             void queryClient.invalidateQueries({ queryKey: queryKeys.chat.conversations })
           },
-          onError: error => patchLast(m => ({ ...m, error, runningTool: undefined })),
+          onStart: info => setConversation(info.conversation_id),
+          onError: (error, opts) => {
+            patchLast(m => ({ ...m, error, runningTool: undefined }))
+            if (opts?.interrupted) offerRetry()
+          },
           onAlive: () => {
             lastAliveRef.current = Date.now()
           },
@@ -286,7 +318,7 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
       abortRef.current = null
     }
     return answered
-  }, [input, attachments, streaming, model, allowWrites, navigate, patchLast, onMinimize, setConversation, queryClient, appConfig])
+  }, [input, attachments, streaming, uploading, model, allowWrites, navigate, patchLast, onMinimize, setConversation, queryClient, appConfig, offerRetry])
 
   // Reply buttons outlive the render that created them (the highlight card
   // calls back later), so they go through the current send.
@@ -347,6 +379,12 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
     onClose()
   }, [setConversation, onClose])
 
+  const drop = useFileDrop(files => void uploads.add(files), streaming || noKey)
+  const canSend = (input.trim() !== '' || attachments.length > 0) && !uploading
+  // Only the newest ask takes an answer: an older card would send its
+  // screenshot as the answer to a question the assistant no longer asks.
+  const lastAskIndex = messages.reduce((last, m, i) => (m.ask ? i : last), -1)
+
   return (
     <div
       data-testid="chat-panel"
@@ -359,7 +397,9 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
       // and the trail and a recording keep nothing typed or clicked in it.
       data-screenshot="exclude"
       data-private
+      {...drop.handlers}
     >
+      <FileDropOverlay show={drop.dragging} label="Drop files to attach" hint={`Up to ${MAX_CHAT_ATTACHMENTS} files per message`} />
       {/* Resize grip — top-left corner, the only corner not pinned to the
           viewport edge. Generous hit area, visible affordance on hover. */}
       <div
@@ -406,6 +446,7 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
               key={i}
               message={m}
               working={streaming && i === messages.length - 1}
+              replaced={i < lastAskIndex}
               elapsed={elapsed}
               getConversationId={getConversationId}
               onConfirmState={(ci, state) => setConfirmState(i, ci, state)}
@@ -416,7 +457,7 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
       </div>
 
       <footer className="shrink-0 border-t border-gray-200 p-2 dark:border-gray-800">
-        {!streaming && <ChatReplies replies={replies} onPick={r => void send(r)} />}
+        {!streaming && <ChatReplies replies={replies} onPick={r => void send(r, r === RETRY_REPLY ? { screenshotUploadId: retryRef.current.screenshotUploadId } : undefined)} />}
         <ChatAttachmentChips
           attachments={attachments}
           onRemove={id => setAttachments(prev => prev.filter(a => a.id !== id))}
@@ -427,7 +468,10 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // Safari ends an input method's composition before the Enter that
+            // confirms the word, so only keyCode 229 marks that Enter.
+            const composing = e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229
+            if (e.key === 'Enter' && !e.shiftKey && !touchScreen && !composing) {
               e.preventDefault()
               void send()
             }
@@ -441,7 +485,12 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
             <>
               {/* Model first, then mode — mirroring the header (logo+model, then
                   the mode badge) so the two rows read in the same order. */}
-              <ChatAttachButton onAdded={u => setAttachments(prev => [...prev, u])} disabled={streaming || noKey} />
+              <ChatAttachButton
+                onPick={files => void uploads.add(files)}
+                progress={uploads.progress}
+                full={attachments.length >= MAX_CHAT_ATTACHMENTS}
+                disabled={streaming || noKey}
+              />
               <ModelPicker model={model} onSelect={onSelectModel} disabled={streaming} />
               <ModePicker allowWrites={allowWrites} onChange={setMode} disabled={streaming} />
               {streaming ? (
@@ -458,12 +507,12 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
                 // box, so the button stays clickable and says so via aria-disabled.
                 <Button
                   size="icon-sm"
-                  variant={input.trim() ? 'default' : 'ghost'}
-                  color={input.trim() ? undefined : 'muted'}
+                  variant={canSend ? 'default' : 'ghost'}
+                  color={canSend ? undefined : 'muted'}
                   onClick={() => void send()}
                   disabled={noKey}
-                  aria-disabled={!input.trim() || noKey}
-                  title={input.trim() ? 'Send' : 'Type a message to send'}
+                  aria-disabled={!canSend || noKey}
+                  title={uploading ? 'Wait until the files are uploaded' : canSend ? 'Send' : 'Type a message to send'}
                   data-testid="chat-send"
                 >
                   <Send className="size-3.5" />

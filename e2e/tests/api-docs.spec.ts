@@ -1,5 +1,4 @@
-import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { expect, freshContext, login, test } from "./helpers";
 
 // API documentation (/api-docs): guides and the endpoint reference in one
 // sidebar. The endpoint pages are built from the served OpenAPI document, so
@@ -7,7 +6,7 @@ import { login } from "./helpers";
 
 test.describe("API docs", () => {
   test("signed out, the API docs are public; the customer API is not", async ({ browser }) => {
-    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    const ctx = await freshContext(browser);
     expect((await ctx.request.get("/api/api-docs")).status()).toBe(200);
     expect((await ctx.request.get("/api/api-docs/openapi.json")).status()).toBe(200);
     expect((await ctx.request.get("/api/v1/openapi.json")).status()).toBe(401);
@@ -16,7 +15,6 @@ test.describe("API docs", () => {
     await expect(page.getByTestId("api-endpoint")).toBeVisible();
     await expect(page.getByText("Open app", { exact: true })).toBeVisible();
     await expect(page.getByTestId("nav-rail")).toHaveCount(0);
-    await ctx.close();
   });
 
   test("API is in the account menu and lists guides and endpoint groups", async ({ page: app, context }) => {

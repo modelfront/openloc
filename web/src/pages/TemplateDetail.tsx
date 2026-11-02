@@ -22,6 +22,7 @@ import {
 } from '../api'
 import { toast } from 'sonner'
 import { queryKeys } from '../lib/query-keys'
+import { toLangResources, toNamedOptions } from '../lib/settings-editor-options'
 import { workflowStepsFromApi } from '../lib/workflow-steps'
 import { WorkflowTab } from '../components/workflow/WorkflowTab'
 import { focusMTRouter } from '../components/workflow/RawMTPane'
@@ -35,7 +36,7 @@ import { SubNav } from '@/components/layout/SubNav'
 import { TemplateMetadataForm, type TemplateMetadata } from '../components/template/TemplateMetadataForm'
 import { type LabelPick } from '../components/project/ProjectLabelFields'
 import { SettingsEditor } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toTMLookupOrder } from '@/lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
 import { usePageTitle } from '../hooks/usePageTitle'
 import { errorText } from '@/lib/error-text'
 
@@ -200,7 +201,9 @@ export default function TemplateDetail() {
               tmOnUpload: t.tm_on_upload,
               autoComplete: t.auto_complete ?? DEFAULT_AUTO_COMPLETE,
               inlineHTML: t.inline_html ?? DEFAULT_INLINE_HTML,
+              linguistTerms: toLinguistTerms(t.linguist_terms),
               qaProfileId: t.qa_profile_id ?? null,
+              segmentationProfileId: t.segmentation_profile_id ?? null,
               tmProfileId: data.tm_profile?.id ?? null,
               tmProfileName: data.tm_profile?.name,
               tmProfileUsageCount: data.tm_profile?.usage_count,
@@ -224,13 +227,14 @@ export default function TemplateDetail() {
               })),
               workflowSteps: workflowStepsFromApi(data.workflow_steps ?? []),
             }}
-            tmCollections={tms?.map(tm => ({ id: tm.id, name: tm.name, source_language: tm.source_language, target_languages: tm.target_languages })) ?? []}
+            tmCollections={toLangResources(tms)}
             mtRouters={mtRouters ?? []}
             routerCoverageLanguages={t.target_languages ?? []}
-            termBases={termBases?.map(g => ({ id: g.id, name: g.name, source_language: g.source_language, target_languages: g.target_languages ?? [] })) ?? []}
-            qaProfiles={qaProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
+            segmentationLanguage={t.source_language ?? undefined}
+            termBases={toLangResources(termBases)}
+            qaProfiles={toNamedOptions(qaProfiles)}
             languages={languages}
-            tmProfiles={tmProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
+            tmProfiles={toNamedOptions(tmProfiles)}
             entity="template"
             onUpdateScalars={async (scalarData) => {
               await updateTemplate(tid, {
@@ -243,7 +247,9 @@ export default function TemplateDetail() {
                 tm_lookup_order: scalarData.tm_lookup_order,
                 auto_complete: scalarData.auto_complete,
                 inline_html: scalarData.inline_html,
+                linguist_terms: scalarData.linguist_terms,
                 qa_profile_id: scalarData.qa_profile_id !== undefined ? scalarData.qa_profile_id : t.qa_profile_id,
+                segmentation_profile_id: scalarData.segmentation_profile_id,
                 mt_router_id: scalarData.mt_router_id,
               })
               refresh()

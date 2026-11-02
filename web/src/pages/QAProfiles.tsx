@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { SEVERITIES, SEVERITY_CHIP_COLORS, SEVERITY_LABELS } from '../lib/qa-findings'
-import { useQuery } from '@tanstack/react-query'
+import { useState, type ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -11,9 +11,15 @@ import {
   updateQAProfile,
   deleteQAProfile,
   upsertQARule,
+  exportQAProfile,
+  importQAProfile,
+  replaceQAProfileRules,
+  type QAProfileWithRules,
 } from '../api'
-import type { QaProfile } from '../types/generated'
+import type { QaProfile, QaRule } from '../types/generated'
 import { queryKeys } from '../lib/query-keys'
+import { qaProfileKey } from '../lib/asset-links'
+import { useAttentionTarget } from '@/hooks/useAttention'
 import { parseQARuleConfig } from '../lib/qa-rule-config'
 import { formatDate } from '../utils'
 import { useCRUDList } from '../hooks/use-crud-list'
@@ -26,20 +32,23 @@ import { EmptyState } from '@/components/layout/EmptyState'
 import { LoadFailed } from '@/components/layout/LoadFailed'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { InlineRenameField } from '@/components/list/InlineRenameField'
-import { Pencil, ChevronDown } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Pencil, ChevronDown, Download, Upload } from 'lucide-react'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { useScrollToError } from '../hooks/useScrollToError'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ChipButton } from '@/components/ui/chip'
-import { cn } from '@/lib/utils'
-import { VerticalDivider } from '@/components/ui/vertical-divider'
 import { CheckboxField } from '@/components/ui/checkbox-field'
+import { ChoiceToggle, type ChoiceToggleOption } from '@/components/ui/choice-toggle'
 import { listCardHeaderClass, listCardTitleClass } from '@/components/list/list-row'
+import { QARuleSeverityToggle } from '../components/QARuleSeverityToggle'
+import { QARegexRules } from '../components/QARegexRules'
+import { QANumberFormatLanguages } from '../components/QANumberFormatLanguages'
+import { parseNumberFormatConfig, type NumberFormatMode } from '../lib/qa-number-format'
 
 const qaProfileSchema = z.object({
-  name: z.string().min(1, 'Profile name is required'),
+  name: z.string().trim().min(1, 'Profile name is required'),
   description: z.string().optional(),
 })
 type QAProfileFormValues = z.infer<typeof qaProfileSchema>
@@ -47,7 +56,12 @@ type QAProfileFormValues = z.infer<typeof qaProfileSchema>
 const ALL_CHECK_TYPES = [
   { type: 'empty_target', label: 'Empty target', description: 'Target segment is empty' },
   { type: 'tag_checks', label: 'Tag checks', description: 'Missing, extra, unclosed, or unopened tags', hasSubChecks: true },
-  { type: 'number_consistency', label: 'Number consistency', description: 'Numbers differ between source and target' },
+  { type: 'number_consistency', label: 'Number consistency', description: 'A number is missing or has a different value in the target' },
+  { type: 'number_format', label: 'Number format', description: "Decimal or thousands separator not written the target language's way" },
+  { type: 'date_consistency', label: 'Dates', description: 'A date has a different day, month or year, in any date format' },
+  { type: 'time_consistency', label: 'Times', description: 'A time differs: 3:30 PM and 15:30 match, 13:30 does not' },
+  { type: 'unit_conversion', label: 'Units', description: 'A value converted between imperial and metric units does not match' },
+  { type: 'placeables', label: 'Placeables', description: 'A web or email address, product code or variable such as {0} or %s is missing or changed', hasSubChecks: true },
   { type: 'terminology', label: 'Terminology', description: 'Approved terms from a glossary are missing in the target' },
   { type: 'forbidden_terms', label: 'Forbidden terms', description: 'Forbidden terms (glossary entries with status=forbidden) appear in the target' },
   { type: 'consistency', label: 'Consistency', description: 'Same source translated differently' },
@@ -62,18 +76,59 @@ const TAG_SUB_CHECKS = [
   { key: 'unopened', label: 'Unopened tags', description: 'Closing tag without opening tag' },
 ] as const
 
-// Only the option in force carries its colour; the rest sit back as faded grey,
-// so the row reads as one setting rather than four competing labels.
-const UNSET_OPTION = 'opacity-30 hover:opacity-60'
+const PLACEABLE_SUB_CHECKS = [
+  { key: 'urls_emails', label: 'URLs and emails', description: 'Web and email addresses' },
+  { key: 'codes', label: 'Alphanumerics', description: 'Product and part codes such as XJ-500B' },
+  { key: 'variables', label: 'Variables', description: 'Placeholders such as {0}, %s or {{name}}' },
+] as const
+
+// Rules whose config is a set of sub-checks, each on unless saved off.
+const SUB_CHECKS: Record<string, readonly { key: string; label: string; description: string }[]> = {
+  tag_checks: TAG_SUB_CHECKS,
+  placeables: PLACEABLE_SUB_CHECKS,
+}
+
+const NUMBER_FORMAT_MODES: ChoiceToggleOption<NumberFormatMode>[] = [
+  { value: 'allow', label: 'Source or target format' },
+  { value: 'require', label: 'Target format only' },
+]
+
+/** The rules with `saved` in place of the built-in rule of its check type. */
+function withRule(rules: QaRule[], saved: QaRule): QaRule[] {
+  return rules.some(r => r.check_type === saved.check_type)
+    ? rules.map(r => (r.check_type === saved.check_type ? saved : r))
+    : [...rules, saved]
+}
+
+/** A hidden file input for an exported QA profile; `pick` opens it. */
+function useProfileFilePicker(testId: string, onPick: (text: string) => void) {
+  const [input, setInput] = useState<HTMLInputElement | null>(null)
+  const element = (
+    <input
+      ref={setInput}
+      type="file"
+      accept=".json,application/json"
+      className="hidden"
+      data-testid={testId}
+      onChange={e => {
+        const file = e.target.files?.[0]
+        e.target.value = ''
+        if (file) file.text().then(onPick, () => toast.error('Could not read the file.'))
+      }}
+    />
+  )
+  return { pick: () => input?.click(), element }
+}
 
 export default function QAProfiles() {
   const {
     register: registerCreate,
     handleSubmit: handleCreateSubmit,
     reset: resetCreate,
-    formState: { errors: createErrors },
+    formState: { errors: createErrors, isValid: createValid },
   } = useForm<QAProfileFormValues>({
     resolver: zodResolver(qaProfileSchema),
+    mode: 'onTouched',
     defaultValues: { name: '', description: '' },
   })
   useScrollToError(createErrors)
@@ -125,6 +180,15 @@ export default function QAProfiles() {
     }
   }
 
+  const importMut = useMutationWithToast({
+    mutationFn: importQAProfile,
+    successMessage: p => `Imported as "${p.name}"`,
+    errorMessage: 'Import failed',
+    invalidateKeys: [queryKeys.qaProfiles.all],
+    onSuccess: p => setExpandedId(p.id),
+  })
+  const importPicker = useProfileFilePicker("import-qa-profile-input", text => importMut.mutate(text))
+
   if (isLoading) return <LoadingPlaceholder />
 
   return (
@@ -133,11 +197,17 @@ export default function QAProfiles() {
         <PageHeader
           title="QA profiles"
           actions={
-            <Button onClick={() => setShowForm(!showForm)} data-guide="quality.new">
-              New QA profile
-            </Button>
+            <>
+              <Button variant="outline" onClick={importPicker.pick} disabled={importMut.isPending} startIcon={<Upload />} data-testid="import-qa-profile">
+                {importMut.isPending ? 'Importing...' : 'Import'}
+              </Button>
+              <CreateButton onClick={() => setShowForm(!showForm)} data-guide="quality.new">
+                New QA profile
+              </CreateButton>
+            </>
           }
         />
+        {importPicker.element}
 
         {showForm && (
           <form onSubmit={handleCreateSubmit(data => createMut.mutate(data))} className="mb-6 p-4 bg-card rounded-lg border border-gray-200 dark:border-gray-800 flex max-md:flex-wrap gap-3 items-end">
@@ -147,7 +217,12 @@ export default function QAProfiles() {
             <FormField label="Description" className="flex-1">
               <Input {...registerCreate('description')} placeholder="Optional description" />
             </FormField>
-            <Button type="submit" size="sm" disabled={createMut.isPending}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createMut.isPending || !createValid}
+              disabledReason={createValid ? undefined : MISSING_REQUIRED_REASON}
+            >
               {createMut.isPending ? 'Creating...' : 'Create'}
             </Button>
           </form>
@@ -157,7 +232,7 @@ export default function QAProfiles() {
 
         <div className="space-y-2" data-guide="quality.list">
           {profiles?.map(profile => (
-            <div key={profile.id}>
+            <ProfileCard key={profile.id} id={profile.id} onOpen={() => setExpandedId(profile.id)}>
               <div
                 onClick={() => setExpandedId(expandedId === profile.id ? null : profile.id)}
                 className="block p-4 bg-card rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-muted transition-colors cursor-pointer group"
@@ -219,9 +294,9 @@ export default function QAProfiles() {
                 </div>
               </div>
               {expandedId === profile.id && (
-                <ProfileRulesEditor profileId={profile.id} />
+                <ProfileRulesEditor profileId={profile.id} profileName={profile.name} />
               )}
-            </div>
+            </ProfileCard>
           ))}
           {profiles?.length === 0 && (
             <EmptyState message="No QA profiles yet. Create one to get started." />
@@ -240,18 +315,43 @@ export default function QAProfiles() {
   )
 }
 
-function ProfileRulesEditor({ profileId }: { profileId: number }) {
+// A profile's row and its rules. A link from a project's settings opens the
+// page pointing at it (`qaProfilePath`), which also expands it.
+function ProfileCard({ id, onOpen, children }: { id: number; onOpen: () => void; children: ReactNode }) {
+  return <div ref={useAttentionTarget(qaProfileKey(id), onOpen)} className="rounded-lg" data-testid={qaProfileKey(id)}>{children}</div>
+}
+
+function ProfileRulesEditor({ profileId, profileName }: { profileId: number; profileName: string }) {
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.qaProfile.detail(profileId),
     queryFn: () => getQAProfile(profileId),
   })
 
+  const queryClient = useQueryClient()
+  const detailKey = queryKeys.qaProfile.detail(profileId)
   const ruleMut = useMutationWithToast({
     mutationFn: ({ checkType, enabled, severity, config }: { checkType: string; enabled: boolean; severity: string; config?: Record<string, unknown> }) =>
       upsertQARule(profileId, checkType, enabled, severity, config),
     successMessage: 'Rule updated',
     errorMessage: 'Failed to update rule',
+    invalidateKeys: [detailKey],
+    // A save sends the rule's whole config, so the next one must start from
+    // this one, not from the profile as last fetched.
+    onSuccess: saved => queryClient.setQueryData<QAProfileWithRules>(detailKey, old => old && { ...old, rules: withRule(old.rules, saved) }),
+  })
+
+  const [confirmReplace, setConfirmReplace] = useState(false)
+  const replaceMut = useMutationWithToast({
+    mutationFn: (text: string) => replaceQAProfileRules(profileId, text),
+    successMessage: 'Rules replaced from the file',
+    errorMessage: 'Import failed',
     invalidateKeys: [queryKeys.qaProfile.detail(profileId)],
+  })
+  const replacePicker = useProfileFilePicker("replace-qa-rules-input", text => replaceMut.mutate(text))
+  const exportMut = useMutationWithToast({
+    mutationFn: () => exportQAProfile(profileId),
+    successMessage: () => null,
+    errorMessage: 'Export failed',
   })
 
   if (isLoading) return <LoadingPlaceholder size="sm" message="Loading rules..." />
@@ -260,6 +360,15 @@ function ProfileRulesEditor({ profileId }: { profileId: number }) {
 
   return (
     <div className="mt-1 mb-2 bg-background border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden" data-testid="qa-rules-panel">
+      <div className="px-4 py-2 flex justify-end gap-2 border-b border-gray-200 dark:border-gray-800">
+        <Button size="sm" variant="ghost" onClick={() => exportMut.mutate()} disabled={exportMut.isPending} startIcon={<Download />} data-testid="export-qa-profile">
+          Export
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setConfirmReplace(true)} disabled={replaceMut.isPending} startIcon={<Upload />} data-testid="replace-qa-rules">
+          {replaceMut.isPending ? 'Importing...' : 'Import rules'}
+        </Button>
+        {replacePicker.element}
+      </div>
       <div className="divide-y divide-gray-200 dark:divide-gray-800">
         {ALL_CHECK_TYPES.map(check => {
           const rule = ruleMap.get(check.type)
@@ -268,13 +377,17 @@ function ProfileRulesEditor({ profileId }: { profileId: number }) {
 
           // Config arrives as an object, a JSON string or base64;
           // parseQARuleConfig accepts all three.
-          const configObj = parseQARuleConfig(rule?.config) as { missing?: boolean; extra?: boolean; unclosed?: boolean; unopened?: boolean }
-          const tagConfig = check.type === 'tag_checks'
-            ? { missing: configObj.missing ?? true, extra: configObj.extra ?? true, unclosed: configObj.unclosed ?? true, unopened: configObj.unopened ?? true }
+          const subChecks = SUB_CHECKS[check.type]
+          const configObj = parseQARuleConfig(rule?.config)
+          const subConfig = subChecks
+            ? Object.fromEntries(subChecks.map(s => [s.key, configObj[s.key] !== false]))
             : null
+          // Every save of number_format sends its whole config, languages included.
+          const numberFormat = check.type === 'number_format' ? parseNumberFormatConfig(rule?.config) : null
+          const config = subConfig ?? numberFormat ?? undefined
 
           return (
-            <div key={check.type}>
+            <div key={check.type} data-testid={`qa-rule-${check.type}`}>
               <div className="px-4 py-3 flex items-center gap-4">
                 <div className="min-w-0 flex-1">
                   <div className={`text-base font-medium ${enabled ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>
@@ -282,38 +395,22 @@ function ProfileRulesEditor({ profileId }: { profileId: number }) {
                   </div>
                   <div className="text-sm text-gray-400 dark:text-gray-500">{check.description}</div>
                 </div>
-                <div className="flex items-center gap-1">
-                  {SEVERITIES.map(sev => (
-                    <ChipButton
-                      key={sev}
-                      color={enabled && severity === sev ? SEVERITY_CHIP_COLORS[sev] : 'grey'}
-                      // Clicking the active severity again disables the rule;
-                      // clicking any severity while disabled re-enables it there.
-                      onClick={() => ruleMut.mutate({ checkType: check.type, enabled: !(enabled && severity === sev), severity: sev, config: tagConfig ?? undefined })}
-                      className={cn(!(enabled && severity === sev) && UNSET_OPTION)}
-                    >
-                      {SEVERITY_LABELS[sev]}
-                    </ChipButton>
-                  ))}
-                  <VerticalDivider className="mx-1 bg-gray-300" />
-                  <ChipButton
-                    color="grey"
-                    onClick={() => ruleMut.mutate({ checkType: check.type, enabled: false, severity, config: tagConfig ?? undefined })}
-                    className={cn(enabled && UNSET_OPTION)}
-                  >
-                    Disabled
-                  </ChipButton>
-                </div>
+                <QARuleSeverityToggle
+                  enabled={enabled}
+                  severity={severity}
+                  disabled={ruleMut.isPending}
+                  onChange={next => ruleMut.mutate({ checkType: check.type, ...next, config })}
+                />
               </div>
-              {check.type === 'tag_checks' && enabled && tagConfig && (
-                <div className="px-4 pb-3 pl-12 flex flex-col">
-                  {TAG_SUB_CHECKS.map(sub => (
+              {subChecks && enabled && subConfig && (
+                <div className="px-4 pb-3 pl-12 flex flex-col" data-testid={`qa-sub-checks-${check.type}`}>
+                  {subChecks.map(sub => (
                     <CheckboxField
                       key={sub.key}
-                      checked={tagConfig[sub.key as keyof typeof tagConfig]}
+                      checked={subConfig[sub.key]}
                       onChange={checked => {
-                        const newConfig = { ...tagConfig, [sub.key]: checked }
-                        ruleMut.mutate({ checkType: 'tag_checks', enabled, severity, config: newConfig })
+                        const newConfig = { ...subConfig, [sub.key]: checked }
+                        ruleMut.mutate({ checkType: check.type, enabled, severity, config: newConfig })
                       }}
                       label={sub.label}
                       description={sub.description}
@@ -321,10 +418,42 @@ function ProfileRulesEditor({ profileId }: { profileId: number }) {
                   ))}
                 </div>
               )}
+              {numberFormat && enabled && (
+                <div className="px-4 pb-3 pl-12">
+                  <ChoiceToggle
+                    size="sm"
+                    aria-label="Number format mode"
+                    data-testid="qa-number-format-mode"
+                    options={NUMBER_FORMAT_MODES.map(o => ({ ...o, disabled: ruleMut.isPending }))}
+                    value={numberFormat.mode}
+                    onChange={mode => ruleMut.mutate({ checkType: 'number_format', enabled, severity, config: { ...numberFormat, mode } })}
+                  />
+                </div>
+              )}
+              {numberFormat && enabled && (
+                <QANumberFormatLanguages
+                  languages={numberFormat.languages}
+                  saving={ruleMut.isPending}
+                  onChange={languages => ruleMut.mutateAsync({ checkType: 'number_format', enabled, severity, config: { ...numberFormat, languages } })}
+                />
+              )}
             </div>
           )
         })}
       </div>
+      <QARegexRules profileId={profileId} rules={data?.rules ?? []} />
+      <ConfirmDialog
+        open={confirmReplace}
+        onOpenChange={setConfirmReplace}
+        title={`Replace every rule of "${profileName}"?`}
+        description="Pick an exported QA profile file. Its rules replace all rules of this profile, custom regex rules included. The name and description stay."
+        actionLabel="Pick file"
+        testId="confirm-replace-qa-rules"
+        onConfirm={() => {
+          setConfirmReplace(false)
+          replacePicker.pick()
+        }}
+      />
     </div>
   )
 }

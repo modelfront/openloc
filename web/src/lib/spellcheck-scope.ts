@@ -43,7 +43,7 @@ export function allowedRunScope(scope: SpellRunScope, canWriteLocked: boolean): 
 
 export interface ScopeCandidate {
   id: number
-  active_text: string | null
+  active_text?: string | null
   locked?: boolean
 }
 
@@ -89,7 +89,7 @@ export interface SpellFixActions {
    */
   canWriteLocked: boolean
   /** Occurrence counts across the file, for the menu's button labels. */
-  counts: (word: string) => ScopeCounts
+  counts: (word: string) => Promise<ScopeCounts>
   /**
    * Write the fix to other segments in the file. The open segment is handled by
    * the editor itself, so it's excluded here. Resolves with the row count written.
@@ -131,12 +131,12 @@ function isWordChar(ch: string): boolean {
  * through the editor itself so its unsaved draft stays coherent, rather than
  * being written underneath it by a bulk request.
  */
-export function selectScopeTargets(
-  candidates: ScopeCandidate[],
+export function selectScopeTargets<T extends ScopeCandidate>(
+  candidates: T[],
   word: string,
   scope: SpellFixScope,
   excludeId?: number,
-): ScopeCandidate[] {
+): T[] {
   if (scope === 'segment') return []
   return candidates.filter(c => {
     if (c.id === excludeId) return false

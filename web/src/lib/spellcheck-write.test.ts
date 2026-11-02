@@ -20,7 +20,7 @@ vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn(), success: v
 
 const typo = (translationId: number): SpellError => ({
   translationId, segmentId: translationId, segmentIndex: 0, offset: 0, length: 5, word: 'Hallo',
-  message: 'typo', suggestions: ['Hello'], ruleCategory: 'TYPOS',
+  message: 'typo', suggestions: ['Hello'], ruleCategory: 'TYPOS', targetText: '', sourceText: '',
 })
 
 function result(over: Partial<BatchDraftResult> = {}): BatchDraftResult {

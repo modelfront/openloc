@@ -9,17 +9,20 @@
 // step with no current tasks says "No tasks" and does not open.
 // Expand shows every task.
 //
-// A section's body is a plain DataTable, one value per cell: fixed widths on
-// the short columns, File and Assignee sharing the rest and truncating, so it
-// never scrolls either way — it grows the page instead. Lang, File, Deadline
-// and Words widen by dragging their header's edge, the same widths in every
-// step and remembered per browser; Assignee takes what they leave, and a drag
-// stops before it gets too thin. When the table is
-// narrow, Words drops out (a container query) before File and Assignee get too
-// thin to read. A row's background and left stripe carry its task's state,
-// like a matrix cell; the last column's icon says only what the colour
-// cannot — an error, a send-back, an AI step running, the comment the task
-// was handed — with the text in its tooltip. A click on the row opens the
+// A section's body is a plain DataTable, one value per cell: Lang, File,
+// Words, Assignee, then an unnamed status column (a deadline, a done date, an
+// error, or a running pipeline's "Translating N / M") and a note icon. Fixed
+// widths on the short columns, File and Assignee sharing the rest and
+// truncating, so it never scrolls either way — it grows the page instead; a
+// long section mounts only the rows near the screen.
+// Lang, File, Words and status widen by dragging their header's edge, the same
+// widths in every step and remembered per browser; Assignee takes what they
+// leave, and a drag stops before it gets too thin. When the table is narrow,
+// Words drops out (a container query) before File and Assignee get too thin
+// to read. A row's background and left stripe carry its task's state, like a
+// matrix cell; the last column's icon says only what the colour and the status
+// cannot — a send-back, an AI step running, the comment the task was handed —
+// with the text in its tooltip. A click on the row opens the
 // job in the CAT editor in a new tab, like the Tasks page (not while its AI
 // step runs, which its icon explains), and the tab refreshes when the user
 // comes back. Selection is the Files tab's: a checkbox column (the whole cell
@@ -54,7 +57,12 @@ import { LanguageCode } from '@/components/ui/language-code'
 import { SectionInfo } from '@/components/ui/section-info'
 import { useStepColumnSizing } from './column-sizing'
 import { useProjectRefreshOnReturn } from './refresh-on-return'
-import { NoteLines, TaskAssignee, TaskDue } from './task-cell-parts'
+import { NoteLines, TaskAssignee, TaskStatus } from './task-cell-parts'
+
+// A section longer than this mounts only the rows near the screen, each
+// ROW_HEIGHT px tall (one line of text and a chip).
+const VIRTUAL_FROM = 100
+const ROW_HEIGHT = 41
 
 interface Props {
   projectId: number
@@ -118,6 +126,7 @@ export function TaskStepSections({ projectId, matrix, selected, onSelectedChange
                   openEditorTab(editorPath(projectId, row.job.id), navigate)
                 }}
                 rowTestId={row => `task-row-${row.key}`}
+                virtualRows={section.rows.length > VIRTUAL_FROM ? { rowHeight: ROW_HEIGHT } : undefined}
                 columnSizing={columnSizing}
                 onColumnSizingChange={setColumnSizing}
                 rowClassName={row => {
@@ -255,6 +264,14 @@ const STEP_TABLE_COLUMNS: ColumnDef<MatrixRow>[] = [
     ),
   },
   {
+    id: 'words',
+    header: () => <span className="block text-right">Words</span>,
+    size: 104,
+    ...resizable(56, 200),
+    meta: { className: '@max-[679px]:hidden' } satisfies DataTableColumnMeta<MatrixRow>,
+    cell: ({ row }) => <span className="block truncate text-right text-sm tabular-nums">{row.original.job.word_count.toLocaleString()}</span>,
+  },
+  {
     id: 'assignee',
     header: 'Assignee',
     cell: ({ row, table }) => {
@@ -268,44 +285,34 @@ const STEP_TABLE_COLUMNS: ColumnDef<MatrixRow>[] = [
     },
   },
   {
-    id: 'deadline',
-    header: 'Deadline',
-    // Room for a default chip's longest text, a date in another year:
-    // "Due Jan 15, 2030".
-    size: 144,
-    ...resizable(100, 320),
+    // No header: it holds a deadline, a done date, an error or a running
+    // pipeline's progress (TaskStatus).
+    id: 'status',
+    // Room for a default chip's longest common text, a large job's progress:
+    // "Translating 12,345 / 12,345".
+    size: 200,
+    ...resizable(100, 360),
     cell: ({ row, table }) => {
       const { column } = metaOf(table)
       const cell = currentCell(row.original, column)
       return (
         <div className="flex min-w-0 overflow-hidden text-xs">
-          {cell && column ? <TaskDue cell={cell} column={column} size="default" /> : NONE}
+          {cell && column ? <TaskStatus cell={cell} column={column} size="default" /> : NONE}
         </div>
       )
     },
   },
   {
-    id: 'words',
-    header: () => <span className="block text-right">Words</span>,
-    size: 80,
-    ...resizable(56, 200),
-    meta: { className: '@max-[679px]:hidden' } satisfies DataTableColumnMeta<MatrixRow>,
-    cell: ({ row }) => <span className="block truncate text-right text-sm tabular-nums">{row.original.job.word_count.toLocaleString()}</span>,
-  },
-  {
     id: 'note',
     // One icon, so the column is only as wide as an icon: the row's most
-    // important note — an error, a send-back, an AI step running (why the row
-    // will not open), the comment the task was handed — with every note's
-    // text in its tooltip. The send-back belongs to the job, not to the
+    // important note — a send-back, an AI step running (why the row will not
+    // open), the comment the task was handed — with every note's text in its
+    // tooltip. An error is the status chip's. The send-back belongs to the job, not to the
     // current cell: the step that sent the job back is a later one.
     size: 40,
     cell: ({ row, table }) => {
       const cell = currentCell(row.original, metaOf(table).column)
-      const notes: { key: string; label: string; tone?: 'red'; icon?: LucideIcon; text: ReactNode }[] = []
-      if (cell && cell.errors.length > 0) {
-        notes.push({ key: 'error', label: 'Error', tone: 'red', text: cell.errors.map(msg => <p key={msg}>{msg}</p>) })
-      }
+      const notes: { key: string; label: string; icon?: LucideIcon; text: ReactNode }[] = []
       const { sentBack } = row.original
       if (sentBack) {
         notes.push({
@@ -327,7 +334,6 @@ const STEP_TABLE_COLUMNS: ColumnDef<MatrixRow>[] = [
       return (
         <span className="flex items-center">
           <SectionInfo
-            tone={top.tone}
             icon={top.icon}
             label={notes.map(n => n.label).join(', ')}
             data-testid={`task-note-${top.key}-${row.original.key}`}

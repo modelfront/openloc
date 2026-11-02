@@ -184,7 +184,7 @@ func (h *Handler) HandleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 	// A "Default" library workflow, so its Workflows and
 	// Steps pages are never empty.
-	if err := ensureDefaultWorkflow(r.Context(), q, tenant.ID); err != nil {
+	if err := EnsureDefaultWorkflow(r.Context(), q, tenant.ID); err != nil {
 		httputil.ServerError(w, "create", "default workflow")
 		return
 	}

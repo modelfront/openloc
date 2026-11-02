@@ -74,7 +74,9 @@ func utf16Len(s string) int {
 type spellcheckJobResponse struct {
 	Data struct {
 		Results []struct {
-			TranslationID int64 `json:"translation_id"`
+			TranslationID int64  `json:"translation_id"`
+			Text          string `json:"text"`
+			SourceText    string `json:"source_text"`
 			Matches       []struct {
 				Offset       int `json:"offset"`
 				Length       int `json:"length"`
@@ -165,6 +167,10 @@ func TestIntegrationSpellcheckJob_ReturnsMatches(t *testing.T) {
 	// Offset must point at "adresse" so a Change lands on the right characters.
 	if want := 21; got.Matches[0].Offset != want {
 		t.Errorf("offset = %d, want %d", got.Matches[0].Offset, want)
+	}
+	// The review shows the checked text and its source without holding the file.
+	if got.Text != "Senden Sie es an die adresse unten." || got.SourceText == "" {
+		t.Errorf("text = %q, source = %q, want the checked target and its source", got.Text, got.SourceText)
 	}
 }
 

@@ -100,13 +100,13 @@ export interface ChatUpload {
   expires_at: string;
 }
 
-export async function uploadChatFile(file: File): Promise<ChatUpload> {
+export async function uploadChatFile(file: File, signal?: AbortSignal): Promise<ChatUpload> {
   const form = new FormData();
   form.append('file', file);
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token && token !== '__cookie_auth__') headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/chat/uploads`, { method: 'POST', credentials: 'same-origin', headers, body: form });
+  const res = await fetch(`${BASE}/chat/uploads`, { method: 'POST', credentials: 'same-origin', headers, body: form, signal });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, errorMessageFromBody(body, res.statusText), body);
   return (body as { data: ChatUpload }).data;
@@ -163,8 +163,11 @@ export interface ChatStreamHandlers {
   onText: (delta: string) => void;
   onToolStart: (tool: string) => void;
   onToolEnd: (tool: string, ok: boolean) => void;
+  /** The stream opened in this conversation, which already holds the message. */
+  onStart?: (info: { conversation_id: number }) => void;
   onDone: (info: { conversation_id: number }) => void;
-  onError: (message: string) => void;
+  /** `interrupted`: the connection broke; the server sent no error of its own. */
+  onError: (message: string, opts?: { interrupted?: boolean }) => void;
   /**
    * The model asked the browser to act — {action: "navigate",
    * path} or {action: "render_chart", chart}. Paths are
@@ -265,7 +268,16 @@ export async function sendChatMessage(
   };
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        // A dropped connection rejects the read with the browser's own text
+        // ("Error in input stream" in Safari); the user gets ours instead.
+        if (signal?.aborted) throw err;
+        break;
+      }
+      const { done, value } = chunk;
       if (done) break;
       handlers.onAlive?.();
       buffer += decoder.decode(value, { stream: true });
@@ -279,7 +291,7 @@ export async function sendChatMessage(
     // timeout, backend crash, network drop). Report it, or the panel hangs
     // with no explanation.
     if (!terminal) {
-      handlers.onError('connection to the assistant was interrupted — try again');
+      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true });
     }
   } finally {
     reader.releaseLock();
@@ -310,6 +322,9 @@ export function dispatchFrame(frame: string, handlers: ChatStreamHandlers): void
       break;
     case 'tool_end':
       handlers.onToolEnd((payload.tool as string) ?? '', Boolean(payload.ok));
+      break;
+    case 'start':
+      handlers.onStart?.({ conversation_id: Number(payload.conversation_id) });
       break;
     case 'done':
       handlers.onDone({ conversation_id: Number(payload.conversation_id) });

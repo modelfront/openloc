@@ -2,7 +2,6 @@ package issues_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,8 +56,8 @@ func TestIntegrationIssue_CreateAndReadBack(t *testing.T) {
 		}
 	}
 
-	if s := subjects(f.outbox, operatorEmail); len(s) != 1 || s[0] != fmt.Sprintf("Issue #%d: Export does nothing", created.Data.ID) {
-		t.Errorf("operator emails = %v", s)
+	if s := subjects(f.outbox, operatorEmail); len(s) != 0 {
+		t.Errorf("operator emails = %v, want none for a new issue", s)
 	}
 
 	var list struct{ Data []issues.IssueView }
@@ -202,15 +201,14 @@ func TestIntegrationIssue_RefusesBadInput(t *testing.T) {
 	}
 }
 
-// The eleventh issue in an hour is refused.
-func TestIntegrationIssue_RateLimit(t *testing.T) {
+// A member may file any number of issues in an hour.
+func TestIntegrationIssue_NoIssueLimit(t *testing.T) {
 	f := newFixture(t)
-	for i := 0; i < 10; i++ {
-		f.report(t, "Issue "+itoa(int64(i)))
-	}
-	rec := f.asMember(t, "/api/issues", f.reporter.ID, f.tenant.ID, bugFields("One more"))
-	if rec.Code != http.StatusTooManyRequests || errorCode(t, rec) != "issue_rate_limited" {
-		t.Errorf("11th issue: %d %s", rec.Code, rec.Body.String())
+	for i := 0; i < 12; i++ {
+		rec := f.asMember(t, "/api/issues", f.reporter.ID, f.tenant.ID, bugFields("Issue "+itoa(int64(i))))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("issue %d: %d %s", i+1, rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -255,22 +253,14 @@ func TestIntegrationIssue_ViaAssistantOnly(t *testing.T) {
 	}
 }
 
-// A member may write 30 comments an hour; the 31st is refused. Operators are
-// not limited.
-func TestIntegrationIssue_CommentLimit(t *testing.T) {
+// A member may write any number of comments in an hour.
+func TestIntegrationIssue_NoCommentLimit(t *testing.T) {
 	f := newFixture(t)
 	issue := f.report(t, "Chatty")
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 31; i++ {
 		if rec := f.asMember(t, issuePath(issue.ID, "/comments"), f.reporter.ID, f.tenant.ID, map[string]string{"body": "more " + itoa(int64(i))}); rec.Code != http.StatusCreated {
-			t.Fatalf("comment %d: %d %s", i, rec.Code, rec.Body.String())
+			t.Fatalf("comment %d: %d %s", i+1, rec.Code, rec.Body.String())
 		}
-	}
-	rec := f.asMember(t, issuePath(issue.ID, "/comments"), f.reporter.ID, f.tenant.ID, map[string]string{"body": "one more"})
-	if rec.Code != http.StatusTooManyRequests || errorCode(t, rec) != "issue_rate_limited" {
-		t.Errorf("31st comment: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := f.operatorMultipart(t, platformPath(issue.ID, "/comments"), map[string]string{"body": "Operators are not limited."}); rec.Code != http.StatusCreated {
-		t.Errorf("operator comment: %d", rec.Code)
 	}
 }
 

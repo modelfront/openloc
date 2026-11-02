@@ -72,20 +72,35 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 		httputil.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	f, err := listFilter(r)
-	if writeError(w, r, err, "load", "issues") {
-		return
-	}
-	cursor, err := ParseCursor(r.URL.Query().Get("cursor"))
+	f, err := listFilter(r, false)
 	if writeError(w, r, err, "load", "issues") {
 		return
 	}
 	p := httputil.ParseCursor(r, 100)
-	items, err := h.svc.List(r.Context(), rep, f, cursor, p.Limit+1)
+	items, next, err := h.svc.List(r.Context(), rep, f, r.URL.Query().Get("cursor"), p.Limit)
 	if writeError(w, r, err, "load", "issues") {
 		return
 	}
-	writePage(w, items, p.Limit)
+	writePage(w, items, next)
+}
+
+// HandleCount is GET /api/issues/count: how many issues the list shows with
+// the same filters, over every page.
+func (h *Handler) HandleCount(w http.ResponseWriter, r *http.Request) {
+	rep, ok := memberFrom(r)
+	if !ok {
+		httputil.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	f, err := listFilter(r, false)
+	if writeError(w, r, err, "count", "issues") {
+		return
+	}
+	n, err := h.svc.Count(r.Context(), rep, f)
+	if writeError(w, r, err, "count", "issues") {
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"count": n})
 }
 
 // HandleGet is GET /api/issues/{issueID}.
@@ -202,19 +217,16 @@ func memberAndID(w http.ResponseWriter, r *http.Request) (Member, int64, bool) {
 }
 
 // listFilter reads the list filters, each a comma-separated query parameter,
-// the search text (q), and the order: sort=-updated (the default, newest
-// first) or sort=updated. The operators' own filters are read by their
-// handler only.
-func listFilter(r *http.Request) (Filter, error) {
+// the search text (q), and the order (sort, see ParseSort; platform is the
+// support team's list, which sorts by more keys). The operators' own filters
+// are read by their handler only.
+func listFilter(r *http.Request, platform bool) (Filter, error) {
 	q := r.URL.Query()
 	f := Filter{Statuses: queryList(r, "status"), Kinds: queryList(r, "kind"), Areas: queryList(r, "area"),
 		Severities: queryList(r, "severity"), Search: q.Get("q")}
-	switch q.Get("sort") {
-	case "", "-updated":
-	case "updated":
-		f.OldestFirst = true
-	default:
-		return Filter{}, clientError("Sort by updated or -updated.")
+	var err error
+	if f.Sort, err = ParseSort(q.Get("sort"), platform); err != nil {
+		return Filter{}, err
 	}
 	return f, nil
 }
@@ -286,23 +298,10 @@ func isUnexpected(err error) bool {
 	return !errors.Is(err, pgx.ErrNoRows)
 }
 
-// pageItem is an issue of a list page, for either side.
-type pageItem interface{ position() Cursor }
-
-func (v IssueView) position() Cursor { return Cursor{At: v.UpdatedAt, ID: v.ID} }
-
 // writePage writes one page of a list: the items, and the cursor of the next
 // page when there is one.
-func writePage[T pageItem](w http.ResponseWriter, items []T, limit int32) {
-	hasMore := int32(len(items)) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-	var next Cursor
-	if len(items) > 0 {
-		next = items[len(items)-1].position()
-	}
-	httputil.JSON(w, http.StatusOK, map[string]any{"data": items, "cursor": next.String(), "has_more": hasMore})
+func writePage[T any](w http.ResponseWriter, items []T, next string) {
+	httputil.JSON(w, http.StatusOK, map[string]any{"data": items, "cursor": next, "has_more": next != ""})
 }
 
 // writeAttachment sends a stored file. An image (by its sniffed bytes) is

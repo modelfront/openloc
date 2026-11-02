@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/logging"
 	"openloc/internal/ptr"
 )
 
@@ -37,7 +38,7 @@ func NewServiceWithPool(q db.Querier, pool *pgxpool.Pool) *Service {
 }
 
 // ErrNoQAProfile is returned by RunAndPersistJob when the job's project has no
-// QA profile assigned. Callers map it to a 400 / model-visible error.
+// QA profile assigned. Callers map it to a 409 / model-visible error.
 var ErrNoQAProfile = errors.New("project has no QA profile assigned")
 
 // inTx runs fn with a transaction-scoped querier when a pool is available, and
@@ -115,21 +116,25 @@ func ConceptsFromLookupRows(rows []db.LookupSettingsTermsRow) []ConceptForQA {
 	return GroupConcepts(trs)
 }
 
-// ruleSet is the enabled subset of a QA profile: check_type → severity, plus
-// the per-check JSON config where one is set.
+// ruleSet is the enabled subset of a QA profile for one target language:
+// built-in check_type → severity, the per-check JSON config where one is set,
+// and the regex rules that apply to the language.
 type ruleSet struct {
 	severity map[string]string
 	configs  map[string][]byte
+	regex    []regexRule
+	// numberFormat is the number_format rule's parsed config, when the rule is on.
+	numberFormat NumberFormatConfig
 }
 
-func (rs ruleSet) empty() bool { return len(rs.severity) == 0 }
+func (rs ruleSet) empty() bool { return len(rs.severity) == 0 && len(rs.regex) == 0 }
 
 func (rs ruleSet) enabled(checkType string) bool {
 	_, ok := rs.severity[checkType]
 	return ok
 }
 
-func (s *Service) loadRules(ctx context.Context, qaProfileID int64) (ruleSet, error) {
+func (s *Service) loadRules(ctx context.Context, qaProfileID int64, targetLanguage string) (ruleSet, error) {
 	rules, err := s.queries.ListQARules(ctx, qaProfileID)
 	if err != nil {
 		return ruleSet{}, fmt.Errorf("list QA rules: %w", err)
@@ -139,11 +144,28 @@ func (s *Service) loadRules(ctx context.Context, qaProfileID int64) (ruleSet, er
 		configs:  make(map[string][]byte),
 	}
 	for _, rule := range rules {
-		if rule.Enabled {
-			rs.severity[rule.CheckType] = rule.Severity
-			if len(rule.Config) > 2 { // skip empty "{}"
-				rs.configs[rule.CheckType] = rule.Config
+		if !rule.Enabled {
+			continue
+		}
+		if rule.CheckType == "number_format" {
+			if rs.numberFormat, err = ParseNumberFormatConfig(rule.Config); err != nil {
+				logging.Warn(ctx, err, "number_format config malformed; using defaults", "qa-number-format-config-malformed", logging.QAProfileID(qaProfileID))
 			}
+		}
+		if rule.CheckType == RegexCheckType {
+			rr, err := compileRegexRule(rule)
+			if err != nil {
+				logging.Warn(ctx, err, "stored regex QA rule is invalid; skipped", "qa.regex_rule_invalid", logging.QAProfileID(rule.ProfileID), logging.Label("qa_check_type", RegexFindingCheckType(rule.ID)))
+				continue
+			}
+			if rr.appliesTo(targetLanguage) {
+				rs.regex = append(rs.regex, rr)
+			}
+			continue
+		}
+		rs.severity[rule.CheckType] = rule.Severity
+		if len(rule.Config) > 2 { // skip empty "{}"
+			rs.configs[rule.CheckType] = rule.Config
 		}
 	}
 	return rs, nil
@@ -162,7 +184,7 @@ type segmentScope struct {
 // checkSegment runs the pure checks for one segment. The glossary concepts
 // (when terminology or forbidden_terms is enabled — either rule needs them)
 // and the sibling targets for the consistency check come from lk.
-func (s *Service) checkSegment(ctx context.Context, rs ruleSet, lk segmentLookups, translationID int64, source, target, sourceRich, targetRich string) []Issue {
+func (s *Service) checkSegment(ctx context.Context, rs ruleSet, sc segmentScope, lk segmentLookups, translationID int64, source, target, sourceRich, targetRich string) []Issue {
 	var concepts []ConceptForQA
 	if rs.enabled("terminology") || rs.enabled("forbidden_terms") {
 		concepts = lk.concepts(ctx, source)
@@ -176,11 +198,22 @@ func (s *Service) checkSegment(ctx context.Context, rs ruleSet, lk segmentLookup
 		Rules:          rs.severity,
 		RuleConfigs:    rs.configs,
 		Concepts:       concepts,
+		SourceLanguage: sc.sourceLanguage,
+		TargetLanguage: sc.targetLanguage,
+		NumberFormat:   rs.numberFormat,
 	})
 
 	if sev, ok := rs.severity["consistency"]; ok {
 		if issue := CheckConsistency(target, lk.otherTargets(ctx, translationID, source), sev); issue != nil {
 			issues = append(issues, *issue)
+		}
+	}
+	if len(rs.regex) > 0 {
+		src, tgt := regexTexts(source, target, sourceRich, targetRich)
+		for _, rr := range rs.regex {
+			if issue := rr.check(src, tgt); issue != nil {
+				issues = append(issues, *issue)
+			}
 		}
 	}
 	return issues
@@ -252,7 +285,7 @@ func (s *Service) CheckTranslationProposal(ctx context.Context, params CheckProp
 
 	// Step 3: load enabled rules. Same loader as the run-job path so stale
 	// configs (rules disabled mid-edit) are honored consistently.
-	rs, err := s.loadRules(ctx, *profile.QaProfileID)
+	rs, err := s.loadRules(ctx, *profile.QaProfileID, tr.TargetLanguage)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -269,13 +302,14 @@ func (s *Service) CheckTranslationProposal(ctx context.Context, params CheckProp
 	// this transactional moment). Source comes from the segment record
 	// (server-trusted) so a client can't fabricate a "clean source"
 	// that hides errors.
-	issues := s.checkSegment(ctx, rs, dbLookups{s: s, sc: segmentScope{
+	sc := segmentScope{
 		fileID:            file.ID,
 		settingsProfileID: project.SettingsProfileID,
 		sourceLanguage:    project.SourceLanguage,
 		targetLanguage:    tr.TargetLanguage,
 		projectDomain:     ptr.Deref(project.Domain),
-	}}, tr.ID, seg.SourceText, params.ProposedText, ptr.Deref(seg.SourceRichText), params.ProposedRichText)
+	}
+	issues := s.checkSegment(ctx, rs, sc, dbLookups{s: s, sc: sc}, tr.ID, seg.SourceText, params.ProposedText, ptr.Deref(seg.SourceRichText), params.ProposedRichText)
 
 	// Step 5: carry over ignore state from the stored findings.
 	stored, err := s.queries.ListQAResultsForTranslation(ctx, tr.ID)

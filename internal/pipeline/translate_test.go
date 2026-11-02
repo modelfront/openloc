@@ -818,8 +818,9 @@ func TestTranslateFile_ChunkedMT_PartialFailure(t *testing.T) {
 }
 
 // A provider error partway (rate limited, 5xx) is the usual reason a run is
-// retried. It becomes a message the user can act on, and the outcome still
-// carries what was saved before it.
+// retried. A 5xx is the vendor's outage: a VendorOutageError, worded for the
+// user and still reported, and the outcome still carries what was saved
+// before it.
 func TestTranslateFile_ChunkedMT_ProviderFailureKeepsTheSavedCount(t *testing.T) {
 	mq := newMockQuerier()
 	mq.addFileProject(1, 10, nil, "en", []string{"de"})
@@ -837,9 +838,9 @@ func TestTranslateFile_ChunkedMT_ProviderFailureKeepsTheSavedCount(t *testing.T)
 	svc := newService(mq, &passthroughTxRunner{q: mq}, nil, func(string, string, string, map[string]any) (mt.Engine, error) { return engine, nil })
 	outcome, err := svc.TranslateFile(context.Background(), int64(1), 1, "en", "de", nil, FullPipeline)
 
-	var clientErr *httputil.ClientError
-	if !IsMTFailure(err) || !errors.As(err, &clientErr) {
-		t.Fatalf("err = %v, want an MT failure carrying the provider message", err)
+	var outage *VendorOutageError
+	if !IsMTFailure(err) || !errors.As(err, &outage) || !strings.Contains(outage.Message, "having a problem right now") {
+		t.Fatalf("err = %v, want an MT failure carrying the outage message", err)
 	}
 	if outcome.MTTranslated != 30 || outcome.MTEngine != "mock" {
 		t.Errorf("outcome = %d segments by %q after a provider failure, want the 30 saved segments by mock", outcome.MTTranslated, outcome.MTEngine)

@@ -49,8 +49,8 @@ var (
 	ErrLocked = errors.New("segment is locked")
 	// ErrConflict: expected_updated_at no longer matches — someone else wrote.
 	ErrConflict = errors.New("translation was updated by another user")
-	// ErrNotFirstStep: clear is only available in the first workflow step.
-	ErrNotFirstStep = errors.New("clear is only available in the first workflow step")
+	// ErrPastClearStep: the job is past its first human or hybrid step.
+	ErrPastClearStep = errors.New("clear is only available up to the first human or hybrid workflow step")
 )
 
 // QABlockedError is returned when QA errors block a confirm.
@@ -342,8 +342,8 @@ func (s *Service) preflightClear(ctx context.Context, tenantID, userID, fileID, 
 	if err != nil {
 		return db.Translation{}, taskedit.Decision{}, err
 	}
-	if !edit.InFirstStep() {
-		return db.Translation{}, taskedit.Decision{}, ErrNotFirstStep
+	if !edit.InClearWindow() {
+		return db.Translation{}, taskedit.Decision{}, ErrPastClearStep
 	}
 	return existing, edit, nil
 }

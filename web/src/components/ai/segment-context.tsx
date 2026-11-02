@@ -33,7 +33,7 @@ export const SEGMENT_CONTEXT_FIELDS: SegmentContextField[] = [
   {
     key: 'terms',
     label: 'Glossary terms',
-    description: 'The approved and forbidden terms that appear in this segment’s source text.',
+    description: 'The approved and forbidden terms that appear in this segment’s source text, with each concept’s definition, domain and notes when filled in. These tell apart two meanings of one source term.',
   },
 ]
 

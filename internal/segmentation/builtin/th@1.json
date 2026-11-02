@@ -1,0 +1,12 @@
+{
+  "id": "builtin:th@1",
+  "name": "Thai",
+  "source_language": "th",
+  "description": "Thai has no sentence-ending punctuation, so each paragraph is one segment.",
+  "rule_set": {
+    "mode": "paragraph",
+    "rules": [],
+    "abbreviations": [],
+    "number_abbreviations": []
+  }
+}

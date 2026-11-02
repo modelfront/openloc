@@ -35,3 +35,5 @@ export function ChatAskCard({ reason, status, state, testId, children }: {
 
 /** Why a request's buttons wait while the answer that brought it still streams. */
 export const WAIT_FOR_ANSWER = 'Wait for the answer to finish.'
+/** An older ask the assistant has since replaced with a newer one. */
+export const REPLACED_BY_NEWER_ASK = 'The assistant asked again below. Use the newest request.'

@@ -86,8 +86,13 @@ func (h *Handler) HandleRerun(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		logging.Error(ctx, err, "re-run enqueue failed; job left failed", "job-rerun-enqueue-failed", logging.JobID(job.ID))
-		// Put the error back so the task still reads as errored.
-		if rerr := h.queries.UpdateJobError(ctx, db.UpdateJobErrorParams{ID: job.ID, ErrorMessage: job.ErrorMessage}); rerr != nil {
+		// Put the error and the progress counts back so the task still reads
+		// as the failed run left it.
+		rerr := h.queries.UpdateJobError(ctx, db.UpdateJobErrorParams{ID: job.ID, ErrorMessage: job.ErrorMessage})
+		if rerr == nil {
+			rerr = h.queries.RestoreJobProgress(ctx, db.RestoreJobProgressParams{ID: job.ID, TranslatedCount: job.TranslatedCount, TotalCount: job.TotalCount})
+		}
+		if rerr != nil {
 			logging.Error(ctx, rerr, "restoring the failed state after a re-run enqueue error failed", "job-rerun-restore-failed", logging.JobID(job.ID))
 		}
 		httputil.ServerError(w, "queue", "re-run")

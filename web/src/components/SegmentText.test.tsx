@@ -3,7 +3,7 @@ import { render } from '@testing-library/react'
 import { SegmentText, HighlightedSource } from './SegmentRow.shared'
 import type { TermLookupResult } from '../api'
 import { TM_DIFF_TINT } from '../lib/tm-diff'
-import { SEARCH_HIT_TINT } from '../lib/text-highlight'
+import { HIGHLIGHT_TINT, SEARCH_HIT_TINT } from '../lib/text-highlight'
 import { markTexts } from '../test/text-marks'
 
 // SegmentText is the single read-only text renderer used by TM Browser,
@@ -409,5 +409,17 @@ describe('search hit highlight', () => {
     const { container } = render(<SegmentText text="Cancel" search={/save/gi} />)
     expect(container.querySelector(HIT)).toBeNull()
     expect(container.textContent).toBe('Cancel')
+  })
+})
+
+// Placeables send a row down the range paths; the Find term must still show.
+describe('find highlight next to placeables', () => {
+  const HIT = `span[class~="${HIGHLIGHT_TINT}"]`
+
+  it('marks the find term as usual on a source that has placeables, and keeps the placeable marks', () => {
+    const placeables = [{ kind: 'number', text: '24' }]
+    const { container } = render(<SegmentText text="Free cancellation until 24 hours" highlightTerm="cancellation" placeables={placeables} />)
+    expect(markTexts(container, HIT)).toEqual(['cancellation'])
+    expect(container.querySelector('[data-placeable="24"]')).not.toBeNull()
   })
 })

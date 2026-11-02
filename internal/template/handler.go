@@ -36,11 +36,13 @@ type templateResponse struct {
 	MtOnUpload            bool    `json:"mt_on_upload"`
 	TmOnUpload            bool    `json:"tm_on_upload"`
 	QaProfileID           *int64  `json:"qa_profile_id"`
+	SegmentationProfileID *int64  `json:"segmentation_profile_id"`
 	SublanguagePenaltyPct int32   `json:"sublanguage_penalty_pct"`
 	NearExactPenaltyPct   int32   `json:"near_exact_penalty_pct"`
 	TMLookupOrder         string  `json:"tm_lookup_order"`
 	AutoComplete          bool    `json:"auto_complete"`
 	InlineHTML            bool    `json:"inline_html"`
+	LinguistTerms         string  `json:"linguist_terms"`
 	WorkflowID            *int64  `json:"workflow_id"`
 	WorkflowName          *string `json:"workflow_name"`
 	MTRouterID            *int64  `json:"mt_router_id"`
@@ -57,10 +59,12 @@ func (h *Handler) newTemplateResponse(ctx context.Context, tmpl db.Template, pro
 		MtOnUpload:            profile.MtOnUpload,
 		TmOnUpload:            profile.TmOnUpload,
 		QaProfileID:           profile.QaProfileID,
+		SegmentationProfileID: profile.SegmentationProfileID,
 		SublanguagePenaltyPct: profile.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   profile.NearExactPenaltyPct,
 		AutoComplete:          profile.AutoComplete,
 		InlineHTML:            profile.InlineHtml,
+		LinguistTerms:         profile.LinguistTerms,
 		TMLookupOrder:         profile.TmLookupOrder,
 		WorkflowID:            profile.WorkflowID,
 		WorkflowName:          settings.WorkflowName(ctx, h.queries, tmpl.TenantID, profile.WorkflowID),
@@ -180,12 +184,14 @@ func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 			TmOnUpload            *bool           `json:"tm_on_upload"`
 			AutoComplete          *bool           `json:"auto_complete"`
 			InlineHTML            *bool           `json:"inline_html"`
+			LinguistTerms         *string         `json:"linguist_terms"`
 			SublanguagePenaltyPct *int32          `json:"sublanguage_penalty_pct"`
 			NearExactPenaltyPct   *int32          `json:"near_exact_penalty_pct"`
 			TMLookupOrder         *string         `json:"tm_lookup_order"`
 			TMProfileID           *int64          `json:"tm_profile_id"`
 			QAProfileID           json.RawMessage `json:"qa_profile_id"`
 			MTRouterID            *int64          `json:"mt_router_id"`
+			SegmentationProfileID *int64          `json:"segmentation_profile_id"`
 		} `json:"settings"`
 		TMAssignments   []settings.TMAssignmentInput   `json:"tm_assignments"`
 		TermAssignments []settings.TermAssignmentInput `json:"term_assignments"`
@@ -205,6 +211,7 @@ func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		cfg.TmOnUpload = req.Settings.TmOnUpload
 		cfg.AutoComplete = req.Settings.AutoComplete
 		cfg.InlineHTML = req.Settings.InlineHTML
+		cfg.LinguistTerms = req.Settings.LinguistTerms
 		cfg.SublanguagePenaltyPct = req.Settings.SublanguagePenaltyPct
 		cfg.NearExactPenaltyPct = req.Settings.NearExactPenaltyPct
 		cfg.TMLookupOrder = req.Settings.TMLookupOrder
@@ -214,6 +221,7 @@ func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		if req.Settings.MTRouterID != nil && *req.Settings.MTRouterID > 0 {
 			cfg.MTRouterID = req.Settings.MTRouterID
 		}
+		cfg.SegmentationProfileID = req.Settings.SegmentationProfileID
 		qa, err := parseQAProfileID(req.Settings.QAProfileID, "settings.qa_profile_id")
 		if err != nil {
 			httputil.BadRequest(w, err.Error())
@@ -336,9 +344,10 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		MtOnUpload *bool   `json:"mt_on_upload"`
 		TmOnUpload *bool   `json:"tm_on_upload"`
 		// Absent leaves the stored value.
-		AutoComplete *bool           `json:"auto_complete"`
-		InlineHTML   *bool           `json:"inline_html"`
-		MTRouterID   json.RawMessage `json:"mt_router_id"`
+		AutoComplete  *bool           `json:"auto_complete"`
+		InlineHTML    *bool           `json:"inline_html"`
+		LinguistTerms *string         `json:"linguist_terms"`
+		MTRouterID    json.RawMessage `json:"mt_router_id"`
 		// TM match penalties — absent leaves the stored value.
 		SublanguagePenaltyPct *int32 `json:"sublanguage_penalty_pct"`
 		NearExactPenaltyPct   *int32 `json:"near_exact_penalty_pct"`
@@ -346,6 +355,8 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		TMLookupOrder  *string         `json:"tm_lookup_order"`
 		FuzzyThreshold *float32        `json:"fuzzy_threshold"`
 		QAProfileID    json.RawMessage `json:"qa_profile_id"`
+		// Absent keeps the stored profile while it fits the language.
+		SegmentationProfileID *int64 `json:"segmentation_profile_id"`
 		// Link to a TM profile; `null` is refused (use the detach endpoint).
 		TMProfileID     json.RawMessage `json:"tm_profile_id"`
 		CustomerID      json.RawMessage `json:"customer_id"`
@@ -361,9 +372,10 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	in := UpdateInput{
 		Name: req.Name, MtOnUpload: req.MtOnUpload, TmOnUpload: req.TmOnUpload,
 		AutoComplete: req.AutoComplete, InlineHTML: req.InlineHTML, FuzzyThreshold: req.FuzzyThreshold,
+		LinguistTerms:         req.LinguistTerms,
 		SublanguagePenaltyPct: req.SublanguagePenaltyPct, NearExactPenaltyPct: req.NearExactPenaltyPct,
-		TMLookupOrder: req.TMLookupOrder,
-		ProjectName:   req.ProjectName, Domain: req.Domain,
+		TMLookupOrder: req.TMLookupOrder, SegmentationProfile: req.SegmentationProfileID,
+		ProjectName: req.ProjectName, Domain: req.Domain,
 		SourceLanguage: req.SourceLanguage, TargetLanguages: req.TargetLanguages,
 	}
 	if len(req.CustomerID) > 0 {

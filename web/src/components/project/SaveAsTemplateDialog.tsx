@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 
@@ -24,8 +24,9 @@ interface Props {
  * outside the page's <form>, so its submit never reaches the project form.
  */
 export function SaveAsTemplateDialog({ open, onOpenChange, defaultName, onSave }: Props) {
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<Values>({
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting, isValid } } = useForm<Values>({
     resolver: zodResolver(schema),
+    mode: 'onTouched',
     defaultValues: { name: defaultName },
   })
   // The form is mounted persistently; re-seed the name on each open.
@@ -50,7 +51,7 @@ export function SaveAsTemplateDialog({ open, onOpenChange, defaultName, onSave }
           </FormField>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>Cancel</Button>
-            <Button type="submit" disabled={isSubmitting} data-testid="save-as-template-confirm">
+            <Button type="submit" disabled={isSubmitting || !isValid} disabledReason={isValid ? undefined : MISSING_REQUIRED_REASON} data-testid="save-as-template-confirm">
               {isSubmitting ? 'Saving...' : 'Save template'}
             </Button>
           </DialogFooter>

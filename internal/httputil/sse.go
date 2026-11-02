@@ -3,6 +3,7 @@ package httputil
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -37,6 +38,11 @@ func StartSSE(w http.ResponseWriter) (*SSE, bool) {
 	// nginx: pass each event through instead of buffering the response.
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	// A compressing middleware sends no headers until the body has bytes, so
+	// the stream opens with a comment rather than waiting for its first event.
+	if _, err := io.WriteString(w, ": open\n\n"); err != nil {
+		return nil, false
+	}
 	f.Flush()
 	return &SSE{w: w, f: f}, true
 }

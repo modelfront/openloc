@@ -2,7 +2,8 @@
 // These tests pin the two halves of that — the preset table's assignments, and
 // that each exported component actually renders its own entry.
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import {
   AIStepChip,
   HumanStepChip,
@@ -13,6 +14,7 @@ import {
   type StepTypePresetKey,
 } from './chip-presets'
 import { CHIP_PRESET_COLORS } from './chip'
+import { TooltipProvider } from './tooltip'
 
 afterEach(cleanup)
 
@@ -122,11 +124,19 @@ describe('OverflowChip', () => {
     expect(el.className).toContain('ml-1')
   })
 
-  it('carries a tooltip only when the caller supplies one', () => {
-    const { unmount } = render(<OverflowChip count={2} title="2 more" />)
-    expect(screen.getByText('+2')).toHaveAttribute('title', '2 more')
+  it('shows a tooltip on hover, and takes keyboard focus, only when the caller supplies one', async () => {
+    const user = userEvent.setup()
+    // The app's provider opens at once by default; Base UI alone waits 600 ms.
+    const { unmount } = render(<TooltipProvider><OverflowChip count={2} tooltip="es, it" /></TooltipProvider>)
+    const chip = screen.getByText('+2')
+    expect(chip).toHaveAttribute('tabindex', '0')
+    expect(chip).not.toHaveAttribute('title')
+    await user.hover(chip)
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent('es, it')
+    })
     unmount()
     render(<OverflowChip count={2} />)
-    expect(screen.getByText('+2')).not.toHaveAttribute('title')
+    expect(screen.getByText('+2')).not.toHaveAttribute('tabindex')
   })
 })

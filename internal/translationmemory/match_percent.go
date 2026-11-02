@@ -55,6 +55,13 @@ func ExactPercent(prevHash, nextHash *string, segment *NeighborContext) int16 {
 // (the pg_trgm score when the Scorer declines an over-cap input), then the
 // penalties.
 func HitScore(scorer Scorer, p Penalties, query string, tmID int64, wantSrc, wantTgt string, hit db.FuzzyLookupTMRow) float64 {
+	score, _ := HitScoreInfo(scorer, p, query, tmID, wantSrc, wantTgt, hit)
+	return score
+}
+
+// HitScoreInfo is HitScore plus the MatchInfo the penalties were charged on,
+// for a caller that explains the score with Penalties.Breakdown.
+func HitScoreInfo(scorer Scorer, p Penalties, query string, tmID int64, wantSrc, wantTgt string, hit db.FuzzyLookupTMRow) (float64, MatchInfo) {
 	score, ok := scorer.Score(query, hit.SourceText)
 	info := MatchInfo{
 		TMID:    tmID,
@@ -67,14 +74,21 @@ func HitScore(scorer Scorer, p Penalties, query string, tmID int64, wantSrc, wan
 	if !ok {
 		score = float64(hit.Score)
 	}
-	return p.Apply(score, info)
+	return p.Apply(score, info), info
+}
+
+// IsExactHit reports whether a candidate HitScore rated score is an exact
+// match: a byte-identical source with no penalty. A fuzzy hit can round to
+// 100% without being one.
+func IsExactHit(query string, hit db.FuzzyLookupTMRow, score float64) bool {
+	return hit.SourceText == query && score == 1
 }
 
 // HitPercent is the Match-column percentage of a candidate HitScore rated
-// score: a byte-identical source with no penalty is an exact match (100, or
-// 101 in context), anything else ScoreToPercent.
+// score: an exact match (IsExactHit) is 100, or 101 in context, anything else
+// ScoreToPercent.
 func HitPercent(query string, hit db.FuzzyLookupTMRow, score float64, segment *NeighborContext) int16 {
-	if hit.SourceText == query && score == 1 {
+	if IsExactHit(query, hit, score) {
 		return ExactPercent(hit.PrevSourceHash, hit.NextSourceHash, segment)
 	}
 	return ScoreToPercent(score)

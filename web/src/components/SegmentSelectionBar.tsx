@@ -2,11 +2,12 @@
 // actions the user may run here. Actions that make no sense for the role or
 // the workflow step are hidden, not disabled.
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { bulkSegmentAction, getQAReport, runQA, type QAReport, type Translation } from '../api'
+import { bulkSegmentAction, getQAReport, runQA, type QAReport } from '../api'
+import type { IndexRow } from '../lib/editor-index'
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { useJobPipelineActions } from '../hooks/useJobPipelineActions'
 import { qaSelectionToast } from '../lib/qa-findings'
@@ -20,6 +21,7 @@ import { count } from '../lib/plural'
 import { selectionLabel } from '../lib/segment-selection'
 import { handleTaskReopened, taskLockFailure } from '../lib/task-edit'
 import ConfirmDialog from './ConfirmDialog'
+import { LockGlyph } from './SegmentStatusIcon'
 import { PretranslateItem } from './JobPipelineActions'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SelectionBar, SelectionBarDivider } from '@/components/list/SelectionBar'
@@ -32,17 +34,24 @@ interface Props {
   picked: number[]
   /** Every selected id, including the ones the filter hides. */
   selectedCount: number
-  translationsById: ReadonlyMap<number, Translation>
+  /** Index rows by translation id: what the counts on the buttons read. */
+  translationsById: ReadonlyMap<number, Pick<IndexRow, 'locked' | 'hasText' | 'status'>>
   /** Confirm: the task takes edits. */
   canConfirm: boolean
   /** Lock approves the segments: managers, while the task takes edits. */
   canLock: boolean
   /** Unlock: anyone, while the task takes edits. */
   canUnlock: boolean
-  /** Clear: managers, on the first step, while the task takes edits. */
+  /** Clear: anyone who may edit the task, up to the first human or hybrid step. */
   canClear: boolean
   /** Pre-translate: first step, the task takes edits, no run holds the job. */
   canPretranslate: boolean
+  /** Why Run QA is off, when it is (the project has no QA profile). */
+  qaDisabledReason?: string
+  /** Joins the selected rows; absent when the task does not take edits. */
+  onJoin?: () => void
+  /** Why the selected rows cannot be joined, or null when they can. */
+  joinRefusal?: string | null
   /** Runs before any write or check: closes the open segment so its draft is
    *  saved first and its autosave can't race the batch. */
   beforeRun: () => Promise<void>
@@ -56,7 +65,7 @@ interface Props {
 const pending: Record<SegmentBulkAction, string> = { confirm: 'Confirming…', lock: 'Locking…', unlock: 'Unlocking…', clear: 'Clearing…' }
 
 export function SegmentSelectionBar({
-  jobId, projectId, picked, selectedCount, translationsById, canConfirm, canLock, canUnlock, canClear, canPretranslate, beforeRun, onSpellCheck, onFindReplace, onClearSelection,
+  jobId, projectId, picked, selectedCount, translationsById, canConfirm, canLock, canUnlock, canClear, canPretranslate, qaDisabledReason, onJoin, joinRefusal = null, beforeRun, onSpellCheck, onFindReplace, onClearSelection,
 }: Props) {
   const queryClient = useQueryClient()
   const [clearOpen, setClearOpen] = useState(false)
@@ -111,25 +120,26 @@ export function SegmentSelectionBar({
 
   const rows = picked.map(id => translationsById.get(id))
   const lockedCount = rows.filter(t => t?.locked).length
-  const confirmedCount = rows.filter(t => !t?.locked && t?.active_text && (t.status === 'approved' || t.status === 'auto_approved')).length
+  const confirmedCount = rows.filter(t => !t?.locked && t?.hasText && (t.status === 'approved' || t.status === 'auto_approved')).length
 
   // Every action runs on the selected rows the filter shows; when it hides
   // them all, the buttons say so.
   const nothingShown = picked.length === 0
-  const actionButton = (testId: string, label: string, onClick: () => void, variant: 'outline' | 'destructive' = 'outline') => (
+  const actionButton = (testId: string, label: string, onClick: () => void, variant: 'outline' | 'destructive' = 'outline', offReason?: string, icon?: ReactNode) => (
     <Button
       variant={variant}
       size="xs"
+      startIcon={icon}
       onClick={onClick}
-      disabled={busy || nothingShown}
-      disabledReason={nothingShown ? 'The filter hides every selected segment.' : undefined}
+      disabled={busy || nothingShown || !!offReason}
+      disabledReason={nothingShown ? 'The filter hides every selected segment.' : offReason}
       data-testid={testId}
     >
       {label}
     </Button>
   )
-  const button = (action: SegmentBulkAction, label: string, onClick = () => run(action), variant: 'outline' | 'destructive' = 'outline') =>
-    actionButton(`segment-bulk-${action}`, running === action ? pending[action] : label, onClick, variant)
+  const button = (action: SegmentBulkAction, label: string, onClick = () => run(action), variant: 'outline' | 'destructive' = 'outline', icon?: ReactNode) =>
+    actionButton(`segment-bulk-${action}`, running === action ? pending[action] : label, onClick, variant, undefined, icon)
 
   return (
     <>
@@ -147,10 +157,11 @@ export function SegmentSelectionBar({
               <SelectionBarDivider />
             </>
           )}
-          {canLock && button('lock', 'Lock')}
-          {canUnlock && button('unlock', 'Unlock')}
+          {canLock && (nothingShown || lockedCount < rows.length) && button('lock', 'Lock', undefined, undefined, <LockGlyph className="size-3" />)}
+          {canUnlock && (nothingShown || lockedCount > 0) && button('unlock', 'Unlock', undefined, undefined, <LockGlyph className="size-3" />)}
+          {onJoin && actionButton('segment-bulk-join', 'Join', onJoin, 'outline', joinRefusal ?? undefined)}
           <SelectionBarDivider />
-          {actionButton('segment-bulk-qa', qaMut.isPending ? 'Checking…' : 'Run QA', () => qaMut.mutate(picked))}
+          {actionButton('segment-bulk-qa', qaMut.isPending ? 'Checking…' : 'Run QA', () => qaMut.mutate(picked), 'outline', qaDisabledReason)}
           {actionButton('segment-bulk-spellcheck', 'Spell check', onSpellCheck)}
           {actionButton('segment-bulk-find-replace', 'Find & replace', onFindReplace)}
           {(canPretranslate || canClear) && <SelectionBarDivider />}

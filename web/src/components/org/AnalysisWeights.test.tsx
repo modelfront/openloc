@@ -68,4 +68,28 @@ describe('AnalysisWeightsSection', () => {
     expect(screen.queryByDisplayValue('25')).not.toBeInTheDocument()
     expect(client.getQueryState(queryKeys.projectAnalysis.v2(42))?.isInvalidated).toBe(true)
   })
+
+  it('Save is disabled until a weight changes, and again once it is saved', async () => {
+    api.getAnalyticsWeights.mockResolvedValue(serverWeights)
+    api.updateAnalyticsWeights.mockImplementation((w: WeightEntry[]) => Promise.resolve(w))
+    renderWeights()
+    // Re-query each time: the button is remounted when its disabled reason comes or goes.
+    const save = () => screen.getByRole('button', { name: 'Save weights' })
+
+    const exact = await screen.findByDisplayValue('10')
+    expect(save()).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(save())
+    expect(api.updateAnalyticsWeights).not.toHaveBeenCalled()
+
+    fireEvent.change(exact, { target: { value: '25' } })
+    expect(save()).not.toHaveAttribute('aria-disabled')
+    // Back to the stored value: nothing to save again.
+    fireEvent.change(exact, { target: { value: '10' } })
+    expect(save()).toHaveAttribute('aria-disabled', 'true')
+
+    fireEvent.change(exact, { target: { value: '25' } })
+    await userEvent.click(save())
+    await waitFor(() => expect(api.updateAnalyticsWeights).toHaveBeenCalled())
+    await waitFor(() => expect(save()).toHaveAttribute('aria-disabled', 'true'))
+  })
 })

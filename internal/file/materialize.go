@@ -18,6 +18,7 @@ import (
 	"openloc/internal/analysis"
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/httputil"
 	"openloc/internal/logging"
 	"openloc/internal/parser"
 	"openloc/internal/pipeline"
@@ -181,7 +182,7 @@ func (h *Handler) assignWorkflowSteps(ctx context.Context, txq *db.Queries, in i
 			}
 			// Audit-worthy = explicitly configured: a default assignee on the
 			// step, or a deadline. The first-step fallback to the uploader is
-			// bookkeeping — every bare project has a default step.
+			// bookkeeping, not a configured choice.
 			if step.DefaultAssignee == nil && !deadline.Valid {
 				continue
 			}
@@ -353,7 +354,8 @@ var ErrFileChanged = errors.New("file changed while publishing")
 // reads: the stored bytes and the options it was uploaded with.
 func parseInputsChanged(read, locked db.File) bool {
 	return read.Format != locked.Format || read.StoragePath != locked.StoragePath ||
-		read.InlineHtml != locked.InlineHtml || !bytes.Equal(read.XlsxLayout, locked.XlsxLayout)
+		read.InlineHtml != locked.InlineHtml || !bytes.Equal(read.XlsxLayout, locked.XlsxLayout) ||
+		!bytes.Equal(read.Segmentation, locked.Segmentation)
 }
 
 func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project, profile db.SettingsProfile, f db.File, analyze bool) error {
@@ -365,13 +367,20 @@ func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project,
 		doneIngest(err)
 		return fmt.Errorf("read stored file: %w", err)
 	}
-	// Parsed in the mode the file was uploaded with, not today's setting.
-	layout, err := parser.FileXLSXLayout(f.XlsxLayout)
+	// Parsed in the mode and with the segmentation rules the file was uploaded
+	// with, not today's settings, unless the draft's source language changed
+	// since: then with the rules for that language.
+	segmentationJSON, err := h.publishSegmentation(ingestCtx, project, f)
 	if err != nil {
 		doneIngest(err)
-		return fmt.Errorf("read stored xlsx layout: %w", err)
+		return err
 	}
-	p, err := parser.GetParserWith(string(f.Format), parser.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
+	opts, err := parser.FileOptions(f.InlineHtml, f.XlsxLayout, segmentationJSON)
+	if err != nil {
+		doneIngest(err)
+		return err
+	}
+	p, err := parser.GetParserWith(string(f.Format), opts)
 	if err != nil {
 		doneIngest(err)
 		return err
@@ -379,6 +388,9 @@ func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project,
 	segments, err := p.Parse(content)
 	if err != nil {
 		doneIngest(err)
+		if msg, ok := parser.ImportMessage(err); ok {
+			return httputil.NewClientError(msg)
+		}
 		return fmt.Errorf("parse stored file: %w", err)
 	}
 	// The rows were inserted from a parse of the same file, in position order.
@@ -431,6 +443,14 @@ func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project,
 	if parseInputsChanged(f, locked) {
 		doneIngest(ErrFileChanged)
 		return ErrFileChanged
+	}
+	if !bytes.Equal(segmentationJSON, locked.Segmentation) {
+		if locked, err = db.New(tx).UpdateFileSegmentation(ingestCtx, db.UpdateFileSegmentationParams{
+			ID: f.ID, TenantID: project.TenantID, Segmentation: segmentationJSON,
+		}); err != nil {
+			doneIngest(err)
+			return fmt.Errorf("store segmentation snapshot: %w", err)
+		}
 	}
 	in.file = locked
 	if reparse {

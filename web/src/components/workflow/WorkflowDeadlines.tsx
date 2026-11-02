@@ -17,6 +17,9 @@ import { queryKeys } from '@/lib/query-keys'
 import { DeadlinePicker } from '@/components/ui/deadline-picker'
 import { Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Chip } from '@/components/ui/chip'
+import { LanguageCode } from '@/components/ui/language-code'
+import { deadlineChipProps } from '@/lib/deadline'
 import { AddItemButton } from '@/components/list'
 import { MultiCombobox } from '@/components/ui/combobox'
 import { DeleteButton } from '@/components/ui/delete-button'
@@ -38,6 +41,10 @@ interface StepDeadlineProps {
   disabled?: boolean
 }
 
+/** A date's cell at the right of a row. w-30 (7.5rem) fits the longest chip
+ *  ("Due Sep 30, 2027") and no more, or the slack shows as a gap before it. */
+const DATE_CELL = 'flex w-30 shrink-0 justify-end'
+
 /** A step carries a deadline unless it runs itself. */
 function isDatable(step: Pick<WorkflowStep, 'step_type'>): boolean {
   return !isAutomatedStep(step.step_type)
@@ -54,7 +61,7 @@ function patch(p: StepDeadlineProps, change: Partial<WorkflowStep>) {
 }
 
 /** Open state for the per-language blocks, keyed by step position. */
-function useStepLanguageDisclosure() {
+export function useStepLanguageDisclosure() {
   const [open, setOpen] = useState<Record<number, boolean>>({})
   return {
     isOpen: (index: number) => !!open[index],
@@ -79,7 +86,7 @@ interface ColumnProps extends StepDeadlineProps {
  * per-language dates; it is tinted while any language carries one, so a
  * collapsed step still says so.
  */
-function StepDeadlineColumn({ open, onToggle, ...p }: ColumnProps) {
+export function StepDeadlineColumn({ open, onToggle, ...p }: ColumnProps) {
   const step = p.steps[p.index]
   if (!isDatable(step)) return null
 
@@ -96,9 +103,7 @@ function StepDeadlineColumn({ open, onToggle, ...p }: ColumnProps) {
     // block must shrink rather than overflow.
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className={row}>
-        {/* w-30 (7.5rem) fits the longest chip ("Due Sep 30, 2027") and no
-            more, or the slack shows as a gap before the chip. */}
-        <span className="flex w-30 shrink-0 justify-end">
+        <span className={DATE_CELL}>
           <DeadlinePicker
             value={step.deadline}
             onChange={deadline => patch(p, { deadline })}
@@ -306,49 +311,107 @@ function StepLanguageOverrides({
   )
 }
 
+/** The `data-value` the pickers carry, for tests: the instant as ISO, or empty. */
+const isoOrEmpty = (d: string | null | undefined) => (d ? new Date(d).toISOString() : '')
+
+/**
+ * One step's deadlines, read-only: the column above without its controls. The
+ * globe is there only when some language has a date of its own, and lists them.
+ */
+function StepDeadlineView({ step, index, targetLanguages, open, onToggle }: {
+  step: WorkflowStep
+  index: number
+  targetLanguages: string[]
+  open: boolean
+  onToggle: () => void
+}) {
+  if (!isDatable(step)) return null
+  const groups = rowsFromOverrides(step.language_deadlines ?? {}, targetLanguages)
+  const row = 'flex items-center justify-end gap-2'
+  const hint = `Deadline per language (${groups.reduce((n, g) => n + g.langs.length, 0)} set), ${step.name}`
+  const sectionId = `workflow-deadline-langs-${index}`
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <div className={row}>
+        <span className={DATE_CELL}>
+          <Chip {...deadlineChipProps(step.deadline)} data-testid={`workflow-deadline-${index}`} data-value={isoOrEmpty(step.deadline)} />
+        </span>
+        {/* The empty slot keeps every date on the right edge the globes end on. */}
+        {groups.length > 0 ? (
+          <Button
+            variant="outline"
+            size="icon-xs"
+            color="primary"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={sectionId}
+            aria-label={hint}
+            title={hint}
+            className="shrink-0"
+            data-testid={`workflow-deadline-langs-toggle-${index}`}
+          >
+            <Globe aria-hidden />
+          </Button>
+        ) : targetLanguages.length > 0 && <span className="size-6 shrink-0" aria-hidden />}
+      </div>
+      {open && (
+        <div id={sectionId} className="flex flex-col gap-1.5">
+          {groups.map(g => (
+            <div key={g.key} className={cn(row, 'pr-8')} data-testid={`workflow-deadline-override-${index}-${g.key}`}>
+              <span className="flex flex-wrap justify-end gap-1">
+                {g.langs.map(l => <LanguageCode key={l} code={l} />)}
+              </span>
+              <span className={DATE_CELL}>
+                <Chip {...deadlineChipProps(g.deadline)} data-testid={`workflow-deadline-override-value-${index}-${g.key}`} data-value={isoOrEmpty(g.deadline)} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface ListProps {
   steps: WorkflowStep[]
   targetLanguages: string[]
-  onChange: (steps: WorkflowStep[]) => void
+  /** Absent: the deadlines are shown, not edited. */
+  onChange?: (steps: WorkflowStep[]) => void
   disabled?: boolean
   /** Heads the rail with the Pre-translation row (see WorkflowStepChips). */
   pretranslation?: ReactNode
   'data-testid'?: string
 }
 
-interface WithDeadlinesProps extends ListProps {
-  /** Rendered under the list — the Workflow tab puts its saving indicator here. */
-  children?: ReactNode
-}
-
 /**
  * The read-only step list with each step's deadline column on the same row.
- * One list, not two: a step and when it is due are the same thought.
+ * One list, not two: a step and when it is due are the same thought. Without
+ * `onChange` the deadlines are read-only too.
  */
 export function WorkflowStepsWithDeadlines({
-  steps, targetLanguages, onChange, disabled, pretranslation, children, 'data-testid': testId,
-}: WithDeadlinesProps) {
+  steps, targetLanguages, onChange, disabled, pretranslation, 'data-testid': testId,
+}: ListProps) {
   const langs = useStepLanguageDisclosure()
 
   return (
-    <>
-      <WorkflowStepChips
-        steps={steps as ChipStep[]}
-        pretranslation={pretranslation}
-        data-testid={testId}
-        trailing={i => (
-          <StepDeadlineColumn
-            steps={steps}
-            index={i}
-            targetLanguages={targetLanguages}
-            onChange={onChange}
-            disabled={disabled}
-            open={langs.isOpen(i)}
-            onToggle={() => langs.toggle(i)}
-          />
-        )}
-      />
-      {children}
-    </>
+    <WorkflowStepChips
+      steps={steps as ChipStep[]}
+      pretranslation={pretranslation}
+      data-testid={testId}
+      trailing={i => onChange ? (
+        <StepDeadlineColumn
+          steps={steps}
+          index={i}
+          targetLanguages={targetLanguages}
+          onChange={onChange}
+          disabled={disabled}
+          open={langs.isOpen(i)}
+          onToggle={() => langs.toggle(i)}
+        />
+      ) : (
+        <StepDeadlineView step={steps[i]} index={i} targetLanguages={targetLanguages} open={langs.isOpen(i)} onToggle={() => langs.toggle(i)} />
+      )}
+    />
   )
 }

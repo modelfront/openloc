@@ -30,7 +30,7 @@ func seedClearContext(t *testing.T, prefix string) *clearCtx {
 	t.Cleanup(cleanup)
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, prefix)
-	projectID := createProject(t, router, prefix+" Project", userID, tenantID)
+	projectID := createProject(t, q, router, prefix+" Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, prefix+".txt", db.FileFormatTxt)
 	c := &clearCtx{
 		router:   router,
@@ -411,8 +411,8 @@ func TestIntegrationClear_PerJob_UnassignedLinguist403(t *testing.T) {
 	c.assertActiveText(t, c.tr[0].ID, mt, "role-rejected clear must not modify the row")
 }
 
-// parkJobOnStep inserts a workflow_step at the given step_order and sets
-// the job's current_step_id to a fresh assignment of it. Used by the
+// parkJobOnStep inserts human workflow_steps at orders 0..stepOrder and sets
+// the job's current_step_id to a fresh assignment of the last one. Used by the
 // step-boundary tests below.
 func (c *clearCtx) parkJobOnStep(t *testing.T, stepOrder int) {
 	t.Helper()
@@ -422,11 +422,13 @@ func (c *clearCtx) parkJobOnStep(t *testing.T, stepOrder int) {
 		t.Fatalf("get project: %v", err)
 	}
 	var stepID int64
-	if err := c.pool.QueryRow(ctx,
-		`INSERT INTO workflow_steps (settings_profile_id, name, step_order, role_required)
-		 VALUES ($1, $2, $3, 'member') RETURNING id`,
-		project.SettingsProfileID, fmt.Sprintf("Step-%d", stepOrder), stepOrder).Scan(&stepID); err != nil {
-		t.Fatalf("insert workflow_step: %v", err)
+	for order := 0; order <= stepOrder; order++ {
+		if err := c.pool.QueryRow(ctx,
+			`INSERT INTO workflow_steps (settings_profile_id, name, step_order, role_required)
+			 VALUES ($1, $2, $3, 'member') RETURNING id`,
+			project.SettingsProfileID, fmt.Sprintf("Step-%d", order), order).Scan(&stepID); err != nil {
+			t.Fatalf("insert workflow_step: %v", err)
+		}
 	}
 	var jsaID int64
 	if err := c.pool.QueryRow(ctx,
@@ -444,7 +446,7 @@ func (c *clearCtx) parkJobOnStep(t *testing.T, stepOrder int) {
 // Positive case: job on step_order=0 (the first step — workflow.HandleSetSteps
 // assigns step_order via int32(i) loop index starting at 0). MUST 200.
 //
-// Anti-tautology: change workflow.JobInFirstStep to `step.StepOrder == 1`
+// Anti-tautology: change workflow.JobInClearWindow to `step.StepOrder == 1`
 // → this test goes RED with 403.
 func TestIntegrationClear_PerJob_InFirstStep_Returns200(t *testing.T) {
 	c := seedClearContext(t, "clear-job-step0")
@@ -462,7 +464,8 @@ func TestIntegrationClear_PerJob_InFirstStep_Returns200(t *testing.T) {
 	assertAllDerivedFieldsNull(t, c.reload(t, c.tr[0].ID))
 }
 
-// Strict-boundary negative case: job on step_order=1 (one past first).
+// Strict-boundary negative case: job on step_order=1, one past the first
+// human step.
 // MUST 403. Pairs with the step_order=0 test above so the threshold is
 // pinned exactly — a single-sided test at step_order=2 would be satisfied by BOTH `== 0` and `== 1` checks and can't distinguish.
 func TestIntegrationClear_PerJob_StepOrder1_Returns403(t *testing.T) {
@@ -506,7 +509,7 @@ func TestIntegrationClear_PerProject_EmptyProject(t *testing.T) {
 	defer cleanup()
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "clear-proj-empty")
-	projectID := createProject(t, router, "Empty Proj", userID, tenantID)
+	projectID := createProject(t, q, router, "Empty Proj", userID, tenantID)
 	_ = q
 
 	rec := testutil.DoRequest(t, router, "POST",
@@ -526,6 +529,11 @@ func TestIntegrationClear_PerProject_AnyJobPastStep0_Rejected(t *testing.T) {
 	job2 := testutil.SeedJob(t, c.q, file2.ID, "es")
 	ctx := context.Background()
 	project, _ := c.q.GetProject(ctx, db.GetProjectParams{ID: c.project, TenantID: c.tenantID})
+	if _, err := c.pool.Exec(ctx,
+		`INSERT INTO workflow_steps (settings_profile_id, name, step_order, role_required)
+		 VALUES ($1, 'Translate', 0, 'member')`, project.SettingsProfileID); err != nil {
+		t.Fatalf("insert workflow_step: %v", err)
+	}
 	var step1ID int64
 	if err := c.pool.QueryRow(ctx,
 		`INSERT INTO workflow_steps (settings_profile_id, name, step_order, role_required)

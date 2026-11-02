@@ -13,18 +13,16 @@ import { useQuery } from '@tanstack/react-query'
 import { listAIRouters, listMembers } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { cn } from '@/lib/utils'
-import { attentionHref } from '@/lib/attention'
-import { TextLink } from '@/components/ui/text-link'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { chipTextClass } from '@/components/ui/chip'
 import {
   AIStepChip,
-  ROUTER_ENGINE_PRESETS,
   STEP_TYPE_CHIPS,
   STEP_TYPE_PRESETS,
   type StepTypePresetKey,
 } from '@/components/ui/chip-presets'
-import { isAutomatedStep, runsAIStep } from '@/lib/workflow-steps'
+import { isAutomatedStep } from '@/lib/workflow-steps'
+import { StepRouterNote } from './StepRouterNote'
 
 /** The fields a step needs to render as a chip. Names may come pre-resolved
  *  (the list endpoint joins them) or be looked up here from the ids. */
@@ -75,7 +73,7 @@ export function WorkflowStepChips({ steps, className, trailing, pretranslation, 
       role={selection ? 'radiogroup' : undefined}
       aria-label={selection?.['aria-label']}
     >
-      {rows === 0 && <span className="text-xs italic text-gray-400">no steps</span>}
+      {rows === 0 && <span className="text-xs text-muted-foreground">No steps yet.</span>}
       {rows > 1 && (
         <span aria-hidden className="absolute bottom-4 left-[9px] top-4 w-px bg-gray-300 dark:bg-gray-700" />
       )}
@@ -100,12 +98,6 @@ export function WorkflowStepChips({ steps, className, trailing, pretranslation, 
         </div>
       )}
       {steps.map((s, i) => {
-        const router = s.ai_router_id != null ? routers?.find(r => r.id === s.ai_router_id) : undefined
-        const routerName = s.ai_router_name ?? router?.name ?? null
-        // A hybrid/ai step with no router anywhere: deleted since it was set.
-        const routerDeleted = runsAIStep(s.step_type) && (
-          s.ai_router_id == null || (s.ai_router_name === undefined && routers !== undefined && !router)
-        )
         const assigneeName = s.assignee_name ?? (s.default_assignee != null ? members?.find(m => m.id === s.default_assignee)?.name : undefined) ?? null
         const assigneeDeleted = s.default_assignee != null && !assigneeName && (s.assignee_name === null || members !== undefined)
         // `step_type` is a free string on the wire, so an unrecognised value
@@ -149,27 +141,7 @@ export function WorkflowStepChips({ steps, className, trailing, pretranslation, 
                 <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
                 <StepTypeChip iconOnly className="shrink-0 px-1 py-0" data-testid={`step-type-${s.step_type}`} />
                 {s.step_definition_id === null && <span className="text-gray-400" title="Not a library step">(custom)</span>}
-                {/* Opens the AI page pointing at this router's card. */}
-                {routerName && (
-                  <TextLink
-                    to={s.ai_router_id != null ? attentionHref('/ai', `ai-router-${s.ai_router_id}`) : '/ai'}
-                    tone={STEP_TYPE_PRESETS[typeKey].color}
-                    title="AI router picks the QE+APE engine for each job's target language. Routers live on the AI page."
-                  >
-                    {routerName}
-                  </TextLink>
-                )}
-                {routerDeleted && (
-                  <span className={cn('italic', chipTextClass('red'))} title="AI router was deleted. Pick another one for this step.">(deleted router)</span>
-                )}
-                {/* Same hues as the engine chips elsewhere: "something is wrong
-                    with what this step points at". */}
-                {router?.unusable === 'disabled' && (
-                  <span className={cn('italic', chipTextClass('yellow'))} title={ROUTER_ENGINE_PRESETS.disabled.title}>(engine off)</span>
-                )}
-                {router?.unusable === 'no_key' && (
-                  <span className={cn('italic', chipTextClass('red'))} title={ROUTER_ENGINE_PRESETS.no_key.title}>(engine has no key)</span>
-                )}
+                <StepRouterNote step={s} routers={routers} />
                 {isAutomatedStep(s.step_type) ? (
                   <span className="text-gray-500">→ Automated</span>
                 ) : assigneeName ? (

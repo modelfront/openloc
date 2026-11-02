@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"openloc/internal/ai"
 )
 
 // DeepL calls the DeepL API for machine translation.
@@ -124,7 +126,7 @@ func (d DeepL) translateBatch(ctx context.Context, baseURL, srcLang, tgtLang str
 
 	resp, err := HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("deepl: request failed: %w", err)
+		return nil, transportError(ctx, ai.ProviderDeepL, err)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -154,16 +156,7 @@ func (d DeepL) translateBatch(ctx context.Context, baseURL, srcLang, tgtLang str
 }
 
 func (d DeepL) parseError(statusCode int, body []byte) error {
-	switch statusCode {
-	case 403:
-		return fmt.Errorf("deepl: authentication failed (403) — check your API key")
-	case 429:
-		return fmt.Errorf("deepl: rate limit exceeded (429) — too many requests")
-	case 456:
-		return fmt.Errorf("deepl: quota exceeded (456) — translation limit reached")
-	default:
-		return &apiError{vendor: "deepl: API", status: statusCode, body: string(body)}
-	}
+	return vendorError(ai.ProviderDeepL, statusCode, string(body))
 }
 
 // deeplLangCode converts our normalized lowercase codes to DeepL's format.

@@ -21,7 +21,6 @@ describe('queryKeys', () => {
     expect(queryKeys.job.analysis(42)).toEqual(['job-analysis', 42])
     expect(queryKeys.jobs.byProject(10)).toEqual(['jobs', 10])
     expect(queryKeys.files.byProject(10)).toEqual(['files', 10])
-    expect(queryKeys.segments.byFile(5)).toEqual(['segments', 5])
     expect(queryKeys.template.detail(3)).toEqual(['template', 3])
     expect(queryKeys.qaProfile.detail(7)).toEqual(['qa-profile', 7])
     expect(queryKeys.comments.byTranslation(99)).toEqual(['comments', 99])

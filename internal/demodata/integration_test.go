@@ -150,6 +150,17 @@ func TestIntegrationCreateDemoWorkspace(t *testing.T) {
 	if len(res.TranslationMemories) != 2 || len(res.TermBases) != 1 || len(res.QAProfiles) != 1 {
 		t.Errorf("want 2 TMs, 1 term base, 1 QA profile; got %+v", res)
 	}
+	// Every term base takes terms added from the editor: Write is ticked.
+	var readOnly int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM settings_terminology_assignments a
+		JOIN term_bases tb ON tb.id = a.term_base_id
+		WHERE tb.tenant_id = $1 AND a.mode NOT IN ('write', 'read_write')`, tenantA.ID).Scan(&readOnly); err != nil {
+		t.Fatalf("count read-only term assignments: %v", err)
+	}
+	if readOnly != 0 {
+		t.Errorf("%d demo term-base assignments without Write, want 0", readOnly)
+	}
 
 	// No vendor token → no AI engines, and the result says why.
 	if len(res.AIEngines) != 0 {
@@ -322,5 +333,39 @@ func TestIntegrationCreateDemoWorkspace_UntranslatedIsNull(t *testing.T) {
 	}
 	if null == 0 {
 		t.Error("the dataset has no untranslated segment, so this test checks nothing")
+	}
+}
+
+// A demo draft — text a person left at needs_review — must read as Draft in
+// the editor, which needs step_edited; a pre-translated row must not. The
+// grid shows Draft only for a row edited in the current step, so a seeded
+// draft without the flag shows as Pretranslated with no badge.
+func TestIntegrationCreateDemoWorkspace_DraftsAreStepEdited(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	tenant := testutil.SeedTenant(t, q, "Demo Drafts")
+	owner := testutil.SeedUserWithRole(t, q, tenant.ID, "demo-d@test.com", "pass", "owner")
+	if _, err := demodata.Create(ctx, pool, tenant.ID, owner.ID, demodata.Options{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var drafts, unflagged, preFlagged int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE t.edited_by IS NOT NULL),
+		       count(*) FILTER (WHERE t.edited_by IS NOT NULL AND NOT t.step_edited),
+		       count(*) FILTER (WHERE t.edited_by IS NULL AND t.step_edited)
+		FROM translations t JOIN segments s ON s.id = t.segment_id
+		JOIN files f ON f.id = s.file_id JOIN projects p ON p.id = f.project_id
+		WHERE p.tenant_id = $1 AND t.status = 'needs_review' AND t.active_text IS NOT NULL`, tenant.ID).Scan(&drafts, &unflagged, &preFlagged); err != nil {
+		t.Fatal(err)
+	}
+	if drafts == 0 {
+		t.Fatal("the dataset has no draft, so this test checks nothing")
+	}
+	if unflagged != 0 {
+		t.Errorf("%d of %d demo drafts are not step_edited, so the editor shows them as Pretranslated", unflagged, drafts)
+	}
+	if preFlagged != 0 {
+		t.Errorf("%d pre-translated demo rows are step_edited, so the editor shows them as Draft", preFlagged)
 	}
 }

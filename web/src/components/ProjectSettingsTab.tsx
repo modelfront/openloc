@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { listTMCollections, listMTRouters, listTermBases, listQAProfiles, listLanguages, updateProjectSettings, setProjectTMAssignments, setProjectTermAssignments, listTMProfiles, detachProjectTMProfile, saveProjectTMProfile, type ProjectSettings } from '../api'
 import { queryKeys } from '../lib/query-keys'
+import { toLangResources, toNamedOptions } from '../lib/settings-editor-options'
 import { LoadFailed } from '@/components/layout/LoadFailed'
 import { projectSettingsToValues } from '../lib/settings-values'
 import { SettingsEditor } from '../components/SettingsEditor'
@@ -52,11 +53,11 @@ function ProjectSettingsTab({ projectId, settings, error, templates, onRefresh }
       <SettingsEditor
         mode="edit"
         values={projectSettingsToValues(settings, termBases)}
-        tmCollections={tmCollections?.map(t => ({ id: t.id, name: t.name, source_language: t.source_language, target_languages: t.target_languages })) ?? []}
+        tmCollections={toLangResources(tmCollections)}
         mtRouters={mtRouters ?? []}
-        termBases={termBases?.map(t => ({ id: t.id, name: t.name, source_language: t.source_language, target_languages: t.target_languages ?? [] })) ?? []}
-        qaProfiles={qaProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
-        tmProfiles={tmProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
+        termBases={toLangResources(termBases)}
+        qaProfiles={toNamedOptions(qaProfiles)}
+        tmProfiles={toNamedOptions(tmProfiles)}
         languages={languages}
         sourceLanguage={project?.source_language}
         targetLanguages={project?.target_languages}

@@ -20,24 +20,37 @@ type Operator struct {
 	UserID int64
 }
 
+// IsOperator reports whether a user is on the support team: their account's
+// email is one of PLATFORM_ADMIN_EMAILS. A missing account is not.
+func (s *Service) IsOperator(ctx context.Context, userID int64) (bool, error) {
+	user, err := db.New(s.pool).GetUser(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load user: %w", err)
+	}
+	return s.opSet.Has(user.Email), nil
+}
+
 // maxSearch bounds the search text of a list.
 const maxSearch = 200
 
 // Filter narrows an issue list and orders it. An empty list matches any value;
 // a severity matches bugs only. Search matches a part of the title or the
-// description. TenantIDs (the org filter), Priorities, Tags (any of them) and
-// the assignee filter (AssigneeIDs, plus the unassigned issues when
-// Unassigned) are for operators only. The list is by last update, newest
-// first unless OldestFirst.
+// description. The reporter filter (an issue of one of TenantIDs or by one of
+// ReporterIDs), Priorities, Tags (any of them) and the assignee filter
+// (AssigneeIDs, plus the unassigned issues when Unassigned) are for operators
+// only. Sort is the list's order (ParseSort); none is newest report first.
 type Filter struct {
 	Statuses, Kinds, Areas, Severities []string
 	Search                             string
-	TenantIDs                          []int64
+	TenantIDs, ReporterIDs             []int64
 	Priorities, Tags                   []string
 	Verifications                      []string
 	AssigneeIDs                        []int64
 	Unassigned                         bool
-	OldestFirst                        bool
+	Sort                               []SortLevel
 }
 
 // check refuses values that no issue can have.
@@ -77,42 +90,44 @@ func likePattern(search string) *string {
 	return &p
 }
 
-// PlatformList is every org's issues, filtered and ordered by f, from cursor on.
-func (s *Service) PlatformList(ctx context.Context, f Filter, cursor Cursor, limit int32) ([]PlatformIssueView, error) {
+// PlatformList is one page of every org's issues, filtered and ordered by f:
+// up to limit issues after cursor, and the next page's cursor ("" at the end).
+func (s *Service) PlatformList(ctx context.Context, f Filter, cursor string, limit int32) ([]PlatformIssueView, string, error) {
 	if err := f.check(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	p := db.ListIssuesForPlatformNewestParams{
-		Statuses: sliceutil.NonNil(f.Statuses), Kinds: sliceutil.NonNil(f.Kinds), Areas: sliceutil.NonNil(f.Areas),
-		Severities: sliceutil.NonNil(f.Severities), TenantIds: sliceutil.NonNil(f.TenantIDs),
-		Priorities: sliceutil.NonNil(f.Priorities), Tags: sliceutil.NonNil(f.Tags),
-		Verifications: sliceutil.NonNil(f.Verifications), AssigneeIds: sliceutil.NonNil(f.AssigneeIDs),
-		Unassigned: f.Unassigned, Search: likePattern(f.Search),
-		CursorAt: cursor.at(), CursorID: cursor.ID, RowLimit: limit,
-	}
-	q := db.New(s.pool)
-	var rows []db.ListIssuesForPlatformNewestRow
-	var err error
-	if f.OldestFirst {
-		var old []db.ListIssuesForPlatformOldestRow
-		old, err = q.ListIssuesForPlatformOldest(ctx, db.ListIssuesForPlatformOldestParams(p))
-		for _, r := range old {
-			rows = append(rows, db.ListIssuesForPlatformNewestRow(r))
-		}
-	} else {
-		rows, err = q.ListIssuesForPlatformNewest(ctx, p)
-	}
+	rows, next, err := s.listPage(ctx, platformListBase, platformListArgs(f), f, true, cursor, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list issues: %w", err)
+		return nil, "", err
 	}
 	out := make([]PlatformIssueView, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueRow(r).platformView())
+		out = append(out, r.platformView())
 	}
-	return out, nil
+	return out, next, nil
 }
 
-// IssueOrg is an org that has issues, for the operators' organization filter.
+// PlatformCount is how many issues PlatformList shows under f, over every page.
+func (s *Service) PlatformCount(ctx context.Context, f Filter) (int64, error) {
+	if err := f.check(); err != nil {
+		return 0, err
+	}
+	return s.countRows(ctx, platformListBase, platformListArgs(f))
+}
+
+// platformListArgs is platformListBase's parameters: f.
+func platformListArgs(f Filter) pgx.NamedArgs {
+	return pgx.NamedArgs{
+		"statuses": sliceutil.NonNil(f.Statuses), "kinds": sliceutil.NonNil(f.Kinds), "areas": sliceutil.NonNil(f.Areas),
+		"severities": sliceutil.NonNil(f.Severities), "tenant_ids": sliceutil.NonNil(f.TenantIDs),
+		"reporter_ids": sliceutil.NonNil(f.ReporterIDs),
+		"priorities":   sliceutil.NonNil(f.Priorities), "tags": sliceutil.NonNil(f.Tags),
+		"verifications": sliceutil.NonNil(f.Verifications), "assignee_ids": sliceutil.NonNil(f.AssigneeIDs),
+		"unassigned": f.Unassigned, "search": likePattern(f.Search),
+	}
+}
+
+// IssueOrg is an org that has issues, for the operators' reporter filter.
 type IssueOrg struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
@@ -127,6 +142,28 @@ func (s *Service) PlatformOrgs(ctx context.Context) ([]IssueOrg, error) {
 	out := make([]IssueOrg, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, IssueOrg{ID: r.ID, Name: r.Name})
+	}
+	return out, nil
+}
+
+// IssueReporter is someone who has issues, for the operators' reporter
+// filter. Orgs lists the orgs they reported in.
+type IssueReporter struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Orgs  string `json:"orgs"`
+}
+
+// PlatformReporters is everyone who has issues, by name.
+func (s *Service) PlatformReporters(ctx context.Context) ([]IssueReporter, error) {
+	rows, err := db.New(s.pool).ListIssueReportersForPlatform(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list issue reporters: %w", err)
+	}
+	out := make([]IssueReporter, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, IssueReporter{ID: r.ID, Name: r.Name, Email: r.Email, Orgs: r.OrgNames})
 	}
 	return out, nil
 }
@@ -255,6 +292,22 @@ func (s *Service) PlatformSetStatus(ctx context.Context, op Operator, id int64, 
 	if changed != nil && *changed == StatusResolved {
 		s.notifyOrgResolved(ctx, issue, op)
 	}
+	if changed != nil {
+		s.refreshSlack(ctx, id)
+	}
+	if body != nil {
+		s.postWritten(ctx, id, slackReply, op.UserID, ptr.Deref(changed), commentPreview(body))
+	}
+	switch {
+	case changed != nil:
+		n := assigneeNotice{Kind: noticeStatus, Value: statusLabels[*changed]}
+		if body != nil {
+			n.Text = commentPreview(body)
+		}
+		s.emailAssignee(ctx, issue, op.UserID, n)
+	case body != nil:
+		s.emailAssignee(ctx, issue, op.UserID, assigneeNotice{Kind: noticeComment, Text: commentPreview(body)})
+	}
 	return s.PlatformGet(ctx, id)
 }
 
@@ -321,6 +374,8 @@ func (s *Service) PlatformComment(ctx context.Context, op Operator, id int64, in
 	}
 	logging.Info(ctx, "commented on an issue", "issue-operator-commented", logging.IssueID(id))
 	s.notifyReporter(ctx, updated, op, nil, body)
+	s.postWritten(ctx, id, slackReply, op.UserID, "", commentPreview(body))
+	s.emailAssignee(ctx, updated, op.UserID, assigneeNotice{Kind: noticeComment, Text: commentPreview(body)})
 	return s.PlatformGet(ctx, id)
 }
 

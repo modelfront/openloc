@@ -13,6 +13,7 @@ import {
   chooseTMFromScratch,
   deleteDraftFromURL,
   submitProjectWizard,
+  pickProjectWorkflow,
 } from "./helpers";
 
 /**
@@ -374,9 +375,12 @@ test.describe.serial("J15 — Inline Create Adversarial", () => {
 
     // ═══ TB is already assigned (auto-added on create — no Add-row step) ═══
 
-    await expect(page.getByText(/no terminology assigned/i)).not.toBeVisible();
+    await expect(page.getByText(/no term bases assigned/i)).not.toBeVisible();
 
     // ═══ REAL project submit (this is when navigation is allowed) ═══
+
+    // ── B58: pick a workflow — a fresh form starts with none
+    await pickProjectWorkflow(page);
 
     // ── B59: click Create project — publishes the autosaved draft
     const { response: createResp } = await submitProjectWizard(page);

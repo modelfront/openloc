@@ -126,8 +126,8 @@ func TestIntegration_BilingualExport_HappyPath(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateTranslationHuman: %v", err)
 	}
-	// seg2 has no translation row at all (LEFT JOIN should produce empty target).
-	_ = seg2
+	// seg2 is untranslated: its row has no text.
+	testutil.SeedTranslation(t, q, seg2.ID, "es", db.TranslationStatusNeedsReview)
 
 	svc := pipeline.NewService(q, pipeline.NewPgxTxRunner(pool), nil)
 	data, filename, err := svc.ExportBilingualXLIFF(context.Background(), fx.TenantID, fx.FileID, "en", "es")
@@ -160,7 +160,7 @@ func TestIntegration_BilingualExport_HappyPath(t *testing.T) {
 	if !strings.Contains(body, `<target state="final">Hola {name}</target>`) {
 		t.Errorf("approved segment should emit state=final + target text, got body: %s", body)
 	}
-	// seg2 has no translation row → status is empty/null → maps to needs-translation.
+	// seg2 has no text → maps to needs-translation.
 	if !strings.Contains(body, `<source>Goodbye</source>`) {
 		t.Error("untranslated segment's source missing")
 	}
@@ -288,8 +288,8 @@ func TestIntegration_BilingualExport_RoundTripsViaReimport(t *testing.T) {
 
 	seg1 := seedSegmentWithKey(t, q, fx.FileID, "line:1", "Hello", 1)
 	seg2 := seedSegmentWithKey(t, q, fx.FileID, "line:2", "World", 2)
-	_ = seg1
-	_ = seg2
+	testutil.SeedTranslation(t, q, seg1.ID, "fr", db.TranslationStatusNeedsReview)
+	testutil.SeedTranslation(t, q, seg2.ID, "fr", db.TranslationStatusNeedsReview)
 
 	svc := pipeline.NewService(q, pipeline.NewPgxTxRunner(pool), nil)
 	data, _, err := svc.ExportBilingualXLIFF(ctx, fx.TenantID, fx.FileID, "en", "fr")
@@ -360,7 +360,12 @@ func TestIntegration_BilingualExport_SourceRichTextPreservedInOutput(t *testing.
 	); err != nil {
 		t.Fatalf("seed segment with rich text: %v", err)
 	}
-	_ = q
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO translations (segment_id, target_language, status)
+		 SELECT id, 'es', 'needs_review' FROM segments WHERE file_id = $1`, fx.FileID,
+	); err != nil {
+		t.Fatalf("seed translation: %v", err)
+	}
 
 	svc := pipeline.NewService(q, pipeline.NewPgxTxRunner(pool), nil)
 	data, _, err := svc.ExportBilingualXLIFF(ctx, fx.TenantID, fx.FileID, "en", "es")
@@ -410,7 +415,7 @@ func TestIntegration_BilingualExport_SourceRichTextPreservedInOutput(t *testing.
 // drifts from `segments.segment_key`, even with the structural test
 // passing. Two ends, one round-trip, full HTTP plumbing.
 func TestIntegration_BilingualExport_HTTPRoundTrip(t *testing.T) {
-	pool, _, cleanup := testutil.SetupTestDB(t)
+	pool, q, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -424,6 +429,7 @@ func TestIntegration_BilingualExport_HTTPRoundTrip(t *testing.T) {
 		"name":             "Round-Trip Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {

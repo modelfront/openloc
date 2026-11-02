@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { CircleDashed, ExternalLink, Layers, Save } from 'lucide-react'
+import { CircleDashed, Layers, Save } from 'lucide-react'
 import { Combobox } from '@/components/ui/combobox'
 import { Button } from '@/components/ui/button'
 import { HelpTip } from '@/components/ui/help-tip'
 import ConfirmDialog from '../ConfirmDialog'
 import { TMProfileNameDialog } from '../tm/TMProfileNameDialog'
 import { TextLink } from '@/components/ui/text-link'
+import { OpenLinkButton } from '@/components/ui/open-link-button'
+import { tmProfilePath } from '@/lib/asset-links'
 
 /** Dropdown value for the row's own TMs + scoring (no shared profile). */
 const OWN = 'custom'
@@ -57,7 +59,6 @@ export function TMProfilePicker({
 }: Props) {
   const [confirmDetach, setConfirmDetach] = useState(false)
   const [saveAsOpen, setSaveAsOpen] = useState(false)
-  const linked = value != null ? profiles.find(p => p.id === value) : undefined
   const noProfiles = profiles.length === 0
   const ownLabel = 'From scratch'
 
@@ -78,12 +79,6 @@ export function TMProfilePicker({
     if (!id || id === value) return
     onLink(id)
   }
-
-  const profileLink = value != null && (
-    <TextLink to={`/memories/profiles/${value}`} className="inline-flex items-center gap-1" target="_blank" rel="noopener noreferrer">
-      {linked?.name ?? `profile #${value}`} <ExternalLink className="size-3" aria-hidden />
-    </TextLink>
-  )
 
   return (
     <div data-testid="tm-profile-picker" className="space-y-2">
@@ -110,6 +105,7 @@ export function TMProfilePicker({
           disabled={disabled}
           data-testid="tm-profile-select"
         />
+        {value != null && <OpenLinkButton to={tmProfilePath(value)} label="Open TM profile" data-testid="tm-profile-open" />}
         {value === null && onSaveAsProfile && (
           <TextLink className="inline-flex items-center gap-1 text-xs" onClick={() => setSaveAsOpen(true)} disabled={disabled} data-testid="tm-profile-save-as">
             <Save className="size-3.5" aria-hidden /> Save as TM profile…
@@ -125,14 +121,17 @@ export function TMProfilePicker({
         )}
       </div>
 
-      {/* Profile chosen: status line (toggle · link/note · detach), then the expanded block. */}
+      {/* Profile chosen: status line (toggle · detach), then the expanded block. */}
       {value != null && (
         <div className="space-y-3" data-testid="tm-profile-detail">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400" data-testid="tm-profile-linked">
+          {/* `data-editable`: the settings below write to the profile itself (nothing
+              else follows it); otherwise the locked inputs say "read-only" on their own. */}
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400"
+            data-testid="tm-profile-linked"
+            data-editable={editableInPlace || undefined}
+          >
             {profileSettingsToggle}
-            {/* Just the link either way; the locked inputs below say "read-only" on
-                their own. */}
-            {editableInPlace ? <span data-testid="tm-profile-editable">{profileLink}</span> : <span>{profileLink}</span>}
             {!isCreate && onDetach && (
               <Button size="sm" variant="outline" onClick={() => setConfirmDetach(true)} disabled={disabled} data-testid="tm-profile-detach">
                 Detach and customise

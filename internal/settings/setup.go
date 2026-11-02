@@ -17,6 +17,7 @@ import (
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
+	"openloc/internal/segmentationapi"
 )
 
 // Setup is applied right after creation. Nil slices mean "leave as created"
@@ -31,6 +32,8 @@ type Setup struct {
 	AutoComplete *bool `json:"auto_complete"`
 	// InlineHTML: strings of JSON/PO/TXT/XLSX files are HTML; nil keeps stored.
 	InlineHTML *bool `json:"inline_html"`
+	// LinguistTerms: whether linguists may add terms from the editor, and their status ("off", "pending", "approved"); nil keeps stored.
+	LinguistTerms *string `json:"linguist_terms"`
 	// TM match penalties; nil keeps the stored value.
 	SublanguagePenaltyPct *int32 `json:"sublanguage_penalty_pct"`
 	NearExactPenaltyPct   *int32 `json:"near_exact_penalty_pct"`
@@ -46,20 +49,29 @@ type Setup struct {
 	// wins; contradicts TMAssignments (rejected by ValidateSetup).
 	TMProfileID   *int64              `json:"-"`
 	TMAssignments []TMAssignmentInput `json:"tm_assignments"`
-	// MTRouterID points the profile at an MT router (nil = leave as created).
+	// MTRouterID points the profile at an MT router (nil = leave as created);
+	// ClearMTRouter removes the router creation left, e.g. a template's.
 	MTRouterID      *int64                `json:"mt_router_id"`
+	ClearMTRouter   bool                  `json:"-"`
 	TermAssignments []TermAssignmentInput `json:"term_assignments"`
 	// WorkflowID copies a library workflow onto the profile (after the
 	// template, so it overrides the template's steps). WorkflowSteps, when
 	// present, is applied last — the wizard's per-step tweaks on top.
 	WorkflowID    *int64      `json:"workflow_id"`
 	WorkflowSteps []StepInput `json:"workflow_steps"`
+	// SegmentationProfileID picks the profile uploads are split with; nil
+	// keeps the stored one while it fits Language, else takes the suggested
+	// profile for Language, so a project or template always has one.
+	SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+	// Language is the project's or template's source language, set by the
+	// caller.
+	Language string `json:"-"`
 }
 
 // HasSettings reports whether any scalar is set (an UpdateSettingsProfile is needed).
 func (c Setup) HasSettings() bool {
 	return c.FuzzyThreshold != nil || c.MtOnUpload != nil || c.TmOnUpload != nil ||
-		c.QaProfileID != nil || c.ClearQAProfile || c.AutoComplete != nil || c.InlineHTML != nil ||
+		c.QaProfileID != nil || c.ClearQAProfile || c.AutoComplete != nil || c.InlineHTML != nil || c.LinguistTerms != nil ||
 		c.SublanguagePenaltyPct != nil || c.NearExactPenaltyPct != nil ||
 		c.TMLookupOrder != nil
 }
@@ -72,6 +84,9 @@ func (c Setup) HasWorkflow() bool { return c.WorkflowID != nil || len(c.Workflow
 // Apply{TM,Term}Assignments, shared with the PUT endpoints.
 func ValidateSetup(ctx context.Context, q db.Querier, tenantID int64, cfg Setup) error {
 	if err := ValidateTMLookupOrder(cfg.TMLookupOrder); err != nil {
+		return err
+	}
+	if err := ValidateLinguistTerms(cfg.LinguistTerms); err != nil {
 		return err
 	}
 	if cfg.TMProfileID != nil {
@@ -87,6 +102,11 @@ func ValidateSetup(ctx context.Context, q db.Querier, tenantID int64, cfg Setup)
 	}
 	if cfg.QaProfileID != nil {
 		if err := VerifyQAProfile(ctx, q, tenantID, *cfg.QaProfileID); err != nil {
+			return err
+		}
+	}
+	if cfg.SegmentationProfileID != nil {
+		if err := segmentationapi.Check(ctx, q, tenantID, *cfg.SegmentationProfileID, cfg.Language); err != nil {
 			return err
 		}
 	}
@@ -117,10 +137,13 @@ func ValidateSetup(ctx context.Context, q db.Querier, tenantID int64, cfg Setup)
 }
 
 // ApplySetup writes the setup onto an existing settings profile: scalars,
-// TM list or TM profile link, MT router, term list, then the workflow
-// (library copy first, explicit steps on top). Each assignment replace is individually
-// transactional via the shared helpers.
+// the segmentation profile, TM list or TM profile link, MT router, term
+// list, then the workflow (library copy first, explicit steps on top). Each
+// assignment replace is individually transactional via the shared helpers.
 func ApplySetup(ctx context.Context, pool database.TxBeginner, q db.Querier, tenantID, profileID int64, cfg Setup) error {
+	if err := SetSegmentationProfile(ctx, q, tenantID, profileID, cfg.SegmentationProfileID, cfg.Language); err != nil {
+		return err
+	}
 	if cfg.HasSettings() {
 		profile, err := q.GetSettingsProfile(ctx, profileID)
 		if err != nil {
@@ -161,6 +184,7 @@ func ApplySetup(ctx context.Context, pool database.TxBeginner, q db.Querier, ten
 			// column's) value rather than silently switching it off.
 			AutoComplete:          cfg.AutoComplete,
 			InlineHtml:            cfg.InlineHTML,
+			LinguistTerms:         cfg.LinguistTerms,
 			SublanguagePenaltyPct: ClampPctPtr(cfg.SublanguagePenaltyPct),
 			NearExactPenaltyPct:   ClampPctPtr(cfg.NearExactPenaltyPct),
 			TmLookupOrder:         cfg.TMLookupOrder,
@@ -179,7 +203,7 @@ func ApplySetup(ctx context.Context, pool database.TxBeginner, q db.Querier, ten
 			return fmt.Errorf("link TM profile: %w", err)
 		}
 	}
-	if cfg.MTRouterID != nil {
+	if cfg.MTRouterID != nil || cfg.ClearMTRouter {
 		if err := q.SetSettingsProfileMTRouter(ctx, db.SetSettingsProfileMTRouterParams{ID: profileID, MtRouterID: cfg.MTRouterID}); err != nil {
 			return fmt.Errorf("apply MT router: %w", err)
 		}
@@ -213,6 +237,58 @@ func applyWorkflowTx(ctx context.Context, pool database.TxBeginner, tenantID, wo
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// SetSegmentationProfile stores the segmentation profile of a settings
+// profile in lang: requested when set (it must fit lang), else the stored one
+// while it fits, else the suggested profile for lang.
+func SetSegmentationProfile(ctx context.Context, q db.Querier, tenantID, profileID int64, requested *int64, lang string) error {
+	profile, err := q.GetSettingsProfile(ctx, profileID)
+	if err != nil {
+		return fmt.Errorf("get settings profile: %w", err)
+	}
+	id, err := segmentationapi.Choose(ctx, q, tenantID, requested, profile.SegmentationProfileID, lang)
+	if err != nil {
+		return err
+	}
+	if profile.SegmentationProfileID != nil && *profile.SegmentationProfileID == id {
+		return nil
+	}
+	if _, err := q.SetSettingsProfileSegmentationProfile(ctx, db.SetSettingsProfileSegmentationProfileParams{ID: profileID, SegmentationProfileID: &id}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return segmentationapi.ErrProfileNotFound
+		}
+		return fmt.Errorf("set segmentation profile: %w", err)
+	}
+	return nil
+}
+
+// CreateProfileFor creates the settings profile of a new project or template
+// in lang, naming the suggested segmentation profile (Default when lang is
+// empty): every project and template names one. For the creators outside the
+// create services: seeds, demo data and test fixtures.
+func CreateProfileFor(ctx context.Context, q db.Querier, params db.CreateSettingsProfileParams, lang string) (db.SettingsProfile, error) {
+	sp, err := q.CreateSettingsProfile(ctx, params)
+	if err != nil {
+		return db.SettingsProfile{}, fmt.Errorf("create settings profile: %w", err)
+	}
+	if err := SetSegmentationProfile(ctx, q, params.TenantID, sp.ID, nil, lang); err != nil {
+		return db.SettingsProfile{}, err
+	}
+	return q.GetSettingsProfile(ctx, sp.ID)
+}
+
+// SegmentationProfileName is the name of a segmentation profile, a deleted
+// one included; nil when unset or unresolvable.
+func SegmentationProfileName(ctx context.Context, q db.Querier, tenantID int64, id *int64) *string {
+	if id == nil {
+		return nil
+	}
+	p, err := q.GetSegmentationProfileForImport(ctx, db.GetSegmentationProfileForImportParams{ID: *id, TenantID: &tenantID})
+	if err != nil {
+		return nil
+	}
+	return &p.Name
 }
 
 // VerifyQAProfile refuses a QA profile id that is not one of tenantID's, with

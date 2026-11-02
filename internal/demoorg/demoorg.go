@@ -31,7 +31,7 @@ import (
 // DatasetVersion names the demo dataset. Bump it with any change to
 // internal/demodata or to the members below, and every deployment rebuilds the
 // demo organization at its next Ensure.
-const DatasetVersion = 7
+const DatasetVersion = 9
 
 // datasetVersion is what Ensure compares against; tests change it to force a
 // rebuild.

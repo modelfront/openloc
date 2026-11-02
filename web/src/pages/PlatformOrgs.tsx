@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ShieldCheck, Building2, Check, X, Power, LogIn, Plus, Copy } from 'lucide-react'
+import { ShieldCheck, Building2, Check, X, Power, LogIn, Copy } from 'lucide-react'
 import {
   listPlatformOrgs, setOrgStatus, loginAsOrg, platformCreateOrg,
   type PlatformOrg, type OrgStatus, type PlatformCreateOrgResponse,
@@ -14,6 +14,7 @@ import { LoadFailed } from '@/components/layout/LoadFailed'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { CopyLinkButton } from '@/components/ui/copy-link-button'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -138,9 +139,9 @@ export default function PlatformOrgs() {
         documentTitle="Organizations"
         title={<span className="flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-gray-500 dark:text-gray-400" />Organizations</span>}
         actions={(
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="w-4 h-4" /> Create organization
-          </Button>
+          <CreateButton onClick={() => setCreateOpen(true)}>
+            Create organization
+          </CreateButton>
         )}
       />
 
@@ -180,32 +181,32 @@ export default function PlatformOrgs() {
                   <>
                     {o.status === 'pending' && (
                       <>
-                        <Button size="sm" variant="outline" disabled={busy}
+                        <Button size="sm" variant="outline" disabled={busy} startIcon={<X />}
                           onClick={() => askConfirm(o, 'reject')}>
-                          <X className="w-4 h-4" /> Reject
+                          Reject
                         </Button>
-                        <Button size="sm" disabled={busy}
+                        <Button size="sm" variant="outline" disabled={busy} startIcon={<Check />}
                           onClick={() => askConfirm(o, 'approve')}>
-                          <Check className="w-4 h-4" /> Approve
+                          Approve
                         </Button>
                       </>
                     )}
                     {o.status === 'approved' && (
                       <>
-                        <Button size="sm" variant="outline" disabled={busy}
+                        <Button size="sm" variant="outline" disabled={busy} startIcon={<LogIn />}
                           onClick={() => openOrg.mutate(o.tenant_id)}>
-                          <LogIn className="w-4 h-4" /> Log in as
+                          Log in as
                         </Button>
-                        <Button size="sm" variant="outline" disabled={busy}
+                        <Button size="sm" variant="outline" disabled={busy} startIcon={<Power />}
                           onClick={() => askConfirm(o, 'disable')}>
-                          <Power className="w-4 h-4" /> Disable
+                          Disable
                         </Button>
                       </>
                     )}
                     {(o.status === 'suspended' || o.status === 'rejected') && (
-                      <Button size="sm" disabled={busy}
+                      <Button size="sm" variant="outline" disabled={busy} startIcon={<Power />}
                         onClick={() => askConfirm(o, 'enable')}>
-                        <Power className="w-4 h-4" /> Enable
+                        Enable
                       </Button>
                     )}
                   </>

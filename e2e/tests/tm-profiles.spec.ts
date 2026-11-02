@@ -17,6 +17,8 @@ import {
   pickComboboxValue,
   chooseTMFromScratch,
   submitProjectWizard,
+  pickProjectWorkflow,
+  standardWorkflowId,
 } from "./helpers";
 
 /**
@@ -124,7 +126,7 @@ test.describe("TM profiles", () => {
       profileId = await createTMProfileViaAPI(page, `E2E linked ${stamp}`, { tmIds: [tmId], fuzzyThreshold: 0.55 });
       const created = await page.request.post("/api/projects", {
         headers,
-        data: { name: `E2E profile project ${stamp}`, source_language: "en", target_languages: ["es"] },
+        data: { name: `E2E profile project ${stamp}`, source_language: "en", target_languages: ["es"], workflow_id: await standardWorkflowId(page) },
       });
       expect(created.ok()).toBe(true);
       projectId = (await created.json()).data.id;
@@ -132,7 +134,7 @@ test.describe("TM profiles", () => {
       // and therefore read-only (a solo follower could edit it in place).
       const other = await page.request.post("/api/projects", {
         headers,
-        data: { name: `E2E other follower ${stamp}`, source_language: "en", target_languages: ["es"], settings: { tm_profile_id: profileId } },
+        data: { name: `E2E other follower ${stamp}`, source_language: "en", target_languages: ["es"], workflow_id: await standardWorkflowId(page), settings: { tm_profile_id: profileId } },
       });
       expect(other.ok()).toBe(true);
       otherProjectId = (await other.json()).data.id;
@@ -154,7 +156,7 @@ test.describe("TM profiles", () => {
       await expect(page.getByTestId("tm-profile-settings-toggle")).toHaveAttribute("aria-expanded", "true");
 
       // Rows + scoring are the profile's and read-only.
-      await expect(page.getByTestId("tm-profile-linked")).toContainText(`E2E linked ${stamp}`);
+      await expect(page.getByTestId("tm-profile-select")).toContainText(`E2E linked ${stamp}`);
       await expect(page.getByTestId("tm-scoring")).toHaveAttribute("data-readonly", "true", { timeout: 5000 });
       await expect(page.getByTestId("tm-assignments")).toHaveAttribute("data-readonly", "true");
       await expect(page.getByTestId(`tm-assignment-row-${tmId}`)).toBeVisible();
@@ -203,9 +205,9 @@ test.describe("TM profiles", () => {
       expect(saveResp.ok()).toBe(true);
       savedProfileId = (await saveResp.json()).data.tm_profile.id;
       // Followed and, being its only follower, editable in place: the dropdown
-      // names the profile and the note is the profile-name link.
+      // names the profile and the status line is marked editable.
       await expect(page.getByTestId("tm-profile-select")).toContainText(`E2E saved ${stamp}`, { timeout: 5000 });
-      await expect(page.getByTestId("tm-profile-editable")).toBeVisible();
+      await expect(page.getByTestId("tm-profile-linked")).toHaveAttribute("data-editable", "true");
       // Saving the draft as a profile opens its settings (the user was editing them).
       await expect(page.getByTestId("tm-profile-settings-toggle")).toHaveAttribute("aria-expanded", "true");
       const saved = await getProjectSettingsViaAPI(page, projectId!);
@@ -232,12 +234,13 @@ test.describe("TM profiles", () => {
       await page.getByPlaceholder(/project name/i).fill(`E2E wizard project ${stamp}`);
       await selectLanguage(page, sourceLanguageTrigger(page), "en");
       await selectTargetLanguages(page, page.getByRole("button", { name: /add target languages/i }), ["es"]);
+      await pickProjectWorkflow(page);
       await pickComboboxValue(page, "tm-profile-select", String(profileId));
       await page.getByTestId("tm-profile-settings-toggle").click();
       // The profile's rows show before the project exists; nothing follows the
       // profile yet, so they are editable in place rather than read-only.
       await expect(page.getByTestId(`tm-assignment-row-${tmId}`)).toBeVisible({ timeout: 5000 });
-      await expect(page.getByTestId("tm-profile-editable")).toBeVisible();
+      await expect(page.getByTestId("tm-profile-linked")).toHaveAttribute("data-editable", "true");
       await expect(page.getByTestId("tm-assignments")).not.toHaveAttribute("data-readonly", "true");
 
       const { response: createResp, id: createdId } = await submitProjectWizard(page);
@@ -265,6 +268,7 @@ test.describe("TM profiles", () => {
       await page.getByPlaceholder(/project name/i).fill(`E2E wizard-save project ${stamp}`);
       await selectLanguage(page, sourceLanguageTrigger(page), "en");
       await selectTargetLanguages(page, page.getByRole("button", { name: /add target languages/i }), ["es"]);
+      await pickProjectWorkflow(page);
       await chooseTMFromScratch(page);
       await page.getByLabel("Fuzzy match threshold").fill("62");
       for (const tmId of tmIds) await pickComboboxValue(page, "add-tm-select", String(tmId));
@@ -286,7 +290,7 @@ test.describe("TM profiles", () => {
       await expect(page.getByTestId("tm-profile-settings-toggle")).toHaveAttribute("aria-expanded", "true");
       // Nothing else follows the new profile, so it stays editable right here and
       // the edit goes to the profile itself.
-      await expect(page.getByTestId("tm-profile-editable")).toBeVisible();
+      await expect(page.getByTestId("tm-profile-linked")).toHaveAttribute("data-editable", "true");
       await expect(page.getByTestId("tm-scoring")).not.toHaveAttribute("data-readonly", "true");
       const threshold = page.getByLabel("Fuzzy match threshold");
       await threshold.fill("70");
@@ -326,6 +330,7 @@ test.describe("TM profiles", () => {
       await page.getByPlaceholder(/project name/i).fill(`E2E lookup order ${stamp}`);
       await selectLanguage(page, sourceLanguageTrigger(page), "en");
       await selectTargetLanguages(page, page.getByRole("button", { name: /add target languages/i }), ["es"]);
+      await pickProjectWorkflow(page);
       await chooseTMFromScratch(page);
 
       const orderSelect = page.getByTestId("tm-lookup-order-select");

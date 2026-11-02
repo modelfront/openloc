@@ -83,3 +83,23 @@ func TestSetAttachmentFilename(t *testing.T) {
 		t.Errorf("unsafe characters not sanitized: %q", w2.Header().Get("Content-Disposition"))
 	}
 }
+
+func TestParseIDList(t *testing.T) {
+	parse := func(query string, max int) ([]int64, error) {
+		return ParseIDList(httptest.NewRequest("GET", "/x"+query, nil), "ids", max)
+	}
+	if ids, err := parse("", 3); ids != nil || err != nil {
+		t.Errorf("absent: got %v, %v; want nil, nil", ids, err)
+	}
+	if ids, err := parse("?ids=4,%205,6", 3); err != nil || len(ids) != 3 || ids[1] != 5 {
+		t.Errorf("three ids: got %v, %v", ids, err)
+	}
+	if _, err := parse("?ids=1,2,3,4", 3); err == nil {
+		t.Error("more than max ids must be refused")
+	}
+	for _, bad := range []string{"?ids=a", "?ids=0", "?ids=-2", "?ids=1,"} {
+		if _, err := parse(bad, 3); err == nil {
+			t.Errorf("%s must be refused", bad)
+		}
+	}
+}

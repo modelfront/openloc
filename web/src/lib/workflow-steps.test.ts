@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   workflowStepsFromApi, workflowStepsToPayload, workflowDefinitionStepsToDrafts, workflowDraftsToLibraryInput, sameWorkflowSteps,
-  workflowMode,
+  workflowMode, withServerLocks,
 } from './workflow-steps'
 import type { WorkflowStep } from '@/components/WorkflowStepsEditor'
 
@@ -25,9 +25,21 @@ describe('workflowStepsToPayload', () => {
     expect(json).toEqual({ step_definition_id: 8, default_assignee: null, deadline: null, language_deadlines: [] })
   })
 
+  it('sends a saved AI step\'s own router, so a step moved to another row keeps it; never a human step\'s', () => {
+    const [ai, human, fromLibrary] = workflowStepsToPayload([
+      { id: 50, step_definition_id: 8, name: 'AI review', step_type: 'hybrid', ai_router_id: 4 },
+      { id: 51, step_definition_id: 7, name: 'Review', step_type: 'human', ai_router_id: 4 },
+      // Built from the library (no row yet): the server takes the definition's router.
+      { step_definition_id: 8, name: 'AI review', step_type: 'hybrid', ai_router_id: 4 },
+    ])
+    expect(ai.ai_router_id).toBe(4)
+    expect(human.ai_router_id).toBeUndefined()
+    expect(fromLibrary.ai_router_id).toBeUndefined()
+  })
+
   it('carries a pre-library row forward through existing_step_id, never as a name', () => {
     const [p] = workflowStepsToPayload([{ id: 41, step_definition_id: null, name: 'LQA', step_type: 'hybrid', ai_router_id: 5 }])
-    expect(p).toEqual({ step_definition_id: undefined, existing_step_id: 41, default_assignee: null, deadline: null, language_deadlines: [] })
+    expect(p).toEqual({ step_definition_id: undefined, existing_step_id: 41, ai_router_id: 5, default_assignee: null, deadline: null, language_deadlines: [] })
     expect(JSON.parse(JSON.stringify(p))).not.toHaveProperty('name')
   })
 })
@@ -39,8 +51,8 @@ describe('workflowStepsFromApi', () => {
       // A row from before step_type existed: an engine means hybrid.
       { id: 2, name: 'ai review', default_assignee: 5, ai_router_id: 12 },
     ])).toEqual([
-      { id: 1, step_definition_id: 9, name: 'Translation', step_type: 'human', ai_router_id: null, default_assignee: undefined, deadline: '2026-08-27T14:50:00Z', language_deadlines: {} },
-      { id: 2, step_definition_id: null, name: 'ai review', step_type: 'hybrid', ai_router_id: 12, default_assignee: 5, deadline: null, language_deadlines: {} },
+      { id: 1, step_definition_id: 9, name: 'Translation', step_type: 'human', ai_router_id: null, default_assignee: undefined, deadline: '2026-08-27T14:50:00Z', language_deadlines: {}, locked: false, reached_jobs: 0 },
+      { id: 2, step_definition_id: null, name: 'ai review', step_type: 'hybrid', ai_router_id: 12, default_assignee: 5, deadline: null, language_deadlines: {}, locked: false, reached_jobs: 0 },
     ])
   })
 
@@ -157,5 +169,20 @@ describe('workflowMode', () => {
     expect(workflowMode([{ step_type: 'pretranslate' }, { step_type: 'ai' }])).toBe('workflow')
     expect(workflowMode([{ step_type: 'human' }])).toBe('workflow')
     expect(workflowMode([])).toBe('workflow')
+  })
+})
+
+describe('withServerLocks', () => {
+  it('takes each row\'s lock from the server row with its id; a new row stays unlocked', () => {
+    const draft: WorkflowStep[] = [
+      { id: 1, step_definition_id: 7, name: 'Translation', step_type: 'human', locked: false },
+      { id: 2, step_definition_id: 8, name: 'Review', step_type: 'human', locked: true, reached_jobs: 1 },
+      { step_definition_id: 9, name: 'QA', step_type: 'human' },
+    ]
+    const server: WorkflowStep[] = [
+      { id: 1, step_definition_id: 7, name: 'Translation', step_type: 'human', locked: true, reached_jobs: 2 },
+      { id: 2, step_definition_id: 8, name: 'Review', step_type: 'human', locked: false, reached_jobs: 0 },
+    ]
+    expect(withServerLocks(draft, server).map(s => [s.locked, s.reached_jobs])).toEqual([[true, 2], [false, 0], [false, 0]])
   })
 })

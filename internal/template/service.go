@@ -13,6 +13,8 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
 	"openloc/internal/mtrouter"
+	"openloc/internal/ptr"
+	"openloc/internal/segmentationapi"
 	"openloc/internal/settings"
 )
 
@@ -41,8 +43,8 @@ type CreateInput struct {
 
 // Create validates and inserts a template with its own settings profile, in
 // one transaction: a setup refused at any step leaves nothing behind. The
-// workflow steps are the setup's (library workflow and/or steps), else the
-// default pair.
+// workflow is optional: without one the template has no steps, and a project
+// made from it picks its own.
 func Create(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID int64, in CreateInput) (db.Template, db.SettingsProfile, error) {
 	customerID, err := customerInTenant(ctx, q, tenantID, in.CustomerID)
 	if err != nil {
@@ -52,6 +54,7 @@ func Create(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID int6
 	if err != nil {
 		return db.Template{}, db.SettingsProfile{}, httputil.NewClientError(err.Error())
 	}
+	in.Setup.Language = ptr.Deref(sourceLang)
 	if err := settings.ValidateSetup(ctx, q, tenantID, in.Setup); err != nil {
 		return db.Template{}, db.SettingsProfile{}, err
 	}
@@ -90,11 +93,6 @@ func Create(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID int6
 		}
 		if err := settings.ApplySetup(ctx, tx, q, tenantID, profile.ID, in.Setup); err != nil {
 			return fmt.Errorf("apply template setup: %w", err)
-		}
-		if !in.Setup.HasWorkflow() {
-			if err := settings.CreateDefaultWorkflowSteps(ctx, q, tenantID, profile.ID); err != nil {
-				return fmt.Errorf("create default workflow steps: %w", err)
-			}
 		}
 		// Re-read: the setup may have changed scalars and the provenance pointer.
 		if profile, err = q.GetSettingsProfile(ctx, profile.ID); err != nil {
@@ -136,12 +134,16 @@ type UpdateInput struct {
 	TmOnUpload            *bool
 	AutoComplete          *bool
 	InlineHTML            *bool
+	LinguistTerms         *string
 	FuzzyThreshold        *float32
 	SublanguagePenaltyPct *int32
 	NearExactPenaltyPct   *int32
 	TMLookupOrder         *string
 	QAProfile             NullableID
 	MTRouter              NullableID
+	// SegmentationProfile picks the profile uploads are split with; nil keeps
+	// the stored one while it fits the template's language.
+	SegmentationProfile *int64
 	// LinkTMProfile links the template to a TM profile. Leaving a profile goes
 	// through the detach endpoint, which copies its rows.
 	LinkTMProfile *int64
@@ -206,6 +208,9 @@ func PlanUpdate(ctx context.Context, q db.Querier, tenantID, id int64, in Update
 	if err := settings.ValidateTMLookupOrder(in.TMLookupOrder); err != nil {
 		return UpdatePlan{}, err
 	}
+	if err := settings.ValidateLinguistTerms(in.LinguistTerms); err != nil {
+		return UpdatePlan{}, err
+	}
 	linking := in.LinkTMProfile != nil
 	if err := settings.GuardTMScoringEdit(profile.TmProfileID != nil || linking, in.FuzzyThreshold, in.SublanguagePenaltyPct, in.NearExactPenaltyPct, in.TMLookupOrder); err != nil {
 		return UpdatePlan{}, err
@@ -259,6 +264,11 @@ func PlanUpdate(ctx context.Context, q db.Querier, tenantID, id int64, in Update
 			return fail(msg)
 		}
 	}
+	if in.SegmentationProfile != nil {
+		if err := segmentationapi.Check(ctx, q, tenantID, *in.SegmentationProfile, ptr.Deref(sourceLang)); err != nil {
+			return UpdatePlan{}, err
+		}
+	}
 	return UpdatePlan{
 		Template: existing,
 		in:       in,
@@ -272,6 +282,7 @@ func PlanUpdate(ctx context.Context, q db.Querier, tenantID, id int64, in Update
 			NearExactPenaltyPct:   settings.ClampPctPtr(in.NearExactPenaltyPct),
 			AutoComplete:          in.AutoComplete,
 			InlineHtml:            in.InlineHTML,
+			LinguistTerms:         in.LinguistTerms,
 			TmLookupOrder:         in.TMLookupOrder,
 		},
 		template: db.UpdateTemplateParams{
@@ -295,23 +306,38 @@ func Update(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID, id 
 	if err != nil {
 		return db.Template{}, db.SettingsProfile{}, err
 	}
-	updated, err := q.UpdateSettingsProfile(ctx, plan.profile)
-	if err != nil {
-		return db.Template{}, db.SettingsProfile{}, fmt.Errorf("update settings profile: %w", err)
-	}
-	profileID := plan.Template.SettingsProfileID
-	if in.MTRouter.Set {
-		if err := q.SetSettingsProfileMTRouter(ctx, db.SetSettingsProfileMTRouterParams{ID: profileID, MtRouterID: in.MTRouter.ID}); err != nil {
-			return db.Template{}, db.SettingsProfile{}, fmt.Errorf("set MT router: %w", err)
+	var tmpl db.Template
+	var updated db.SettingsProfile
+	err = database.InTx(ctx, pool, func(tx pgx.Tx, q db.Querier) error {
+		var err error
+		if updated, err = q.UpdateSettingsProfile(ctx, plan.profile); err != nil {
+			return fmt.Errorf("update settings profile: %w", err)
 		}
-		updated.MtRouterID = in.MTRouter.ID
-	}
-	if in.LinkTMProfile != nil {
-		if updated, err = settings.LinkTMProfileTx(ctx, pool, tenantID, profileID, *in.LinkTMProfile); err != nil {
-			return db.Template{}, db.SettingsProfile{}, err
+		profileID := plan.Template.SettingsProfileID
+		if in.MTRouter.Set {
+			if err := q.SetSettingsProfileMTRouter(ctx, db.SetSettingsProfileMTRouterParams{ID: profileID, MtRouterID: in.MTRouter.ID}); err != nil {
+				return fmt.Errorf("set MT router: %w", err)
+			}
 		}
-	}
-	tmpl, err := q.UpdateTemplate(ctx, plan.template)
+		if in.LinkTMProfile != nil {
+			if _, err := settings.LinkTMProfileTx(ctx, tx, tenantID, profileID, *in.LinkTMProfile); err != nil {
+				return err
+			}
+		}
+		// Only an edit of the profile or of the language picks it again: a
+		// language the profile no longer suits moves it to the suggested one.
+		newLang := ptr.Deref(plan.template.SourceLanguage)
+		if in.SegmentationProfile != nil || newLang != ptr.Deref(plan.Template.SourceLanguage) {
+			if err := settings.SetSegmentationProfile(ctx, q, tenantID, profileID, in.SegmentationProfile, newLang); err != nil {
+				return err
+			}
+		}
+		if updated, err = q.GetSettingsProfile(ctx, profileID); err != nil {
+			return fmt.Errorf("get settings profile: %w", err)
+		}
+		tmpl, err = q.UpdateTemplate(ctx, plan.template)
+		return err
+	})
 	if err != nil {
 		return db.Template{}, db.SettingsProfile{}, err
 	}

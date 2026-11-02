@@ -72,7 +72,14 @@ export default function IssueDetailPage({ scope }: { scope: IssueScope }) {
       <Breadcrumbs
         items={[
           { label: 'Reported issues', to: listPath },
-          { label: <span className="truncate">{issue.title}</span> },
+          {
+            label: (
+              <span className="truncate">
+                <span className="mr-1.5 tabular-nums text-muted-foreground/70" data-testid="issue-number">{issue.id}</span>
+                {issue.title}
+              </span>
+            ),
+          },
         ]}
         actions={issue.can_delete && (
           <DeleteButton size="icon-sm" title="Delete issue" aria-label="Delete issue" data-testid="issue-delete" onClick={() => ask(issue)} />

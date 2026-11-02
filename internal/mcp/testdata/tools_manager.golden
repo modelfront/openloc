@@ -9,6 +9,7 @@ openloc_apply_workflow write open-world
 openloc_assign_job write
 openloc_assign_step write
 openloc_attach_uploaded_file write open-world
+openloc_attach_uploaded_files write open-world
 openloc_change_member_role write
 openloc_clear_job_translations destructive
 openloc_clear_project_translations destructive
@@ -25,6 +26,7 @@ openloc_create_mt_engine write
 openloc_create_mt_router write
 openloc_create_project write
 openloc_create_qa_profile write
+openloc_create_segmentation_profile write
 openloc_create_step_definition write
 openloc_create_template write
 openloc_create_term_base write
@@ -42,7 +44,9 @@ openloc_delete_label_value destructive
 openloc_delete_mt_engine destructive
 openloc_delete_mt_router destructive
 openloc_delete_qa_profile destructive
+openloc_delete_qa_rule destructive
 openloc_delete_saved_analysis destructive
+openloc_delete_segmentation_profile destructive
 openloc_delete_step_definition destructive
 openloc_delete_term destructive
 openloc_delete_term_base destructive
@@ -53,6 +57,7 @@ openloc_download_source read
 openloc_duplicate_template write
 openloc_export_file read
 openloc_export_job read
+openloc_export_segmentation_srx read
 openloc_export_terms read
 openloc_export_tmx read
 openloc_find_replace_job write
@@ -78,6 +83,7 @@ openloc_get_project_settings read
 openloc_get_qa_profile read
 openloc_get_qa_report read
 openloc_get_segment_history read
+openloc_get_segmentation_profile read
 openloc_get_step_definition read
 openloc_get_template read
 openloc_get_term_base read
@@ -113,6 +119,7 @@ openloc_list_project_workflow_steps read
 openloc_list_projects read
 openloc_list_qa_profiles read
 openloc_list_saved_analyses read
+openloc_list_segmentation_profiles read
 openloc_list_segments read
 openloc_list_step_definitions read
 openloc_list_templates read
@@ -129,8 +136,11 @@ openloc_mark_notifications_read write
 openloc_pretranslate_project write open-world
 openloc_preview_ai_prompt read
 openloc_preview_mt read open-world
+openloc_preview_segmentation read
 openloc_publish_project write open-world
 openloc_query_metrics read
+openloc_read_segmentation_srx read
+openloc_read_uploaded_file read
 openloc_reimport_xliff write
 openloc_reject_step write open-world
 openloc_remove_member destructive
@@ -168,6 +178,7 @@ openloc_update_notification_preferences write
 openloc_update_project write
 openloc_update_project_settings write
 openloc_update_qa_profile write
+openloc_update_segmentation_profile write
 openloc_update_step_definition write
 openloc_update_template write
 openloc_update_term write

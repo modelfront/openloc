@@ -57,7 +57,7 @@ func (b *directBackend) qaProfileDetail(ctx context.Context, p db.QaProfile) (QA
 				return QAProfileDetail{}, fmt.Errorf("decode QA rule config: %w", err)
 			}
 		}
-		out.Rules = append(out.Rules, QARule{CheckType: r.CheckType, Enabled: r.Enabled, Severity: r.Severity, Config: cfg})
+		out.Rules = append(out.Rules, QARule{RuleID: r.ID, CheckType: r.CheckType, Enabled: r.Enabled, Severity: r.Severity, Config: cfg})
 	}
 	return out, nil
 }
@@ -65,7 +65,7 @@ func (b *directBackend) qaProfileDetail(ctx context.Context, p db.QaProfile) (QA
 func configQARules(in []QARuleIn) ([]qa.RuleInput, error) {
 	out := make([]qa.RuleInput, 0, len(in))
 	for _, r := range in {
-		rule := qa.RuleInput{CheckType: r.CheckType, Enabled: r.Enabled, Severity: r.Severity}
+		rule := qa.RuleInput{RuleID: r.RuleID, CheckType: r.CheckType, Enabled: r.Enabled, Severity: r.Severity}
 		if r.Config != nil {
 			raw, err := json.Marshal(r.Config)
 			if err != nil {
@@ -130,7 +130,7 @@ func (b *directBackend) PreviewUpsertQARules(ctx context.Context, in UpsertQARul
 	if err != nil {
 		return Preview{}, err
 	}
-	p, params, err := qa.ValidateRules(ctx, b.q, tenantID, in.QAProfileID, rules)
+	p, count, err := qa.ValidateRules(ctx, b.q, tenantID, in.QAProfileID, rules)
 	if err != nil {
 		return Preview{}, configErr(err)
 	}
@@ -139,7 +139,7 @@ func (b *directBackend) PreviewUpsertQARules(ctx context.Context, in UpsertQARul
 		return Preview{}, err
 	}
 	return Preview{
-		Summary: fmt.Sprintf("Set %s on the QA profile %q.", configPlural(int64(len(params)), "rule"), p.Name),
+		Summary: fmt.Sprintf("Set %s on the QA profile %q.", configPlural(int64(count), "rule"), p.Name),
 		Effects: configQAEffects(used),
 	}, nil
 }
@@ -154,6 +154,44 @@ func (b *directBackend) UpsertQARules(ctx context.Context, in UpsertQARulesIn) (
 		return QAProfileDetail{}, err
 	}
 	if _, err := qa.UpsertRules(ctx, b.q, b.pool, tenantID, in.QAProfileID, rules); err != nil {
+		return QAProfileDetail{}, configErr(err)
+	}
+	return b.GetQAProfile(ctx, GetQAProfileIn{QAProfileID: in.QAProfileID})
+}
+
+func (b *directBackend) PreviewDeleteQARule(ctx context.Context, in DeleteQARuleIn) (Preview, error) {
+	tenantID, _ := scope(ctx)
+	p, err := b.q.GetQAProfile(ctx, db.GetQAProfileParams{ID: in.QAProfileID, TenantID: tenantID})
+	if err != nil {
+		return Preview{}, configErr(err)
+	}
+	var rule *db.QaRule
+	rules, err := b.q.ListQARules(ctx, p.ID)
+	if err != nil {
+		return Preview{}, fmt.Errorf("list QA rules: %w", err)
+	}
+	for i := range rules {
+		if rules[i].ID == in.RuleID && rules[i].CheckType == qa.RegexCheckType {
+			rule = &rules[i]
+		}
+	}
+	if rule == nil {
+		return Preview{}, invalidf("rule %d is not a regex rule of the QA profile %q", in.RuleID, p.Name)
+	}
+	used, err := qa.ProfileUsage(ctx, b.q, p.ID)
+	if err != nil {
+		return Preview{}, err
+	}
+	var cfg qa.RegexRuleConfig
+	if err := json.Unmarshal(rule.Config, &cfg); err != nil {
+		return Preview{}, fmt.Errorf("decode QA rule config: %w", err)
+	}
+	return Preview{Summary: fmt.Sprintf("Delete the regex rule %q from the QA profile %q.", cfg.Name, p.Name), Effects: configQAEffects(used)}, nil
+}
+
+func (b *directBackend) DeleteQARule(ctx context.Context, in DeleteQARuleIn) (QAProfileDetail, error) {
+	tenantID, _ := scope(ctx)
+	if err := qa.DeleteRule(ctx, b.q, tenantID, in.QAProfileID, in.RuleID); err != nil {
 		return QAProfileDetail{}, configErr(err)
 	}
 	return b.GetQAProfile(ctx, GetQAProfileIn{QAProfileID: in.QAProfileID})

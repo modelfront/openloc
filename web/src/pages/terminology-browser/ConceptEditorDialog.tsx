@@ -207,8 +207,8 @@ export default function ConceptEditorDialog({ open, onOpenChange, baseId, concep
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium">Terms <span className="text-gray-400 font-normal">({rows.length})</span></label>
-                <Button type="button" variant="outline" size="xs" onClick={addRow}>
-                  <Plus className="w-3 h-3 mr-1" /> Add term
+                <Button type="button" variant="outline" size="xs" onClick={addRow} startIcon={<Plus />}>
+                  Add term
                 </Button>
               </div>
               {(rows.length > 3 || rowLangs.length > 1) && (

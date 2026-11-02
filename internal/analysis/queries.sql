@@ -237,13 +237,14 @@ ORDER BY target_language ASC, job_id ASC NULLS LAST;
 --   tm_100    — t.origin='tm' AND tm_match_percent=100
 --   tm_85_99  — t.origin='tm' AND tm_match_percent BETWEEN 85 AND 99
 --   tm_65_84  — t.origin='tm' AND tm_match_percent BETWEEN 65 AND 84
---   new       — anything else (MT-filled, no-match, below-65 fuzzy, OR no
---               translation row at all via LEFT JOIN)
+--   new       — anything else (MT-filled, no-match, below-65 fuzzy)
 --
 -- Repetitions are NOT computed here (behavior deferred; see planning doc).
 --
--- is_auto_approved is FALSE for segments with no translation row (LEFT JOIN
--- yields NULL status) and for any status other than 'auto_approved' —
+-- A job's rows are the segments with a translation in its language, so a
+-- shared segment a split or join replaced in this language is not counted.
+--
+-- is_auto_approved is FALSE for any status other than 'auto_approved' —
 -- including 'approved' (human-confirmed) and 'needs_review'.
 SELECT
     CASE
@@ -259,7 +260,7 @@ SELECT
     COALESCE(SUM(length(s.source_text)), 0)::int AS characters
 FROM segments s
 JOIN jobs j ON j.file_id = s.file_id
-LEFT JOIN translations t
+JOIN translations t
     ON t.segment_id = s.id
    AND t.target_language = j.target_language
 WHERE j.id = @job_id
@@ -297,13 +298,13 @@ WITH scoped AS (
         COALESCE(t.status = 'auto_approved', FALSE)::bool AS is_auto_approved,
         (ROW_NUMBER() OVER (
             PARTITION BY j.target_language, s.source_text
-            ORDER BY j.file_id, s.position
+            ORDER BY j.file_id, s.position, s.sub_position
         ) > 1) AS is_repetition,
         s.word_count AS words,
         length(s.source_text) AS characters
     FROM segments s
     JOIN jobs j ON j.file_id = s.file_id
-    LEFT JOIN translations t
+    JOIN translations t
         ON t.segment_id = s.id
        AND t.target_language = j.target_language
     WHERE j.id = ANY(@job_ids::bigint[])

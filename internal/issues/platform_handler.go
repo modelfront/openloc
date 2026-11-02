@@ -37,30 +37,55 @@ func issueID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // verification (the assistant's check), and assignee (ids, and "none" for the
 // unassigned ones), each comma-separated.
 func (h *PlatformHandler) HandleList(w http.ResponseWriter, r *http.Request) {
-	f, err := listFilter(r)
+	f, ok := platformFilter(w, r, "load")
+	if !ok {
+		return
+	}
+	p := httputil.ParseCursor(r, 100)
+	items, next, err := h.svc.PlatformList(r.Context(), f, r.URL.Query().Get("cursor"), p.Limit)
 	if writeError(w, r, err, "load", "issues") {
 		return
+	}
+	writePage(w, items, next)
+}
+
+// HandleCount is GET /api/platform/issues/count: how many issues the list
+// shows with the same filters, over every page.
+func (h *PlatformHandler) HandleCount(w http.ResponseWriter, r *http.Request) {
+	f, ok := platformFilter(w, r, "count")
+	if !ok {
+		return
+	}
+	n, err := h.svc.PlatformCount(r.Context(), f)
+	if writeError(w, r, err, "count", "issues") {
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"count": n})
+}
+
+// platformFilter reads the operators' list filters, or writes the 400 and
+// reports false. verb names the request in an error ("load", "count").
+func platformFilter(w http.ResponseWriter, r *http.Request, verb string) (Filter, bool) {
+	f, err := listFilter(r, true)
+	if writeError(w, r, err, verb, "issues") {
+		return Filter{}, false
 	}
 	f.Priorities, f.Tags, f.Verifications = queryList(r, "priority"), queryList(r, "tag"), queryList(r, "verification")
 	var orgNone bool
 	if f.TenantIDs, orgNone, err = queryIDs(r, "org"); err != nil || orgNone {
 		httputil.BadRequest(w, "invalid org filter")
-		return
+		return Filter{}, false
+	}
+	var reporterNone bool
+	if f.ReporterIDs, reporterNone, err = queryIDs(r, "reporter"); err != nil || reporterNone {
+		httputil.BadRequest(w, "invalid reporter filter")
+		return Filter{}, false
 	}
 	if f.AssigneeIDs, f.Unassigned, err = queryIDs(r, "assignee"); err != nil {
 		httputil.BadRequest(w, "invalid assignee filter")
-		return
+		return Filter{}, false
 	}
-	cursor, err := ParseCursor(r.URL.Query().Get("cursor"))
-	if writeError(w, r, err, "load", "issues") {
-		return
-	}
-	p := httputil.ParseCursor(r, 100)
-	items, err := h.svc.PlatformList(r.Context(), f, cursor, p.Limit+1)
-	if writeError(w, r, err, "load", "issues") {
-		return
-	}
-	writePage(w, items, p.Limit)
+	return f, true
 }
 
 // queryIDs reads a comma-separated list of ids; the value "none" sets none.
@@ -86,6 +111,16 @@ func (h *PlatformHandler) HandleOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.Data(w, orgs)
+}
+
+// HandleReporters is GET /api/platform/issues/reporters: everyone who has
+// issues.
+func (h *PlatformHandler) HandleReporters(w http.ResponseWriter, r *http.Request) {
+	people, err := h.svc.PlatformReporters(r.Context())
+	if writeError(w, r, err, "load", "reporters") {
+		return
+	}
+	httputil.Data(w, people)
 }
 
 // HandleAssignees is GET /api/platform/issues/assignees: the support team.

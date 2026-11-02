@@ -10,8 +10,8 @@
 // dropped; a real one is signed in the assistant's preview, which the Go
 // integration tests drive (TestIntegrationChatIssueCheckTokenGoesToTheBrowserOnly).
 
-import { test, expect, type Browser, type Locator, type Page } from "@playwright/test";
-import { authHeaders, login, pageAs } from "./helpers";
+import type { Browser, Locator, Page } from "@playwright/test";
+import { apiAs, expect, login, pageAs, test } from "./helpers";
 import { SEED_OPERATOR_EMAIL } from "../seed-identity";
 
 test.describe.configure({ mode: "serial" });
@@ -60,13 +60,13 @@ async function sendFromForm(
   return { issue, sent: res.request().postDataBuffer()?.toString("latin1") ?? "" };
 }
 
-test.afterAll(async ({ browser }) => {
-  const ops = await operatorPage(browser);
+test.afterAll(async () => {
+  const ops = await apiAs(SEED_OPERATOR_EMAIL);
   for (const id of created) {
-    const res = await ops.request.delete(`/api/platform/issues/${id}`, { headers: await authHeaders(ops) });
+    const res = await ops.delete(`/api/platform/issues/${id}`);
     expect(res.ok(), `delete test issue ${id}: ${res.status()}`).toBe(true);
   }
-  await ops.context().close();
+  await ops.dispose();
 });
 
 /** A token the browser made up: the server keeps no check with it. */
@@ -119,7 +119,6 @@ test("the assistant asks for a screenshot, and its report reaches the support te
   await expect(ops.getByTestId("issue-trail-events")).toContainText("Opened /projects");
   // The form sent the forged token, and the server dropped it: no check is stored.
   await expect(ops.getByTestId("issue-check")).toHaveCount(0);
-  await ops.context().close();
 });
 
 test("the user repeats the steps; the assistant hears only that a recording is attached", async ({ page, browser }) => {
@@ -172,5 +171,4 @@ test("the user repeats the steps; the assistant hears only that a recording is a
   const steps = ops.getByTestId("issue-recording-events");
   await expect(steps).toContainText(typed);
   await expect(steps).toContainText("GET /api/no-such-route-for-the-recording failed (404)");
-  await ops.context().close();
 });

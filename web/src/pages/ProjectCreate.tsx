@@ -14,21 +14,21 @@ import {
   listTermBases,
   listQAProfiles,
   listTMProfiles,
-  createTemplate,
   getMe,
   listLabels,
   listProjectLabels,
   setProjectLabels,
   listTemplateLabels,
-  setTemplateLabels,
   type Project,
 } from '../api'
 import { toast } from 'sonner'
 import { queryKeys } from '../lib/query-keys'
-import { useProjectCreateSettings, workflowStepsError, pretranslateRouterError } from '../hooks/useProjectCreateSettings'
+import { toLangResources, toNamedOptions } from '../lib/settings-editor-options'
+import { useProjectCreateSettings, pretranslateRouterError } from '../hooks/useProjectCreateSettings'
 import { useProjectDraft } from '../hooks/useProjectDraft'
 import { isAdminRole, isManagerRole } from '../lib/roles'
-import { buildProjectCreatePayload, buildProjectSetupPayload } from '../lib/project-create-payload'
+import { buildProjectCreatePayload } from '../lib/project-create-payload'
+import { createTemplateFromForm } from '../lib/create-template'
 import { ProjectCreateWorkflowCard } from '../components/project/ProjectCreateWorkflowCard'
 import { focusMTRouter } from '../components/workflow/RawMTPane'
 import { TemplatePickerDialog } from '../components/project/TemplatePickerDialog'
@@ -45,6 +45,7 @@ import { DeadlinePicker } from '@/components/ui/deadline-picker'
 import { useScrollToError } from '../hooks/useScrollToError'
 import { langPickerProps, toLangOptions } from '../components/lang-options'
 import { SettingsEditor } from '../components/SettingsEditor'
+import { useFormSegmentation } from '../hooks/useSegmentationProfiles'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Chip } from '@/components/ui/chip'
 import { STATUS_COLORS, STATUS_LABELS } from '../components/project/ProjectStatusSelect'
@@ -134,6 +135,8 @@ export default function ProjectCreate() {
 
   const langOptions = languages ?? []
 
+  const { withSegmentation, missingReason } = useFormSegmentation(watch('source_language'))
+
   // Settings draft + "Start from" prefill + workflow step draft. The prefill
   // (a template or an existing project) seeds languages + settings + name,
   // domain and customer — and is deep-linkable via ?fromTemplate= /
@@ -142,6 +145,7 @@ export default function ProjectCreate() {
   const {
     settings, currentSettings, workflows, templateId, templateName, fromProjectId, fromProjectName, workflowId, hasStartFromDeepLink,
     handleTemplateChange, handleWorkflowChange, setWorkflowSteps, resetToDefaults, handleSettingsChange,
+    workflowInvalid, requireWorkflow,
   } = useProjectCreateSettings({
     ready: tmCollections !== undefined && termBases !== undefined,
     tmCollections,
@@ -191,7 +195,7 @@ export default function ProjectCreate() {
         domain,
         templateId,
         workflowId,
-      }, currentSettings())
+      }, withSegmentation(currentSettings()))
     },
   })
   const { scheduleSave, scheduleSaveExisting, endHydration } = draft
@@ -315,14 +319,14 @@ export default function ProjectCreate() {
   // rendered while a draft exists, so there is always something to ask about.
   const [discardOpen, setDiscardOpen] = useState(false)
   const requestDiscard = () => setDiscardOpen(true)
-  // The draft's own files, for the warning's wording. Same query key as the
-  // Files card, so this shares its cache entry rather than fetching again.
+  // How many files the draft holds, for the warning's wording: the server's
+  // total, so one small page is enough.
   const { data: draftFilesPage } = useQuery({
-    queryKey: queryKeys.files.byProject(draft.draftId ?? 0),
-    queryFn: () => listFiles(draft.draftId!),
+    queryKey: [...queryKeys.files.byProject(draft.draftId ?? 0), 'count'],
+    queryFn: () => listFiles(draft.draftId!, { limit: 1 }),
     enabled: draft.draftId != null,
   })
-  const draftFileCount = draftFilesPage?.data?.length ?? 0
+  const draftFileCount = draftFilesPage?.total ?? 0
 
   // Back to the untouched page: no start chosen, empty form, default settings
   // — and the draft is deleted, not emptied, so an abandoned start leaves no
@@ -341,6 +345,7 @@ export default function ProjectCreate() {
     // a prefill deep link would re-apply the source the user just dropped.
     if (window.location.search) navigate('/projects/new', { replace: true })
   }
+  const noSegmentationProfile = missingReason(currentSettings().segmentationProfileId)
   const sourceCaption = fromProjectId
     ? <>Settings copied from project <span className="font-medium text-gray-700 dark:text-gray-300">{fromProjectName || '…'}</span></>
     : templateId
@@ -351,29 +356,21 @@ export default function ProjectCreate() {
   // the setup) becomes a template; the page stays as it is.
   const [saveAsOpen, setSaveAsOpen] = useState(false)
   const openSaveAsTemplate = () => {
-    const stepsError = workflowStepsError(currentSettings().workflowSteps, workflowId)
-    if (stepsError) {
-      toast.error(stepsError)
-      return
-    }
+    if (!requireWorkflow({ optional: true })) return
     setSaveAsOpen(true)
   }
   const saveAsTemplate = async (name: string) => {
     try {
       const values = watch()
-      const tmpl = await createTemplate({
+      const tmpl = await createTemplateFromForm({
         name,
-        project_name: values.name.trim(),
-        source_language: values.source_language,
-        target_languages: values.target_languages,
-        ...buildProjectSetupPayload(workflowId, currentSettings()),
+        projectName: values.name,
+        sourceLanguage: values.source_language,
+        targetLanguages: values.target_languages,
+        workflowId,
+        settings: withSegmentation(currentSettings()),
+        labelPicks,
       })
-      // Labels have their own endpoint, so the form's picks are saved onto the
-      // new template rather than riding along in its create payload.
-      const picks = labelPicks
-        .filter(p => p.value_id != null)
-        .map(p => ({ label_definition_id: p.definition_id, label_value_id: p.value_id! }))
-      if (picks.length > 0) await setTemplateLabels(tmpl.id, picks)
       queryClient.invalidateQueries({ queryKey: queryKeys.templates.all })
       setSaveAsOpen(false)
       toast.success(`Template “${tmpl.name}” saved`, {
@@ -389,11 +386,7 @@ export default function ProjectCreate() {
   // travel through buildPayload, so the argument isn't needed here.
   const onSubmit = async () => {
     try {
-      const stepsError = workflowStepsError(currentSettings().workflowSteps, workflowId)
-      if (stepsError) {
-        toast.error(stepsError)
-        return
-      }
+      if (!requireWorkflow()) return
       const routerError = pretranslateRouterError(currentSettings())
       if (routerError) {
         toast.error(routerError)
@@ -496,12 +489,10 @@ export default function ProjectCreate() {
         <div role="group" aria-label="Start from" className="mb-6 flex flex-wrap items-center gap-2" data-testid="start-from" data-guide="project_create.start">
           {/* Template is the primary action: it is the faster path and the
               one a returning user takes. Scratch is the fallback. */}
-          <Button type="button" onClick={() => handleStartModeChange('template')} data-testid="start-from-template">
-            <LayoutTemplate />
+          <Button type="button" onClick={() => handleStartModeChange('template')} startIcon={<LayoutTemplate />} data-testid="start-from-template">
             From template
           </Button>
-          <Button type="button" variant="outline" onClick={() => handleStartModeChange('scratch')} data-testid="start-from-scratch">
-            <Plus />
+          <Button type="button" variant="outline" onClick={() => handleStartModeChange('scratch')} startIcon={<Plus />} data-testid="start-from-scratch">
             From scratch
           </Button>
         </div>
@@ -632,14 +623,15 @@ export default function ProjectCreate() {
           onStepsChange={saving(setWorkflowSteps)}
           mtRouterName={mtRouterName}
           mtOnUpload={mtOnUpload}
+          invalid={workflowInvalid}
         />
           )}
           values={settings}
-          tmCollections={tmCollections?.map(t => ({ id: t.id, name: t.name, source_language: t.source_language, target_languages: t.target_languages })) ?? []}
+          tmCollections={toLangResources(tmCollections)}
           mtRouters={mtRouters ?? []}
-          termBases={termBases?.map(t => ({ id: t.id, name: t.name, source_language: t.source_language, target_languages: t.target_languages ?? [] })) ?? []}
-          qaProfiles={qaProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
-          tmProfiles={tmProfiles?.map(p => ({ id: p.id, name: p.name })) ?? []}
+          termBases={toLangResources(termBases)}
+          qaProfiles={toNamedOptions(qaProfiles)}
+          tmProfiles={toNamedOptions(tmProfiles)}
           languages={languages}
           sourceLanguage={watch('source_language')}
           targetLanguages={watch('target_languages')}
@@ -656,10 +648,12 @@ export default function ProjectCreate() {
 
         {/* Actions. Save as template keeps the page; Create project leaves it. */}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={openSaveAsTemplate} disabled={isSubmitting} data-testid="save-as-template">
+          <Button type="button" variant="outline" onClick={openSaveAsTemplate} disabled={isSubmitting || !!noSegmentationProfile}
+            disabledReason={isSubmitting ? undefined : noSegmentationProfile} data-testid="save-as-template">
             Save as template
           </Button>
-          <Button type="submit" disabled={isSubmitting} data-guide="project_create.submit">
+          <Button type="submit" disabled={isSubmitting || !!noSegmentationProfile}
+            disabledReason={isSubmitting ? undefined : noSegmentationProfile} data-guide="project_create.submit">
             {isSubmitting ? 'Creating...' : 'Create project'}
           </Button>
         </div>

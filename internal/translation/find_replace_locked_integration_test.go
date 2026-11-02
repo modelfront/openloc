@@ -59,7 +59,7 @@ func TestIntegrationFindReplace_IncludeLocked(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	ownerID, tenantID := registerUser(t, q, "fr-locked")
-	projectID := createProject(t, router, "FR Locked Project", ownerID, tenantID)
+	projectID := createProject(t, q, router, "FR Locked Project", ownerID, tenantID)
 	pm := testutil.SeedUserWithRole(t, q, tenantID, "fr-locked-pm@test.com", "password123", "project_manager")
 
 	call := func(t *testing.T, userID int64, role string, jobID int64, body map[string]any) frLockedResp {

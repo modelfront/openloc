@@ -29,63 +29,11 @@ RETURNING *;
 INSERT INTO issue_captures (issue_id, trail, recording)
 VALUES (@issue_id, sqlc.narg('trail'), sqlc.narg('recording'));
 
--- name: CountRecentIssuesByReporter :one
--- The per-user rate limit: issues this user filed since @since, in any org.
-SELECT count(*) FROM issues WHERE reporter_id = @reporter_id AND created_at >= @since;
-
--- name: ListMemberIssuesNewest :many
--- The org's issues the viewer may see, most recently updated first (ties by
--- id). An empty filter list matches any value; a NULL search matches any
--- text, else a part of the title or description (wildcards escaped by the
--- caller). The cursor is the previous page's last (updated_at, id); a NULL
--- cursor_at is the first page.
-SELECT i.*, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(CASE WHEN d.tenant_id = i.tenant_id AND (@all_members::boolean OR d.reporter_id = @viewer_id) THEN d.title END, '')::text AS duplicate_title,
-       d.status AS duplicate_status, COALESCE(d.tenant_id = i.tenant_id AND (@all_members::boolean OR d.reporter_id = @viewer_id), false)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.tenant_id = @tenant_id AND (@all_members::boolean OR i.reporter_id = @viewer_id)
-  AND i.deleted_at IS NULL
-  AND (cardinality(@statuses::text[]) = 0 OR i.status = ANY(@statuses::text[]))
-  AND (cardinality(@kinds::text[]) = 0 OR i.kind = ANY(@kinds::text[]))
-  AND (cardinality(@areas::text[]) = 0 OR i.area = ANY(@areas::text[]))
-  AND (cardinality(@severities::text[]) = 0 OR i.severity = ANY(@severities::text[]))
-  AND (sqlc.narg('search')::text IS NULL
-       OR i.title ILIKE '%' || sqlc.narg('search')::text || '%'
-       OR i.description ILIKE '%' || sqlc.narg('search')::text || '%')
-  AND (sqlc.narg('cursor_at')::timestamptz IS NULL OR (i.updated_at, i.id) < (sqlc.narg('cursor_at')::timestamptz, @cursor_id::bigint))
-ORDER BY i.updated_at DESC, i.id DESC
-LIMIT @row_limit;
-
--- name: ListMemberIssuesOldest :many
--- ListMemberIssuesNewest in the other order: least recently updated first.
-SELECT i.*, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(CASE WHEN d.tenant_id = i.tenant_id AND (@all_members::boolean OR d.reporter_id = @viewer_id) THEN d.title END, '')::text AS duplicate_title,
-       d.status AS duplicate_status, COALESCE(d.tenant_id = i.tenant_id AND (@all_members::boolean OR d.reporter_id = @viewer_id), false)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.tenant_id = @tenant_id AND (@all_members::boolean OR i.reporter_id = @viewer_id)
-  AND i.deleted_at IS NULL
-  AND (cardinality(@statuses::text[]) = 0 OR i.status = ANY(@statuses::text[]))
-  AND (cardinality(@kinds::text[]) = 0 OR i.kind = ANY(@kinds::text[]))
-  AND (cardinality(@areas::text[]) = 0 OR i.area = ANY(@areas::text[]))
-  AND (cardinality(@severities::text[]) = 0 OR i.severity = ANY(@severities::text[]))
-  AND (sqlc.narg('search')::text IS NULL
-       OR i.title ILIKE '%' || sqlc.narg('search')::text || '%'
-       OR i.description ILIKE '%' || sqlc.narg('search')::text || '%')
-  AND (sqlc.narg('cursor_at')::timestamptz IS NULL OR (i.updated_at, i.id) > (sqlc.narg('cursor_at')::timestamptz, @cursor_id::bigint))
-ORDER BY i.updated_at, i.id
-LIMIT @row_limit;
+-- name: ReporterHasIssue :one
+-- Whether the user has an issue in the org that is not deleted.
+SELECT EXISTS (
+    SELECT 1 FROM issues WHERE tenant_id = @tenant_id AND reporter_id = @reporter_id AND deleted_at IS NULL
+)::boolean;
 
 -- name: GetMemberIssue :one
 SELECT i.*, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
@@ -120,12 +68,6 @@ WHERE c.issue_id = @issue_id AND i.tenant_id = @tenant_id
   AND (@all_members::boolean OR i.reporter_id = @viewer_id)
   AND i.deleted_at IS NULL AND c.deleted_at IS NULL AND NOT c.internal
 ORDER BY c.created_at, c.id;
-
--- name: CountRecentMemberComments :one
--- The per-member comment limit: comments this user wrote on the org's side
--- since @since, in any org.
-SELECT count(*) FROM issue_comments
-WHERE author_id = @author_id AND author_side = 'reporter' AND created_at >= @since;
 
 -- name: CreateIssueComment :one
 -- Internal: callers load the issue through a scoped or operator query first.
@@ -162,6 +104,14 @@ RETURNING *;
 UPDATE issues SET duplicate_of_id = @original_id::bigint, updated_at = now()
 WHERE duplicate_of_id = @id::bigint AND deleted_at IS NULL
 RETURNING id;
+
+-- name: ListDuplicatesToReopen :many
+-- Internal: the caller soft-deletes @original_id and holds
+-- LockIssueDuplicates. The duplicates ReopenDuplicatesOf sends back to the
+-- queue.
+SELECT id FROM issues
+WHERE duplicate_of_id = @original_id::bigint AND status = 'duplicate' AND deleted_at IS NULL
+ORDER BY id;
 
 -- name: ReopenDuplicatesOf :exec
 -- Internal: the caller soft-deleted @original_id and holds
@@ -269,82 +219,25 @@ SELECT id, name, email FROM users WHERE lower(email) = ANY(@emails::text[]) ORDE
 -- Internal: the names of the support team members an issue's history names.
 SELECT id, name FROM users WHERE id = ANY(@ids::bigint[]);
 
--- name: ListIssuesForPlatformNewest :many
--- Internal: platform operators only (RequirePlatformAdmin). Every org's issues,
--- paged and searched like ListMemberIssuesNewest. An empty filter list matches
--- any value; a severity filter matches bugs only; a tag filter matches an issue
--- with any of the tags. The assignee filter matches the listed assignees, plus
--- the unassigned issues when @unassigned. A verification filter matches the
--- reports the assistant checked with one of those results.
-SELECT i.*, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(d.title, '')::text AS duplicate_title,
-       d.status AS duplicate_status, (d.id IS NOT NULL)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
-  AND (cardinality(@statuses::text[]) = 0 OR i.status = ANY(@statuses::text[]))
-  AND (cardinality(@kinds::text[]) = 0 OR i.kind = ANY(@kinds::text[]))
-  AND (cardinality(@areas::text[]) = 0 OR i.area = ANY(@areas::text[]))
-  AND (cardinality(@severities::text[]) = 0 OR i.severity = ANY(@severities::text[]))
-  AND (cardinality(@tenant_ids::bigint[]) = 0 OR i.tenant_id = ANY(@tenant_ids::bigint[]))
-  AND (cardinality(@priorities::text[]) = 0 OR i.priority = ANY(@priorities::text[]))
-  AND (cardinality(@tags::text[]) = 0 OR i.tags && @tags::text[])
-  AND ((cardinality(@assignee_ids::bigint[]) = 0 AND NOT @unassigned::boolean)
-       OR i.assignee_id = ANY(@assignee_ids::bigint[])
-       OR (@unassigned::boolean AND i.assignee_id IS NULL))
-  AND (cardinality(@verifications::text[]) = 0 OR i.chat_verification = ANY(@verifications::text[]))
-  AND (sqlc.narg('search')::text IS NULL
-       OR i.title ILIKE '%' || sqlc.narg('search')::text || '%'
-       OR i.description ILIKE '%' || sqlc.narg('search')::text || '%')
-  AND (sqlc.narg('cursor_at')::timestamptz IS NULL OR (i.updated_at, i.id) < (sqlc.narg('cursor_at')::timestamptz, @cursor_id::bigint))
-ORDER BY i.updated_at DESC, i.id DESC
-LIMIT @row_limit;
-
--- name: ListIssuesForPlatformOldest :many
--- Internal: platform operators only (RequirePlatformAdmin).
--- ListIssuesForPlatformNewest in the other order.
-SELECT i.*, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(d.title, '')::text AS duplicate_title,
-       d.status AS duplicate_status, (d.id IS NOT NULL)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
-  AND (cardinality(@statuses::text[]) = 0 OR i.status = ANY(@statuses::text[]))
-  AND (cardinality(@kinds::text[]) = 0 OR i.kind = ANY(@kinds::text[]))
-  AND (cardinality(@areas::text[]) = 0 OR i.area = ANY(@areas::text[]))
-  AND (cardinality(@severities::text[]) = 0 OR i.severity = ANY(@severities::text[]))
-  AND (cardinality(@tenant_ids::bigint[]) = 0 OR i.tenant_id = ANY(@tenant_ids::bigint[]))
-  AND (cardinality(@priorities::text[]) = 0 OR i.priority = ANY(@priorities::text[]))
-  AND (cardinality(@tags::text[]) = 0 OR i.tags && @tags::text[])
-  AND ((cardinality(@assignee_ids::bigint[]) = 0 AND NOT @unassigned::boolean)
-       OR i.assignee_id = ANY(@assignee_ids::bigint[])
-       OR (@unassigned::boolean AND i.assignee_id IS NULL))
-  AND (cardinality(@verifications::text[]) = 0 OR i.chat_verification = ANY(@verifications::text[]))
-  AND (sqlc.narg('search')::text IS NULL
-       OR i.title ILIKE '%' || sqlc.narg('search')::text || '%'
-       OR i.description ILIKE '%' || sqlc.narg('search')::text || '%')
-  AND (sqlc.narg('cursor_at')::timestamptz IS NULL OR (i.updated_at, i.id) > (sqlc.narg('cursor_at')::timestamptz, @cursor_id::bigint))
-ORDER BY i.updated_at, i.id
-LIMIT @row_limit;
-
 -- name: ListIssueOrgsForPlatform :many
 -- Internal: platform operators only (RequirePlatformAdmin). The orgs that have
--- issues, for the operators' organization filter.
+-- issues, for the operators' reporter filter.
 SELECT DISTINCT t.id, t.name
 FROM issues i
 JOIN tenants t ON t.id = i.tenant_id
 WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
 ORDER BY t.name, t.id;
+
+-- name: ListIssueReportersForPlatform :many
+-- Internal: platform operators only (RequirePlatformAdmin). Everyone who has
+-- issues, with the orgs they reported in, for the operators' reporter filter.
+SELECT u.id, u.name, u.email, string_agg(DISTINCT t.name, ', ' ORDER BY t.name)::text AS org_names
+FROM issues i
+JOIN users u ON u.id = i.reporter_id
+JOIN tenants t ON t.id = i.tenant_id
+WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
+GROUP BY u.id, u.name, u.email
+ORDER BY lower(COALESCE(NULLIF(u.name, ''), u.email)), u.id;
 
 -- name: ListIssueTagsForPlatform :many
 -- Internal: platform operators only (RequirePlatformAdmin). Every tag in use,
@@ -438,3 +331,34 @@ LIMIT @batch_size;
 -- name: DeleteIssueAttachmentBlobPurges :exec
 -- Internal: platform sweep across tenants. Called after the files are gone.
 DELETE FROM issue_attachment_blob_purges WHERE storage_key = ANY(@storage_keys::text[]);
+
+-- name: GetIssueSlackMessage :one
+-- Internal: the worker's Slack post, platform-wide like the issues it serves.
+-- The message that announced the issue; no row when none was posted.
+SELECT channel, ts FROM issue_slack_messages WHERE issue_id = @issue_id;
+
+-- name: InsertIssueSlackMessage :exec
+-- Internal: the worker's Slack post. The first message announcing an issue
+-- stays its thread.
+INSERT INTO issue_slack_messages (issue_id, channel, ts) VALUES (@issue_id, @channel, @ts)
+ON CONFLICT (issue_id) DO NOTHING;
+
+-- name: ListIssueSlackBlanks :many
+-- Internal: platform sweep across tenants. One batch of the queued Slack cards
+-- of deleted issues, after @after_id in issue order.
+SELECT issue_id, channel, ts FROM issue_slack_blanks
+WHERE issue_id > @after_id::bigint
+ORDER BY issue_id
+LIMIT @batch_size;
+
+-- name: QueueIssueSlackBlank :exec
+-- Internal: the caller soft-deletes @issue_id. Its card waits for the sweep
+-- besides its refresh, so a refresh that read the issue before the delete
+-- cannot leave the issue's text in Slack.
+INSERT INTO issue_slack_blanks (issue_id, channel, ts)
+SELECT m.issue_id, m.channel, m.ts FROM issue_slack_messages m WHERE m.issue_id = @issue_id::bigint
+ON CONFLICT (issue_id) DO NOTHING;
+
+-- name: DeleteIssueSlackBlank :exec
+-- Internal: platform sweep across tenants. Called once the card is blanked.
+DELETE FROM issue_slack_blanks WHERE issue_id = @issue_id;

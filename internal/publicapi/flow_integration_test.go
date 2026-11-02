@@ -19,7 +19,8 @@ func TestIntegrationV1_ProjectFileJobFlow(t *testing.T) {
 
 	rec := c.do(http.MethodPost, "/api/v1/projects", map[string]any{
 		"name": "Spring catalog", "source_language": "en", "target_languages": []string{"de", "fr"},
-		"deadline": "2026-12-01T09:00:00Z",
+		"workflow_id": f.ids["workflowID"],
+		"deadline":    "2026-12-01T09:00:00Z",
 	}, key)
 	wantStatus(t, rec, http.StatusCreated)
 	p := testutil.DecodeData[publicapi.Project](t, rec)
@@ -124,6 +125,7 @@ func TestIntegrationV1_ListsPaginate(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		rec := c.do(http.MethodPost, "/api/v1/projects", map[string]any{
 			"name": fmt.Sprintf("P%d", i), "source_language": "en", "target_languages": []string{"de"},
+			"workflow_id": f.ids["workflowID"],
 		}, key)
 		wantStatus(t, rec, http.StatusCreated)
 	}
@@ -172,6 +174,7 @@ func TestIntegrationV1_FileMustBelongToProject(t *testing.T) {
 
 	rec := f.client.do(http.MethodPost, "/api/v1/projects", map[string]any{
 		"name": "Other", "source_language": "en", "target_languages": []string{"de"},
+		"workflow_id": f.ids["workflowID"],
 	}, f.keys["owner"])
 	wantStatus(t, rec, http.StatusCreated)
 	other := testutil.DecodeData[publicapi.Project](t, rec)

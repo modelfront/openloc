@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/settings"
 	"openloc/internal/testutil"
 )
 
@@ -213,12 +214,16 @@ func TestIntegrationMCPUpdateProjectAndHistory(t *testing.T) {
 	}
 }
 
-// seedDraftProject creates a project in the wizard's draft state.
+// seedDraftProject creates a project in the wizard's draft state, with the
+// default Translation → Review steps a publish needs.
 func seedDraftProject(t *testing.T, q db.Querier, tenantID int64, name string) db.Project {
 	t.Helper()
 	ctx := context.Background()
-	sp, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75})
+	sp, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75}, "en")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.CreateDefaultWorkflowSteps(ctx, q, tenantID, sp.ID); err != nil {
 		t.Fatal(err)
 	}
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{
@@ -406,7 +411,7 @@ func TestIntegrationMCPClearAndPretranslateProject(t *testing.T) {
 	if err := f.q.SetJobCurrentStep(ctx, db.SetJobCurrentStepParams{ID: f.jobA.ID, CurrentStepID: &a.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if isErr, text := callTool(t, s, "openloc_clear_project_translations", args, nil); !isErr || !strings.Contains(text, "past the first workflow step") {
+	if isErr, text := callTool(t, s, "openloc_clear_project_translations", args, nil); !isErr || !strings.Contains(text, "past the first human or hybrid workflow step") {
 		t.Errorf("clear past the first step previewed: %v %s", isErr, text)
 	}
 

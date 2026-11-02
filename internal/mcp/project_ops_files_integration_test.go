@@ -186,12 +186,14 @@ func TestIntegrationMCPAttachFileAndFileTools(t *testing.T) {
 	} else {
 		assertOpaqueNotFound(t, text)
 	}
-	draftProject, err := f.q.GetProject(ctx, db.GetProjectParams{ID: draft.ID, TenantID: f.tenantA.ID})
-	if err != nil {
+	draftJobs, _ := f.q.ListJobsByProject(ctx, draft.ID)
+	assignments, err := f.q.ListJobStepAssignments(ctx, draftJobs[0].ID)
+	if err != nil || len(assignments) == 0 {
+		t.Fatalf("the published job has no steps: %+v (err %v)", assignments, err)
+	}
+	if err := f.q.AssignStepToUser(ctx, db.AssignStepToUserParams{ID: assignments[0].ID, AssignedTo: &f.linguistA.ID}); err != nil {
 		t.Fatal(err)
 	}
-	draftJobs, _ := f.q.ListJobsByProject(ctx, draft.ID)
-	testutil.SeedJobStep(t, f.q, draftProject.SettingsProfileID, draftJobs[0].ID, &f.linguistA.ID)
 	if isErr, text := callTool(t, ling, "openloc_export_file", map[string]any{"file_id": fid, "target_language": "de"}, &dl); isErr {
 		t.Fatalf("an assigned linguist was refused: %s", text)
 	}
@@ -463,7 +465,7 @@ func TestIntegrationMCPUploadTextFile(t *testing.T) {
 		Draft bool    `json:"draft"`
 	}
 	if isErr, text := callTool(t, s, "openloc_upload_text_file", map[string]any{
-		"project_id": f.projectA.ID, "filename": "../../docs/brochure.html",
+		"project_id": f.projectA.ID, "filename": "../../brochures/brochure.html",
 		"content": "<html><body><p>Save the file. Then close it.</p><p>Done</p></body></html>",
 	}, &added); isErr {
 		t.Fatalf("upload_text_file: %s", text)

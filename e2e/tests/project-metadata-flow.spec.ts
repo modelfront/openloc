@@ -8,6 +8,7 @@ import {
   login,
   pickComboboxOption,
   pickComboboxValue,
+  pickProjectWorkflow,
   selectTargetLanguages,
   setDeadline,
   startFromScratch,
@@ -15,6 +16,7 @@ import {
   systemLabelsViaAPI,
   addLabelValueViaAPI,
   projectLabelsViaAPI,
+  standardWorkflowId,
 } from './helpers'
 
 const TS = Date.now()
@@ -46,6 +48,7 @@ test.describe('Project metadata flow', () => {
   })
 
   test('pick a customer label + project → edit metadata → list cross-page invalidates → filter persists', async ({ page }) => {
+    test.setTimeout(20_000)
     const { customer: customerLabelId } = await systemLabelsViaAPI(page)
     await addLabelValueViaAPI(page, customerLabelId, CUSTOMER_NAME)
 
@@ -69,6 +72,7 @@ test.describe('Project metadata flow', () => {
     // Customer is a built-in label: its values are defined
     // on the Labels page, and the form picks one.
     await pickComboboxOption(page, page.getByTestId(`project-label-value-${customerLabelId}`), CUSTOMER_NAME)
+    await pickProjectWorkflow(page)
 
     // Submit. The wizard has been autosaving a draft; "Create project"
     // publishes it and redirects to /projects/{id}.
@@ -156,6 +160,7 @@ test.describe('Project metadata flow', () => {
         name: PROJECT_NAME + ' (deadline buffer)',
         source_language: 'en',
         target_languages: ['fr'],
+        workflow_id: await standardWorkflowId(page),
       },
     })
     expect(created.ok()).toBe(true)
@@ -193,6 +198,7 @@ test.describe('Project metadata flow', () => {
         name: PROJECT_NAME + ' (domain edit)',
         source_language: 'en',
         target_languages: ['fr'],
+        workflow_id: await standardWorkflowId(page),
       },
     })
     expect(created.ok()).toBe(true)
@@ -229,9 +235,9 @@ test.describe('Project metadata flow', () => {
     // Unbreakable: no spaces, so nothing can wrap it — the title has to
     // truncate or it pushes the rest of the breadcrumb off the viewport.
     const longName = `${PROJECT_NAME.replace(/ /g, '')}${'x'.repeat(180)}`
-    const create = (name: string) =>
+    const create = async (name: string) =>
       page.request.post('/api/projects', {
-        data: { name, source_language: 'en', target_languages: ['fr'], status: 'on_hold' },
+        data: { name, source_language: 'en', target_languages: ['fr'], status: 'on_hold', workflow_id: await standardWorkflowId(page) },
       })
     // Inter loads with font-display: swap, so text first renders in the
     // fallback font, a few px narrower. Both widths are read in Inter.
@@ -304,6 +310,7 @@ test.describe('Project metadata flow', () => {
   // Settings tab. It lives on the settings profile, so both surfaces are the
   // shared SettingsEditor and the writes are the create POST + settings PATCH.
   test('auto-complete option: on by default, unchecked at create, toggled back on', async ({ page }) => {
+    test.setTimeout(20_000)
     await page.getByRole('link', { name: 'New project' }).click()
     await expect(page).toHaveURL(/\/projects\/new/)
     await startFromScratch(page)
@@ -315,6 +322,7 @@ test.describe('Project metadata flow', () => {
     const createCheckbox = page.getByTestId('settings-auto-complete')
     await expect(createCheckbox).toBeChecked()
     await createCheckbox.uncheck()
+    await pickProjectWorkflow(page)
 
     const { response: createResp, id: projectID } = await submitProjectWizard(page)
     expect(createResp.status()).toBe(200)
@@ -344,7 +352,7 @@ test.describe('Project metadata flow', () => {
 
   test('a short project name gets no redundant title tooltip', async ({ page }) => {
     const created = await page.request.post('/api/projects', {
-      data: { name: PROJECT_NAME + ' short', source_language: 'en', target_languages: ['fr'] },
+      data: { name: PROJECT_NAME + ' short', source_language: 'en', target_languages: ['fr'], workflow_id: await standardWorkflowId(page) },
     })
     expect(created.ok()).toBe(true)
     const projectId = (await created.json()).data.id
@@ -357,5 +365,27 @@ test.describe('Project metadata flow', () => {
     // Give the tooltip's open delay time to elapse before asserting absence.
     await page.waitForTimeout(800)
     await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0)
+  })
+
+  // The page reads its one project, never the org's whole project list.
+  test('the project page loads only its own project, with its creator', async ({ page }) => {
+    const res = await page.request.post('/api/projects', {
+      headers, data: { name: `Detail one ${TS}`, source_language: 'en', target_languages: ['de'], workflow_id: await standardWorkflowId(page) },
+    })
+    expect(res.ok()).toBe(true)
+    const id: number = (await res.json()).data.id
+    createdProjects.push(id)
+
+    const listCalls: string[] = []
+    page.on('request', r => {
+      if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/projects') listCalls.push(r.url())
+    })
+    const one = page.waitForResponse(r => new URL(r.url()).pathname === `/api/projects/${id}` && r.request().method() === 'GET')
+    await page.goto(`/projects/${id}`)
+    expect((await one).ok()).toBe(true)
+
+    await expect(page.getByText(`Detail one ${TS}`).first()).toBeVisible()
+    await expect(page.getByTestId('project-created-by').getByTestId('creator-label-empty')).toHaveCount(0)
+    expect(listCalls, 'the project page must not load the project list').toEqual([])
   })
 })

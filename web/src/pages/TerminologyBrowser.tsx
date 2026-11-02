@@ -452,8 +452,7 @@ export default function TerminologyBrowser() {
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-sm text-gray-500 dark:text-gray-400">{countLabel}</span>
             <Tooltip>
-              <TooltipTrigger render={<Button variant="outline" size="sm" onClick={() => openConcept(null)} data-testid="new-concept" />}>
-                <Plus className="w-4 h-4 mr-1" />
+              <TooltipTrigger render={<Button variant="outline" size="sm" onClick={() => openConcept(null)} startIcon={<Plus />} data-testid="new-concept" />}>
                 New concept
               </TooltipTrigger>
               <TooltipContent>Create a new multilingual concept</TooltipContent>

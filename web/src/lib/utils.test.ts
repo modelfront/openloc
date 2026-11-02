@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { formatDate } from '../utils'
-import { cn } from './utils'
+import { capitalize, cn } from './utils'
 
 function isoAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString()
@@ -99,5 +99,13 @@ describe('cn', () => {
 
   it('keeps classes from different groups', () => {
     expect(cn('h-input', 'w-40')).toBe('h-input w-40')
+  })
+})
+
+describe('capitalize', () => {
+  it('upper-cases only the first character', () => {
+    expect(capitalize('term base')).toBe('Term base')
+    expect(capitalize('TM')).toBe('TM')
+    expect(capitalize('')).toBe('')
   })
 })

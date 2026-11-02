@@ -21,8 +21,15 @@ func SetProfileMTRouter(t testing.TB, q db.Querier, profileID int64, routerID *i
 // "read", "write" or "read_write"; a lower priority is looked up first.
 func SeedTMAssignment(t testing.TB, q db.Querier, profileID, tmID int64, mode string, priority int32) {
 	t.Helper()
+	SeedTMAssignmentPenalty(t, q, profileID, tmID, mode, priority, 0)
+}
+
+// SeedTMAssignmentPenalty is SeedTMAssignment with a penalty that docks every
+// match from the TM by penaltyPct.
+func SeedTMAssignmentPenalty(t testing.TB, q db.Querier, profileID, tmID int64, mode string, priority, penaltyPct int32) {
+	t.Helper()
 	if _, err := q.CreateSettingsTMAssignment(context.Background(), db.CreateSettingsTMAssignmentParams{
-		SettingsProfileID: profileID, TmID: tmID, Mode: mode, Priority: priority,
+		SettingsProfileID: profileID, TmID: tmID, Mode: mode, Priority: priority, PenaltyPct: penaltyPct,
 	}); err != nil {
 		t.Fatalf("SeedTMAssignment TM %d on profile %d: %v", tmID, profileID, err)
 	}

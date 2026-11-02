@@ -10,7 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/honeybadger-io/honeybadger-go"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"openloc/internal/ai"
 	"openloc/internal/aiengine"
@@ -26,6 +25,8 @@ import (
 	"openloc/internal/dashboard"
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/docseo"
+	"openloc/internal/editor"
 	"openloc/internal/extension"
 	"openloc/internal/file"
 	"openloc/internal/hold"
@@ -52,6 +53,8 @@ import (
 	"openloc/internal/qa"
 	"openloc/internal/secrets"
 	"openloc/internal/segment"
+	"openloc/internal/segmentationapi"
+	"openloc/internal/segmentedit"
 	"openloc/internal/spellcheck"
 	"openloc/internal/stepdef"
 	"openloc/internal/suggestion"
@@ -108,6 +111,10 @@ type Deps struct {
 	// Platform operators allowed to approve/reject self-serve org signups.
 	// Same list gates /api/platform/* and receives signup emails.
 	PlatformAdminEmails []string
+	// Where the operators hear of issues in Slack (config.SlackBotToken,
+	// IssueSlackChannel). IssueSlack nil: no Slack posts.
+	IssueSlack        issues.SlackPoster
+	IssueSlackChannel string
 	// DemoOrg keeps the Playground (config.DemoOrg). Off, nothing offers it:
 	// entering is refused and saved tours are not listed.
 	DemoOrg bool
@@ -182,7 +189,7 @@ type Deps struct {
 	// (and no dev ring exists) the viewer is mounted inside the platform-admin
 	// group, because these entries span every tenant — Entry has no tenant_id.
 	// nil leaves production with no viewer at all.
-	LLMDebugReader llmdebug.Source
+	LLMDebugReader llmdebug.Log
 
 	// Write-side counters for the persisted feed, surfaced alongside the entries
 	// so "the entry is missing" can be told apart from "the entry was dropped or
@@ -210,6 +217,9 @@ type Deps struct {
 	// The customer API's OpenAPI document. main.go loads it and refuses to
 	// start if it is invalid. nil leaves /api/v1 unmounted.
 	APISpec *publicapi.Spec
+	// The documentation sites' pages as plain HTML, for crawlers: /sitemap.xml
+	// here, the pages themselves in main.go's SPA handler. Built by DocPages.
+	DocPages *docseo.Sites
 }
 
 // Per-key budget for /api/v1, documented in the API guides' errors page.
@@ -242,14 +252,7 @@ func NewRouter(deps Deps) chi.Router {
 
 	r.Use(middleware.RequestID)
 	r.Use(httputil.ClientIP(deps.TrustedProxyHops))
-	r.Use(middleware.Recoverer)
-	// Ordering is load-bearing, see internal/api/observability.go:
-	// requestObservability must sit inside Recoverer and outside
-	// honeybadger.Handler so a panic is reported exactly once.
-	// requestObservability replaces chi's middleware.Logger — running both would
-	// emit two lines per request, one unstructured and one ECS.
-	r.Use(requestObservability)
-	r.Use(honeybadger.Handler)
+	useCoreMiddleware(r)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{deps.BaseURL},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -265,6 +268,9 @@ func NewRouter(deps Deps) chi.Router {
 
 	// Comments
 	commentHandler := comments.NewHandler(deps.Queries)
+	editorHandler := editor.NewHandler(deps.Queries)
+	segmentEditSvc := segmentedit.NewService(deps.Queries, deps.DB.(*pgxpool.Pool), deps.Storage)
+	segmentEditHandler := segmentedit.NewHandler(deps.Queries, segmentEditSvc)
 
 	// Spell check (LanguageTool). Routes are registered inside the authenticated
 	// group below: spell check sends text to LanguageTool, so it must never be
@@ -334,7 +340,8 @@ func NewRouter(deps Deps) chi.Router {
 	errtrackLimiter := httputil.NewRateLimiter(10.0/60.0, 5)
 	r.With(errtrackLimiter.Middleware).Post(errtrackNoticePath, noticeProxy.handleNotice)
 
-	r.Get("/robots.txt", robotsTxt(docHosts))
+	r.Get("/robots.txt", robotsTxt(deps.BaseURL, docHosts))
+	r.Get("/sitemap.xml", sitemapXML(deps.DocPages))
 
 	// Auth routes (public — no JWT required, rate-limited to prevent brute force)
 	authHandler := auth.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool), deps.JWTSecret, deps.BaseURL, deps.DevAutoLogin, deps.EmailSender, deps.PlatformAdminEmails)
@@ -400,10 +407,14 @@ func NewRouter(deps Deps) chi.Router {
 	// deployment has operators, who are the ones reading them.
 	issueSvc := issues.NewService(deps.DB.(*pgxpool.Pool), deps.Storage, deps.NotificationService,
 		deps.EmailSender, deps.PlatformAdminEmails, deps.BaseURL)
-	// Operator emails go to the worker, so a report or a reply does not wait
-	// on the mail server. Without a queue they are sent in the request.
+	// The assignee emails and Slack posts go to the worker, so a request does
+	// not wait on the mail server or Slack. Without a queue they are sent in
+	// the request.
 	if q, ok := deps.Enqueuer.(issues.TaskEnqueuer); ok {
 		issueSvc.WithEmailQueue(q)
+	}
+	if deps.IssueSlack != nil {
+		issueSvc.WithSlack(deps.IssueSlack, deps.IssueSlackChannel)
 	}
 	// Signs the assistant's checks of the reports it writes, the same on
 	// every replica.
@@ -444,7 +455,9 @@ func NewRouter(deps Deps) chi.Router {
 			if issueSvc.Enabled() {
 				ph := issues.NewPlatformHandler(issueSvc)
 				r.Get("/api/platform/issues", ph.HandleList)
+				r.Get("/api/platform/issues/count", ph.HandleCount)
 				r.Get("/api/platform/issues/orgs", ph.HandleOrgs)
+				r.Get("/api/platform/issues/reporters", ph.HandleReporters)
 				r.Get("/api/platform/issues/assignees", ph.HandleAssignees)
 				r.Get("/api/platform/issues/tags", ph.HandleTags)
 				r.Get("/api/platform/issues/{issueID}", ph.HandleGet)
@@ -530,6 +543,15 @@ func NewRouter(deps Deps) chi.Router {
 		mcppkg.NewDirectBackendWithPool(deps.Queries, deps.DB.(*pgxpool.Pool), deps.Docs, catalog, mtDecryptor, deps.Storage),
 		mcppkg.InsightDeps{AnalysisEnqueuer: deps.Enqueuer, Invites: inviteSvc})
 	mcppkg.WireIssues(mcpBackend, issueSvc)
+	// The LLM call log tools search the same log /debug/llm reads: the dev ring
+	// when there is one, else the persisted log.
+	var llmLog llmdebug.Log
+	if deps.LLMDebugRing != nil {
+		llmLog = deps.LLMDebugRing
+	} else if deps.LLMDebugReader != nil {
+		llmLog = deps.LLMDebugReader
+	}
+	mcppkg.WireLLMLog(mcpBackend, llmLog)
 	mcpServer, mcpErr := mcppkg.NewServer(mcppkg.Deps{
 		Backend:    mcpBackend,
 		Audit:      deps.Queries,
@@ -538,6 +560,7 @@ func NewRouter(deps Deps) chi.Router {
 		// Lets a read-scoped Claude/ChatGPT grant re-authorize for write.
 		StepUpChallenge: oauthSrv.WriteScopeChallenge(),
 		IssueReports:    issueSvc.Enabled(),
+		LLMLog:          llmLog != nil,
 	})
 	if mcpErr != nil {
 		logging.Error(context.Background(), mcpErr, "MCP endpoint disabled", "mcp-disabled")
@@ -895,6 +918,7 @@ func NewRouter(deps Deps) chi.Router {
 			r.Put("/{projectID}/tms", projectHandler.HandleSetTMAssignments)
 			r.Put("/{projectID}/terminology", projectHandler.HandleSetTermAssignments)
 			r.Put("/{projectID}/workflow-steps", projectHandler.HandleSetWorkflowSteps)
+			r.Post("/{projectID}/workflow-steps/preview", projectHandler.HandlePreviewWorkflowSteps)
 			// Label picks live on their own routes rather than inside the
 			// project payload: the project list would otherwise pay for a
 			// join per row to render a page that does not show them.
@@ -1183,6 +1207,13 @@ func NewRouter(deps Deps) chi.Router {
 			r.Get("/download", fileHandler.HandleDownloadSource)
 		})
 
+		// Segmentation profiles: every member reads and previews; owners, admins
+		// and project managers write (RequireManager, in Routes).
+		segmentationHandler := segmentationapi.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool))
+		r.Route("/api/segmentation-profiles", func(r chi.Router) {
+			segmentationHandler.Routes(r, auth.RequireManager())
+		})
+
 		// QA
 		qaHandler := qa.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool))
 		r.Route("/api/qa-profiles", func(r chi.Router) {
@@ -1194,6 +1225,10 @@ func NewRouter(deps Deps) chi.Router {
 			r.Delete("/{profileID}", qaHandler.HandleDeleteProfile)
 			r.Get("/{profileID}/rules", qaHandler.HandleListRules)
 			r.Post("/{profileID}/rules", qaHandler.HandleUpsertRule)
+			r.Delete("/{profileID}/rules/{ruleID}", qaHandler.HandleDeleteRule)
+			r.Get("/{profileID}/export", qaHandler.HandleExportProfile)
+			r.Post("/import", qaHandler.HandleImportProfile)
+			r.Post("/{profileID}/import", qaHandler.HandleReplaceProfileRules)
 		})
 		r.With(auth.RequireLinguistTranslationAccess(deps.Queries)).
 			Get("/api/translations/{translationID}/qa", qaHandler.HandleTranslationQA)
@@ -1314,6 +1349,24 @@ func NewRouter(deps Deps) chi.Router {
 
 			r.Get("/", jobHandler.HandleGet)
 			r.Get("/translations", jobHandler.HandleTranslations)
+			// The CAT editor loads a light index, then the rows on screen; any
+			// member the group admits may read them, like /translations.
+			r.Route("/editor", func(r chi.Router) {
+				r.Get("/index", editorHandler.HandleIndex)
+				r.Get("/rows", editorHandler.HandleRows)
+				r.Get("/search", editorHandler.HandleSearch)
+				r.Get("/refs", editorHandler.HandleRefs)
+				r.Get("/word", editorHandler.HandleWordCandidates)
+			})
+			// Split and join one job's rows. Any member the group admits (a
+			// linguist assigned to the job, or a manager); the job's current
+			// task and the rows' state gate it in the service.
+			r.Post("/segments/split", segmentEditHandler.HandleSplit)
+			r.Post("/segments/join", segmentEditHandler.HandleJoin)
+			// The editor's term quick-add. Any member the group admits; the
+			// handler saves a linguist's term as pending.
+			r.Get("/term-bases", termHandler.HandleListJobTermBases)
+			r.Post("/terms", termHandler.HandleQuickAddJobTerm)
 			// Segment holds: who has a segment open in the editor. Any member
 			// the group admits; taking one also needs an editable task.
 			r.Get("/holds", holdHandler.HandleList)
@@ -1347,8 +1400,8 @@ func NewRouter(deps Deps) chi.Router {
 			r.Post("/clear-translations", jobHandler.HandleClearTranslations)
 			// Bulk actions on the editor's segment selection, with the
 			// single-segment routes' gates: lock is managers only, unlock any
-			// member with access to the job (clear: first step only, checked in
-			// the service).
+			// member with access to the job (clear: up to the first human or
+			// hybrid step, checked in the service).
 			r.With(auth.RequireManager()).Post("/translations/lock", translationHandler.HandleLockSegments)
 			r.Post("/translations/unlock", translationHandler.HandleUnlockSegments)
 			r.Post("/translations/clear", jobHandler.HandleClearSegments)
@@ -1408,6 +1461,8 @@ func NewRouter(deps Deps) chi.Router {
 					AIPrompts:    aiPromptHandler,
 					Invites:      inviteSvc,
 					AICatalog:    catalog,
+					Segmentation: segmentationHandler,
+					SegmentEdit:  segmentEditSvc,
 				})
 			})
 		}
@@ -1435,6 +1490,7 @@ func NewRouter(deps Deps) chi.Router {
 		if issueSvc.Enabled() {
 			ih := issues.NewHandler(issueSvc)
 			r.Get("/api/issues", ih.HandleList)
+			r.Get("/api/issues/count", ih.HandleCount)
 			r.Post("/api/issues", ih.HandleCreate)
 			r.Get("/api/issues/{issueID}", ih.HandleGet)
 			// No RequireRole: every role deletes its own; the handler checks

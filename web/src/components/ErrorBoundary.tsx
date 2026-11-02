@@ -23,10 +23,9 @@ export class ErrorBoundary extends Component<Props, { error: Error | null }> {
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('ErrorBoundary caught:', error, info)
-    // Stale-chunk failures are reported by lazy-reload's own path (with a
-    // reload); reaching here means the reload budget is spent and this is a
-    // genuinely broken build — still worth a notice, but under its own class
-    // so it doesn't group with app render bugs.
+    // A stale chunk first gets a silent reload (lazy-reload); reaching here
+    // means the reload budget is spent and the build is broken — worth a
+    // notice, under its own class so it doesn't group with app render bugs.
     notify(error, {
       name: isChunkLoadError(error) ? 'ChunkLoadError' : 'ReactRenderError',
       context: {

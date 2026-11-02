@@ -21,6 +21,29 @@ describe('TextLink', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
+  it('newTab opens a route or a URL in a new tab and says so', () => {
+    render(
+      <MemoryRouter>
+        <TextLink to="/memories/4" newTab>Main TM</TextLink>
+        <TextLink href="https://example.com" newTab>outside</TextLink>
+      </MemoryRouter>,
+    )
+    for (const name of ['Main TM (opens in a new tab)', 'outside (opens in a new tab)']) {
+      const link = screen.getByRole('link', { name })
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      expect(link.querySelector('svg')).not.toBeNull()
+    }
+    expect(screen.getByRole('link', { name: /Main TM/ })).toHaveAttribute('href', '/memories/4')
+  })
+
+  it('newTabIcon={false} keeps the new tab and the spoken hint, without the icon', () => {
+    render(<MemoryRouter><TextLink to="/terminology/2" newTab newTabIcon={false}>Glossary</TextLink></MemoryRouter>)
+    const link = screen.getByRole('link', { name: 'Glossary (opens in a new tab)' })
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.querySelector('svg')).toBeNull()
+  })
+
   it("sets no size or weight of its own, so it takes the surrounding text's", () => {
     render(<TextLink onClick={() => {}}>action</TextLink>)
     const cls = screen.getByRole('button').className

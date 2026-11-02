@@ -9,12 +9,13 @@
 import React from 'react'
 import type { TermLookupResult } from '../api'
 import type { SegmentEditorHandle } from './SegmentEditor'
-import { flattenInlineNodes, hasXliffTags, richTextToTipTapContent } from '../lib/xliff-tiptap'
-import { chipLabel, chipTitle, labelModeFor, toLabelAttrs, type RefResolver } from '../lib/xliff-tag-label'
+import { flattenInlineNodes, flattenRichText, hasXliffTags, richTextToTipTapContent } from '../lib/xliff-tiptap'
+import { chipLabel, chipTitle, decodeEntities, labelModeFor, toLabelAttrs, type RefResolver } from '../lib/xliff-tag-label'
 import { highlightText, HIGHLIGHT_CLASS } from '../lib/text-highlight'
 import { termUnderlineClass } from '../lib/term-ranges'
 import { qeChipLabel } from '../lib/qe-chip'
 import { renderRanges, decorationRanges, hasDecorations } from '../lib/segment-decorations'
+import type { Placeable } from '../lib/placeables'
 import type { ChipColor } from '@/components/ui/chip'
 import { escapeRegExp } from '../lib/regex'
 
@@ -52,11 +53,11 @@ export const WS_MARKERS: Record<string, { cls: string; keep?: string }> = {
   '': { cls: 'ws-zw' },                         // form feed
 }
 
-export function WhitespaceText({ text, highlightTerm, terms, target, diffAgainst, changesFrom, search }: {
+export function WhitespaceText({ text, highlightTerm, terms, target, diffAgainst, changesFrom, search, placeables }: {
   text: string
   highlightTerm?: string | null
-  /** CAT-side term underlining. Takes precedence over
-   *  highlightTerm, matching SegmentText's documented resolution order. */
+  /** CAT-side term underlining. The Find term (highlightTerm) is marked on
+   *  top of it. */
   terms?: TermLookupResult[]
   target?: string
   /** Text to diff against for the TM fuzzy-match highlight. */
@@ -65,11 +66,17 @@ export function WhitespaceText({ text, highlightTerm, terms, target, diffAgainst
   changesFrom?: string | null
   /** Search hits to tint (Decorations.search). */
   search?: RegExp | null
+  /** Placeables to underline (Decorations.placeables). */
+  placeables?: readonly Placeable[]
 }) {
   // Term underlines and the diff highlights compose with whitespace markers
   // the same way highlightTerm does below: decoration spans wrap
   // whitespace-marker leaves.
-  const ranges = decorationRanges(text, { terms, target, diffAgainst, changesFrom, search })
+  // The Find term joins the ranges only when there are other decorations;
+  // alone it keeps its own <mark> rendering below.
+  const ranges = hasDecorations({ terms, diffAgainst, changesFrom, search, placeables })
+    ? decorationRanges(text, { terms, target, diffAgainst, changesFrom, search, placeables, highlightTerm })
+    : []
   if (ranges.length > 0) {
     return (
       <span className="whitespace-pre-wrap">
@@ -112,11 +119,14 @@ function renderWhitespace(text: string, keyOffset: number): React.ReactNode[] {
   let i = keyOffset
   for (const ch of text) {
     if (ch === '\n') {
-      parts.push(<span key={i} className="opacity-80 dark:opacity-90">¶</span>)
+      parts.push(<span key={i} className="opacity-80 dark:opacity-90" data-ws-mark="">¶</span>)
       parts.push(<br key={`br${i}`} />)
     } else if (ch in WS_MARKERS) {
       const m = WS_MARKERS[ch]
-      parts.push(<span key={i} className={m.cls}>{m.keep ?? ''}</span>)
+      // A marker that hides its character names it in data-plain, so the
+      // source caret still counts it (lib/source-caret.ts).
+      const keep = m.keep ?? ''
+      parts.push(<span key={i} className={m.cls} data-plain={keep === ch ? undefined : ch}>{keep}</span>)
     } else {
       parts.push(ch)
     }
@@ -185,6 +195,9 @@ export const HISTORY_KIND_LABELS: Record<string, string> = {
   approved:      'Approved',
   auto_approved: 'Auto-approved',
   unconfirmed:   'Unapproved',
+  // The segment was split or joined in this job.
+  split:         'Split',
+  joined:        'Joined',
 }
 
 // Colour follows the same rule as the Match column: provenance is grey, and
@@ -203,6 +216,8 @@ export const HISTORY_KIND_CHIP_COLORS: Record<string, ChipColor> = {
   approved:      STATUS_CHIP_COLORS.approved,
   auto_approved: STATUS_CHIP_COLORS.auto_approved,
   unconfirmed:   STATUS_CHIP_COLORS.needs_review,
+  split:         'grey',
+  joined:        'grey',
 }
 
 /** Yellow replaces green on a TM event below 100% — same rule as the Match chip. */
@@ -234,6 +249,21 @@ export function qeChipInfo(t?: {
   return { label, title: `AI quality check${outcome ? ` — ${outcome}` : ''}: ${note}`, color: 'blue' }
 }
 
+/**
+ * The Match column's TM chip: the percentage, yellow below 100 and green from
+ * 100. A TM row without a stored percentage is an exact match.
+ */
+export function tmMatchChipInfo(percent: number | null | undefined): { label: string; title: string; color: ChipColor } {
+  const p = percent ?? 100
+  return {
+    label: `${p}%`,
+    title: p === 101
+      ? '101% — source and both surrounding segments match'
+      : p < 100 ? 'Fuzzy TM match' : 'Exact (100%) TM match',
+    color: historyKindColor('tm', p),
+  }
+}
+
 export { isMac, modKey } from '@/lib/platform'
 
 /** Strip outer <p>...</p> wrapper from TipTap HTML output. */
@@ -251,6 +281,35 @@ export function hasHTMLFormatting(text: string): boolean {
 // Simple cache for term lookups to avoid duplicate API calls for the same source text.
 // Module-scoped — survives component remounts within the same page session.
 export const termLookupCache = new Map<string, TermLookupResult[]>()
+
+// Bumped when a project's terms change under the open editor; the active row
+// reads it with useSyncExternalStore and looks its terms up again.
+let termLookupVersion = 0
+const termLookupListeners = new Set<() => void>()
+
+/** Drops a project's cached term lookups and makes the open row look up again. */
+export function invalidateTermLookups(projectId: number) {
+  for (const key of termLookupCache.keys()) {
+    if (key.startsWith(`${projectId}:`)) termLookupCache.delete(key)
+  }
+  termLookupVersion++
+  termLookupListeners.forEach(listener => listener())
+}
+
+export function subscribeTermLookups(listener: () => void) {
+  termLookupListeners.add(listener)
+  return () => { termLookupListeners.delete(listener) }
+}
+
+export const getTermLookupVersion = () => termLookupVersion
+
+/** The target as plain text, as placeables are matched against it: the
+ *  editor's text once it is there, else the stored text with its tags and
+ *  escapes flattened (editText holds the stored rich text until the editor's
+ *  first update). */
+export function plainTargetText(editor: Pick<SegmentEditorHandle, 'getText'> | null, editText: string): string {
+  return editor ? editor.getText() : decodeEntities(flattenRichText(editText))
+}
 
 /** Serialize the TipTap editor content for saving. Returns plain/HTML text + XLIFF rich text.
  *  A plain-text file's text is always editText: its strings carry no HTML. */
@@ -273,7 +332,7 @@ export function serializeEditor(
  *  contribute a newline), then each text node paints the ranges that intersect
  *  its window. A term straddling a chip underlines both halves as ONE
  *  occurrence. This is why decoration is range-based. */
-export function RichSourceText({ richText, showWhitespace, resolveRef, terms, target, diffAgainst, changesFrom, search }: {
+export function RichSourceText({ richText, showWhitespace, resolveRef, terms, target, diffAgainst, changesFrom, search, placeables }: {
   richText: string
   showWhitespace?: boolean
   /** Resolves a cross-reference chip to the term it renders. */
@@ -289,13 +348,15 @@ export function RichSourceText({ richText, showWhitespace, resolveRef, terms, ta
   changesFrom?: string | null
   /** Search hits to tint, matched against the flattened text. */
   search?: RegExp | null
+  /** Placeables to underline, found in the flattened text. */
+  placeables?: readonly Placeable[]
 }) {
   const doc = richTextToTipTapContent(richText)
   const nodes = doc.content?.[0]?.content || []
   // Flatten to the plain text the user reads, remembering where each node
   // starts so per-node rendering can window the shared ranges.
   const { flat, offsets: nodeOffsets } = flattenInlineNodes(nodes)
-  const ranges = decorationRanges(flat, { terms, target, diffAgainst, changesFrom, search })
+  const ranges = decorationRanges(flat, { terms, target, diffAgainst, changesFrom, search, placeables })
   // Each text node is one render window; a removed-text ghost belongs to the
   // last window starting at or before it (see RangeWindow).
   const textNodes = nodes.flatMap((node, i) => (node.type === 'text' ? [i] : []))
@@ -357,15 +418,18 @@ export function RichSourceText({ richText, showWhitespace, resolveRef, terms, ta
 // The matchers themselves (per-occurrence term coloring in lib/term-ranges.ts,
 // the fuzzy diff in lib/tm-diff.ts) live elsewhere — this component is just the
 // plain-text painter over their ranges.
-export function HighlightedSource({ text, terms, target, diffAgainst, changesFrom, search }: {
+export function HighlightedSource({ text, terms, target, diffAgainst, changesFrom, search, placeables, highlightTerm }: {
   text: string
   terms?: TermLookupResult[]
   target?: string
   diffAgainst?: string | null
   changesFrom?: string | null
   search?: RegExp | null
+  placeables?: readonly Placeable[]
+  /** The Find term, marked along with the other decorations. */
+  highlightTerm?: string | null
 }) {
-  const ranges = decorationRanges(text, { terms, target, diffAgainst, changesFrom, search })
+  const ranges = decorationRanges(text, { terms, target, diffAgainst, changesFrom, search, placeables, highlightTerm })
   if (!ranges.length) return <>{text}</>
   return <>{renderRanges(text, ranges, 0, 'h', s => s)}</>
 }
@@ -428,12 +492,15 @@ export interface SegmentTextProps {
   /** Search hits to tint quietly (lib/text-search.ts `searchHighlightRegex`).
    *  Matched against the text the reader sees, so it works across chips. */
   search?: RegExp | null
+  /** Source placeables to underline (lib/placeables.ts). A span over one
+   *  carries `data-placeable`, the text a click inserts. */
+  placeables?: readonly Placeable[]
   showWhitespace?: boolean
   /** Resolves a cross-reference chip to the term it renders. */
   resolveRef?: RefResolver
 }
 
-export function SegmentText({ text, richText, highlightTerm, terms, target, diffAgainst, changesFrom, search, showWhitespace, resolveRef }: SegmentTextProps) {
+export function SegmentText({ text, richText, highlightTerm, terms, target, diffAgainst, changesFrom, search, placeables, showWhitespace, resolveRef }: SegmentTextProps) {
   // Path 1: rich text with actual tags wins — chips render, and term
   // underlines, the fuzzy diff and `search` compose; `highlightTerm` is dropped
   // here (see note above).
@@ -443,18 +510,17 @@ export function SegmentText({ text, richText, highlightTerm, terms, target, diff
   // Go-side parsers populate `richText` at import time when they detect
   // HTML inline tags.
   if (richText && hasXliffTags(richText)) {
-    return <RichSourceText richText={richText} showWhitespace={showWhitespace} resolveRef={resolveRef} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} />
+    return <RichSourceText richText={richText} showWhitespace={showWhitespace} resolveRef={resolveRef} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} placeables={placeables} />
   }
-  // Path 2: whitespace markers. Term underlines take precedence over the
-  // highlightTerm yellow (same order as paths 3 vs 4); both compose with the
-  // markers via WhitespaceText.
+  // Path 2: whitespace markers. Term underlines, the other decorations and the
+  // Find term all compose with the markers via WhitespaceText.
   if (showWhitespace) {
-    return <WhitespaceText text={text} highlightTerm={highlightTerm} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} />
+    return <WhitespaceText text={text} highlightTerm={highlightTerm} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} placeables={placeables} />
   }
   // Path 3: range decorations — approved-term underlining, the TM fuzzy
   // diff, the history track changes and/or search hits.
-  if (hasDecorations({ terms, diffAgainst, changesFrom, search })) {
-    return <HighlightedSource text={text} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} />
+  if (hasDecorations({ terms, diffAgainst, changesFrom, search, placeables })) {
+    return <HighlightedSource text={text} terms={terms} target={target} diffAgainst={diffAgainst} changesFrom={changesFrom} search={search} placeables={placeables} highlightTerm={highlightTerm} />
   }
   // Path 4: search highlight (Find, Concordance).
   if (highlightTerm) {

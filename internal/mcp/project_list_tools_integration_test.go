@@ -382,6 +382,7 @@ func TestIntegrationMCPCreateProjectSetsCustomerLabel(t *testing.T) {
 	ctx := context.Background()
 	cust := systemLabelValue(t, f, f.tenantA.ID, "customer", "Fake Customer")
 	foreign := systemLabelValue(t, f, f.tenantB.ID, "customer", "Their Customer")
+	wf := testutil.LibraryWorkflow(t, f.q, f.tenantA.ID)
 	s := connect(t, f.url, writeToken(t, f, f.tenantA.ID, f.ownerA.ID))
 
 	var out struct {
@@ -389,6 +390,7 @@ func TestIntegrationMCPCreateProjectSetsCustomerLabel(t *testing.T) {
 	}
 	if isErr, text := callTool(t, s, "openloc_create_project", map[string]any{
 		"name": "With Customer", "source_language": "en", "target_languages": []string{"de"}, "customer_id": cust.ID,
+		"workflow_id": wf,
 	}, &out); isErr {
 		t.Fatalf("create_project: %s", text)
 	}
@@ -405,6 +407,7 @@ func TestIntegrationMCPCreateProjectSetsCustomerLabel(t *testing.T) {
 	for name, id := range map[string]int64{"a Domain value": domain.ID, "another tenant's customer": foreign.ID} {
 		if isErr, text := callTool(t, s, "openloc_create_project", map[string]any{
 			"name": "Refused", "source_language": "en", "target_languages": []string{"de"}, "customer_id": id,
+			"workflow_id": wf,
 		}, nil); !isErr {
 			t.Errorf("%s accepted as customer_id", name)
 		} else if !strings.Contains(text, "customer") {

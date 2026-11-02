@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login, deleteProjectViaAPI, expectNoOverflow, getProjectSettingsViaAPI, setProjectWorkflowStepsViaAPI, deleteStepDefinitionViaAPI, UNBREAKABLE_NAME } from "./helpers";
+import { login, deleteProjectViaAPI, expectNoOverflow, getProjectSettingsViaAPI, setProjectWorkflowStepsViaAPI, standardWorkflowId, deleteStepDefinitionViaAPI, UNBREAKABLE_NAME } from "./helpers";
 
 // AI prompts + engines, and QE+APE workflow steps.
 //
@@ -202,7 +202,7 @@ test.describe("AI prompts, engines, and QE+APE steps", () => {
     // successfully and persists.
     const projRes = await page.request.post(`/api/projects`, {
       headers: auth(),
-      data: { name: projectName, source_language: "en", target_languages: ["es"] },
+      data: { name: projectName, source_language: "en", target_languages: ["es"], workflow_id: await standardWorkflowId(page) },
     });
     expect(projRes.ok(), `create project: ${projRes.status()}`).toBe(true);
     projectId = (await projRes.json()).data.id;

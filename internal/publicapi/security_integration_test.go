@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
@@ -68,7 +69,7 @@ func (o specOp) handlerChecked() bool {
 func sampleBody(f *fixture, operationID string) any {
 	switch operationID {
 	case "createProject":
-		return map[string]any{"name": "Gate probe", "source_language": "en", "target_languages": []string{"de"}}
+		return map[string]any{"name": "Gate probe", "source_language": "en", "target_languages": []string{"de"}, "workflow_id": f.ids["workflowID"]}
 	case "updateProject":
 		return map[string]any{"name": "Renamed"}
 	case "assignJob":
@@ -77,6 +78,10 @@ func sampleBody(f *fixture, operationID string) any {
 		return map[string]any{"text": "Hallo Welt."}
 	case "confirmSegment":
 		return map[string]any{"text": "Hallo Welt."}
+	case "splitSegment":
+		return map[string]any{"offset": 5}
+	case "joinSegments":
+		return map[string]any{"segments": []map[string]any{{"id": f.ids["translationID"]}, {"id": f.ids["secondPieceID"]}}}
 	case "addComment":
 		return map[string]any{"content": "Looks fine."}
 	case "createTM":
@@ -105,8 +110,23 @@ func sampleBody(f *fixture, operationID string) any {
 		return map[string]any{"name": "Probe prompt", "mode": "qe", "prompt_text": "Check the translation."}
 	case "createAIEngine", "replaceAIEngine":
 		return map[string]any{"name": "Probe engine", "token_id": f.ids["tokenID"], "model": testutil.MockExtensionID}
+	case "createSegmentationProfile":
+		return map[string]any{"name": "Probe rules", "source_language": "en", "definition": sampleSegmentationDefinition}
+	case "replaceSegmentationProfile":
+		tenantID := f.tenant.ID
+		cur, err := f.q.GetSegmentationProfile(context.Background(), db.GetSegmentationProfileParams{ID: f.ids["profileID"], TenantID: &tenantID})
+		if err != nil {
+			panic(err)
+		}
+		return map[string]any{"name": "Probe rules v2", "source_language": "en", "definition": sampleSegmentationDefinition,
+			"updated_at": cur.UpdatedAt.Time.Format(time.RFC3339Nano)}
 	}
 	return nil
+}
+
+var sampleSegmentationDefinition = map[string]any{
+	"mode": "sentence", "rules": []map[string]any{{"before": `[.!?]`, "after": `\s`, "break": true}},
+	"abbreviations": []string{"Dr"}, "number_abbreviations": []string{},
 }
 
 // sampleUpload is the file each upload operation sends in its `file` field.
@@ -188,6 +208,21 @@ func (o specOp) successCode() int {
 // can only be deleted by its author, so deleteComment gets one of role's own.
 func prepare(t *testing.T, f *fixture, o specOp, role string) {
 	t.Helper()
+	if o.op.OperationID == "joinSegments" {
+		// A join puts the pieces of a split back: split the fixture's segment.
+		split := f.path("/jobs/{jobID}/segments/{translationID}/split")
+		if code := send(f, http.MethodPost, split, "splitSegment", f.keys["owner"]); code != http.StatusOK {
+			t.Fatalf("split before the join: %d", code)
+		}
+		rows, err := f.q.ListEditorIndex(context.Background(), db.ListEditorIndexParams{
+			TargetLanguage: "de", FileID: f.file.ID, TenantID: f.tenant.ID,
+		})
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("pieces after the split: %d (%v)", len(rows), err)
+		}
+		f.ids["secondPieceID"] = rows[1].TranslationID
+		return
+	}
 	if o.op.OperationID != "deleteComment" {
 		return
 	}
@@ -284,6 +319,11 @@ func TestIntegrationV1_ListsShowOnlyOwnOrganization(t *testing.T) {
 		decodeJSON(t, rec, &body)
 		out := map[float64]bool{}
 		for _, item := range body.Data {
+			// A built-in segmentation profile is shared by every
+			// organization; only the organization's own items count.
+			if item["builtin"] == true {
+				continue
+			}
 			id, ok := item["id"].(float64)
 			if !ok {
 				t.Fatalf("%s: an item has no numeric id: %v", o.name(), item)
@@ -394,6 +434,8 @@ var appTwin = map[string]string{
 	"listSegments":     "GET /api/jobs/{jobID}/translations",
 	"saveSegmentDraft": "PUT /api/files/{fileID}/translations/{translationID}/draft",
 	"confirmSegment":   "PUT /api/files/{fileID}/translations/{translationID}",
+	"splitSegment":     "POST /api/jobs/{jobID}/segments/split",
+	"joinSegments":     "POST /api/jobs/{jobID}/segments/join",
 	"listComments":     "GET /api/translations/{translationID}/comments",
 	"addComment":       "POST /api/translations/{translationID}/comments",
 	"deleteComment":    "DELETE /api/translations/{translationID}/comments/{commentID}",
@@ -458,6 +500,13 @@ var appTwin = map[string]string{
 	"createAIEngine":  "POST /api/ai/engines",
 	"replaceAIEngine": "PATCH /api/ai/engines/{engineID}",
 	"deleteAIEngine":  "DELETE /api/ai/engines/{engineID}",
+
+	"listSegmentationProfiles":   "GET /api/segmentation-profiles",
+	"createSegmentationProfile":  "POST /api/segmentation-profiles",
+	"getSegmentationProfile":     "GET /api/segmentation-profiles/{profileID}",
+	"replaceSegmentationProfile": "PUT /api/segmentation-profiles/{profileID}",
+	"deleteSegmentationProfile":  "DELETE /api/segmentation-profiles/{profileID}",
+	"exportSegmentationSRX":      "GET /api/segmentation-profiles/{profileID}/srx",
 }
 
 // Every v1 route refuses exactly the roles its app twin refuses, so the two

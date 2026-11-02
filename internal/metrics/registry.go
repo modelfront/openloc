@@ -125,12 +125,13 @@ var qaDims = map[string]dimension{
 }
 
 // originKinds are the history kinds that change a translation's text, which is
-// what gives it an origin. The other kinds are status events (statusKinds).
-// Together they are every translation_history kind — pinned by an integration
-// test, so a new kind has to be placed in one of them.
+// what gives it an origin. The other kinds (statusKinds) are status events,
+// and the split and join that reshape a segment without giving its text a new
+// origin. Together they are every translation_history kind — pinned by an
+// integration test, so a new kind has to be placed in one of them.
 var (
 	originKinds = []string{"tm", "mt", "ape", "human", "propagation", "file_import"}
-	statusKinds = []string{"cleared", "approved", "auto_approved", "unconfirmed"}
+	statusKinds = []string{"cleared", "approved", "auto_approved", "unconfirmed", "split", "joined"}
 )
 
 // sqlList renders constant identifiers as a SQL IN list: 'a', 'b'.
@@ -160,7 +161,7 @@ var measures = map[string]measure{
 		from:         historyGraph,
 		where:        "th.kind IN ('human', 'approved')",
 		timeExpr:     "th.created_at",
-		distinctUnit: "t.id",
+		distinctUnit: historyUnit,
 		values: []valueCol{
 			{name: "words", expr: "COALESCE(SUM(word_count), 0)", unit: "words"},
 			{name: "segments", expr: "COUNT(*)", unit: "segments"},
@@ -199,7 +200,7 @@ var measures = map[string]measure{
 		// where NOT IN reads every history row in the range.
 		where:        "th.kind IN (" + sqlList(originKinds) + ")",
 		timeExpr:     "th.created_at",
-		distinctUnit: "t.id",
+		distinctUnit: historyUnit,
 		values: []valueCol{
 			{name: "segments", expr: "COUNT(*)", unit: "segments"},
 			{name: "words", expr: "COALESCE(SUM(word_count), 0)", unit: "words"},
@@ -217,7 +218,7 @@ var measures = map[string]measure{
 		from:         historyGraph,
 		where:        "th.kind = 'mt' AND th.mt_engine_id IS NOT NULL",
 		timeExpr:     "th.created_at",
-		distinctUnit: "t.id",
+		distinctUnit: historyUnit,
 		values: []valueCol{
 			{name: "segments", expr: "COUNT(*)", unit: "segments"},
 			{name: "words", expr: "COALESCE(SUM(word_count), 0)", unit: "words"},
@@ -241,7 +242,7 @@ var measures = map[string]measure{
 		// auto_approved (approved as it was). A rejection writes none.
 		where:        "th.ai_engine_id IS NOT NULL",
 		timeExpr:     "th.created_at",
-		distinctUnit: "t.id",
+		distinctUnit: historyUnit,
 		values: []valueCol{
 			{name: "segments", expr: "COUNT(*)", unit: "segments"},
 			{name: "words", expr: "COALESCE(SUM(word_count), 0)", unit: "words"},
@@ -285,7 +286,7 @@ var measures = map[string]measure{
 		where: "t.predict_outcome IN ('approved', 'ape_approved') AND (th.kind = 'auto_approved' " +
 			"OR (th.kind = 'ape' AND th.details->>'predict_outcome' = 'ape_approved'))",
 		timeExpr:     "th.created_at",
-		distinctUnit: "t.id",
+		distinctUnit: historyUnit,
 		values: []valueCol{
 			{name: "words", expr: "COALESCE(SUM(word_count), 0)", unit: "words"},
 			{name: "segments", expr: "COUNT(*)", unit: "segments"},
@@ -346,12 +347,18 @@ var measures = map[string]measure{
 // exprs reference these by alias (e.g. SUM(word_count)); single-layer
 // measures reference table aliases directly.
 var carries = map[string]string{
-	"word_count": "s.word_count",
+	// A history row a split or join moved keeps the counts of the segment it
+	// was written for; every other row reads its segment's.
+	"word_count": "COALESCE((th.details->>'word_count')::int, s.word_count)",
 	// Source characters, counted the same way every measure counts words: off
 	// the segment, deduped per translation. Cheap enough to carry on every
 	// two-layer measure rather than gate it per measure.
-	"char_count": "length(s.source_text)",
+	"char_count": "COALESCE((th.details->>'char_count')::int, length(s.source_text))",
 }
+
+// historyUnit is what history measures count once: a translation, or for an
+// event a join moved onto another row, the translation it was written for.
+const historyUnit = "COALESCE((th.details->>'translation_id')::bigint, t.id)"
 
 // Definitions returns measure name → human definition, for the tool
 // description. Sorted iteration is the caller's job if it needs stable order.

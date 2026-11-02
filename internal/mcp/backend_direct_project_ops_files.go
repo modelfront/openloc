@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/url"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -15,6 +17,7 @@ import (
 	"openloc/internal/file"
 	"openloc/internal/label"
 	"openloc/internal/langcode"
+	"openloc/internal/logging"
 	"openloc/internal/pipeline"
 	"openloc/internal/sliceutil"
 )
@@ -101,11 +104,86 @@ func (b *directBackend) AttachUploadedFile(ctx context.Context, in AttachUploade
 	if err != nil {
 		return AttachedFileOut{}, err
 	}
-	upload, content, err := b.readUpload(ctx, in.UploadID)
+	return b.attachUpload(ctx, fh, p, in.UploadID, file.IngestOptions{Analyze: in.Analyze, XLSXLayout: in.XLSXLayout})
+}
+
+func (b *directBackend) attachUpload(ctx context.Context, fh *file.Handler, p db.Project, uploadID string, opts file.IngestOptions) (AttachedFileOut, error) {
+	upload, content, err := b.readUpload(ctx, uploadID)
 	if err != nil {
 		return AttachedFileOut{}, err
 	}
-	return ingestIntoProject(ctx, fh, p, upload.Filename, content, file.IngestOptions{Analyze: in.Analyze, XLSXLayout: in.XLSXLayout})
+	return ingestIntoProject(ctx, fh, p, upload.Filename, content, opts)
+}
+
+// attachBatchBudget is how long a batch keeps starting new files. The chat
+// gives a whole turn 120 s, model calls included, so a batch that stops here
+// still returns its rows in time; the files it did not start say so.
+var attachBatchBudget = 60 * time.Second
+
+// AttachUploadedFiles adds each upload on its own, as the project page does
+// with several files: a file that fails gets its reason in its row and the
+// others are still added. Only when every file fails is the call an error.
+func (b *directBackend) AttachUploadedFiles(ctx context.Context, in AttachUploadedFilesIn) (AttachedFilesOut, error) {
+	if len(in.Files) == 0 || len(in.Files) > MaxAttachFiles {
+		return AttachedFilesOut{}, invalidf("files takes 1 to %d attached files", MaxAttachFiles)
+	}
+	seen := make(map[string]bool, len(in.Files))
+	for _, f := range in.Files {
+		if seen[f.UploadID] {
+			return AttachedFilesOut{}, invalidf("upload_id %s is listed twice", f.UploadID)
+		}
+		seen[f.UploadID] = true
+	}
+	fh, err := b.files()
+	if err != nil {
+		return AttachedFilesOut{}, err
+	}
+	p, err := b.project(ctx, in.ProjectID)
+	if err != nil {
+		return AttachedFilesOut{}, err
+	}
+	out := AttachedFilesOut{Files: make([]AttachedFileResult, 0, len(in.Files)), Draft: p.Status == db.ProjectStatusDraft}
+	var reasons []string
+	started := time.Now()
+	for i, f := range in.Files {
+		row := AttachedFileResult{UploadID: f.UploadID, Warnings: []string{}}
+		if i > 0 && time.Since(started) > attachBatchBudget {
+			row.NotStarted = true
+			row.Error = "not started: this call ran out of time; ask the user to send this file again in a new message"
+			reasons = append(reasons, f.UploadID+": "+row.Error)
+			out.Files = append(out.Files, row)
+			continue
+		}
+		res, err := b.attachUpload(ctx, fh, p, f.UploadID, file.IngestOptions{Analyze: in.Analyze, XLSXLayout: f.XLSXLayout})
+		if err != nil {
+			row.Error = attachErrorText(ctx, err)
+			reasons = append(reasons, f.UploadID+": "+row.Error)
+		} else {
+			row.File, row.Warnings = &res.File, res.Warnings
+			out.Added++
+		}
+		out.Files = append(out.Files, row)
+	}
+	if out.Added == 0 {
+		return AttachedFilesOut{}, invalidf("no file was added:\n%s", strings.Join(reasons, "\n"))
+	}
+	return out, nil
+}
+
+// attachErrorText is the text one row of a batch shows, reduced as a whole
+// tool error is: not-found stays opaque, a caller mistake keeps its own
+// message, and anything else is logged and stays generic.
+func attachErrorText(ctx context.Context, err error) string {
+	var inv errInvalid
+	switch {
+	case errors.Is(err, errNotFound):
+		return notFoundText
+	case errors.As(err, &inv):
+		return inv.msg
+	default:
+		logging.Error(ctx, err, "MCP attach of one upload failed", "mcp-attach-upload-failed")
+		return "the file could not be added; the error has been logged"
+	}
 }
 
 // ingestIntoProject adds a document to a project as an upload on the project

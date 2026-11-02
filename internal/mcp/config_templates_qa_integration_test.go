@@ -42,21 +42,30 @@ func TestIntegrationMCPConfigTemplates(t *testing.T) {
 	engine := testutil.SeedMTEngine(t, c.q, c.tenantA.ID, "Cfg tpl engine", "mock")
 	routerID := testutil.SeedMTRouter(t, c.q, c.tenantA.ID, "Cfg tpl router", &engine.ID, nil)
 
-	// A project manager manages templates.
+	// A project manager manages templates, each based on a library workflow.
+	standard := testutil.LibraryWorkflow(t, c.q, c.tenantA.ID)
+	// A template may have no workflow: it gets no steps.
+	var bare cfgTemplateOut
+	if isErr, text := callTool(t, c.asManager, "openloc_create_template", map[string]any{"name": "No workflow"}, &bare); isErr {
+		t.Fatalf("create_template without a workflow: %s", text)
+	}
+	if len(bare.WorkflowSteps) != 0 {
+		t.Errorf("create_template without a workflow: %d steps, want none", len(bare.WorkflowSteps))
+	}
 	var created cfgTemplateOut
 	if isErr, text := callTool(t, c.asManager, "openloc_create_template", map[string]any{
 		"name": "Cfg legal", "source_language": "en", "target_languages": []string{"de", "fr"},
-		"mt_router_id": routerID, "mt_on_upload": false,
+		"mt_router_id": routerID, "mt_on_upload": false, "workflow_id": standard,
 	}, &created); isErr {
 		t.Fatalf("create_template: %s", text)
 	}
 	if created.Name != "Cfg legal" || created.ProjectName != "Cfg legal" || created.MTRouterID != routerID ||
 		created.MtOnUpload || len(created.TargetLanguages) != 2 || len(created.WorkflowSteps) != 2 {
-		t.Errorf("create_template = %+v; want the defaults filled and Translation/Review steps", created)
+		t.Errorf("create_template = %+v; want the defaults filled and the workflow's Translation/Review steps", created)
 	}
-	cfgMustRefuse(t, c.asManager, "openloc_create_template", map[string]any{"name": " "}, "name is required")
-	cfgMustRefuse(t, c.asManager, "openloc_create_template", map[string]any{"name": "Bad", "source_language": "en", "target_languages": []string{"en"}}, "same as source")
-	cfgMustRefuse(t, c.asReadOnly, "openloc_create_template", map[string]any{"name": "RO"}, "write access")
+	cfgMustRefuse(t, c.asManager, "openloc_create_template", map[string]any{"name": " ", "workflow_id": standard}, "name is required")
+	cfgMustRefuse(t, c.asManager, "openloc_create_template", map[string]any{"name": "Bad", "source_language": "en", "target_languages": []string{"en"}, "workflow_id": standard}, "same as source")
+	cfgMustRefuse(t, c.asReadOnly, "openloc_create_template", map[string]any{"name": "RO", "workflow_id": standard}, "write access")
 
 	var list struct {
 		Templates []cfgTemplateOut `json:"templates"`
@@ -133,6 +142,9 @@ func TestIntegrationMCPConfigTemplates(t *testing.T) {
 	if isErr, text := callTool(t, c.asManager, "openloc_create_workflow", map[string]any{"name": "Cfg tpl flow", "step_definition_ids": []int64{step.ID}}, &flow); isErr {
 		t.Fatalf("create_workflow: %s", text)
 	}
+	// Each refusal below is for its own foreign id: the call carries tenant B's
+	// own workflow unless the workflow itself is the foreign id.
+	standardB := testutil.LibraryWorkflow(t, c.q, c.tenantB.ID)
 	own := map[string]any{"name": "Cfg all own"}
 	for field, foreign := range map[string]struct {
 		id   int64
@@ -144,7 +156,9 @@ func TestIntegrationMCPConfigTemplates(t *testing.T) {
 		"qa_profile_id": {qaProfile.ID, "QA profile not found in this tenant"},
 		"tm_profile_id": {tmp.ID, "TM profile not found in this tenant"},
 	} {
-		cfgMustRefuse(t, c.asOwnerB, "openloc_create_template", map[string]any{"name": "Cfg stolen " + field, field: foreign.id}, foreign.want)
+		body := map[string]any{"name": "Cfg stolen " + field, "workflow_id": standardB}
+		body[field] = foreign.id
+		cfgMustRefuse(t, c.asOwnerB, "openloc_create_template", body, foreign.want)
 		own[field] = foreign.id
 	}
 	var ownTpl cfgTemplateOut

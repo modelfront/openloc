@@ -6,14 +6,14 @@ import (
 )
 
 func TestFrames_SplitsAtTheBlankLine(t *testing.T) {
-	stream := "event: connected\ndata: {\"unread\":2}\n\n: keepalive\n\nevent: notification\ndata: {}\n\nevent: cut"
+	stream := ": open\n\nevent: connected\ndata: {\"unread\":2}\n\n: keepalive\n\nevent: notification\ndata: {}\n\nevent: cut"
 	var got []string
 	for f := range Frames(strings.NewReader(stream)) {
 		got = append(got, f)
 	}
 	want := []string{"event: connected\ndata: {\"unread\":2}\n\n", ": keepalive\n\n", "event: notification\ndata: {}\n\n"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("frames = %q, want %q (an unfinished frame is not sent)", got, want)
+		t.Fatalf("frames = %q, want %q (the opening comment and an unfinished frame are not sent)", got, want)
 	}
 	if names := []string{Event(got[0]), Event(got[1]), Event(got[2])}; strings.Join(names, ",") != "connected,,notification" {
 		t.Fatalf("event names = %q", names)

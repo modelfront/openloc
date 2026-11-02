@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { listStepDefinitions, listWorkflows, type Project } from '../api'
+import { listWorkflows, type Project } from '../api'
 import { queryKeys } from '../lib/query-keys'
-import { defaultStepsFrom, isPretranslateOnly } from '../lib/workflow-steps'
+import { isPretranslateOnly } from '../lib/workflow-steps'
 import { unpickedRows, type WorkflowStep } from '../components/WorkflowStepsEditor'
 import type { SettingsValues } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, DEFAULT_TM_LOOKUP_ORDER } from '../lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_LINGUIST_TERMS, DEFAULT_PENALTY_PCT, DEFAULT_TM_LOOKUP_ORDER } from '../lib/settings-values'
 import { usePrefillFromSource } from './usePrefillFromSource'
+import { toast } from 'sonner'
+import { focusWorkflowPicker } from '../components/project/ProjectCreateWorkflowCard'
 
 export const DEFAULT_SETTINGS: SettingsValues = {
   fuzzyThreshold: 0.75,
@@ -17,13 +19,15 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   tmOnUpload: true,
   autoComplete: DEFAULT_AUTO_COMPLETE,
   inlineHTML: DEFAULT_INLINE_HTML,
+  linguistTerms: DEFAULT_LINGUIST_TERMS,
   qaProfileId: null,
+  // Null until picked: the form shows and sends the profile the server
+  // suggests for the source language.
+  segmentationProfileId: null,
   tmAssignments: [],
   mtRouterId: null,
   termAssignments: [],
-  // Filled from the step library once it loads (defaultStepsFrom): the
-  // tenant's Translation → Review definitions, matching what the server
-  // creates when the form sends nothing.
+  // No steps until a workflow is picked: nothing fills in a default.
   workflowSteps: [],
 }
 
@@ -70,20 +74,14 @@ export function useProjectCreateSettings({ ready, tmCollections, termBases, appl
     setSettingsSnapshot(values)
   }, [])
 
-  // Step library + workflow library. The defaults carry the tenant's
-  // Translation → Review definitions once loaded.
-  const { data: stepDefinitions } = useQuery({ queryKey: queryKeys.stepDefinitions.all, queryFn: listStepDefinitions })
+  // The workflow library, for the Workflow card's dropdown.
   const { data: workflows } = useQuery({ queryKey: queryKeys.workflows.all, queryFn: listWorkflows })
-  const defaultSettings = useMemo<SettingsValues>(
-    () => ({ ...DEFAULT_SETTINGS, workflowSteps: defaultStepsFrom(stepDefinitions) }),
-    [stepDefinitions],
-  )
 
   const {
     templateId, templateName, fromProjectId, fromProjectName, workflowId, hasStartFromDeepLink,
     handleTemplateChange, handleFromProjectChange, handleWorkflowChange,
   } = usePrefillFromSource({
-    defaultSettings,
+    defaultSettings: DEFAULT_SETTINGS,
     currentSettings: () => settingsRef.current,
     ready,
     tmCollections,
@@ -94,38 +92,10 @@ export function useProjectCreateSettings({ ready, tmCollections, termBases, appl
     applyDraft,
   })
 
-  // Seed the untouched form once, when both libraries have arrived: the first
-  // library workflow when the org has any (its steps pre-filled, the project
-  // based on it), else the default Translation → Review as custom steps. Once
-  // only: an explicit "Custom" pick empties the list on purpose and a later
-  // refetch must not refill it. A Duplicate deep link (?fromTemplate= /
-  // ?fromProject=) prefills the form itself — with its own steps and
-  // provenance — so it is left alone; selecting a workflow here would also
-  // cancel that in-flight prefill (the hook keeps one request sequence).
-  const seedDefaultWorkflow = async () => {
-    if (workflows && workflows.length > 0) {
-      await handleWorkflowChange(String(workflows[0].id))
-      return
-    }
-    if (defaultSettings.workflowSteps.length > 0) {
-      applySettings({ ...settingsRef.current, workflowSteps: defaultSettings.workflowSteps })
-    }
-  }
-  const defaultsSeededRef = useRef(false)
-  useEffect(() => {
-    if (defaultsSeededRef.current || stepDefinitions === undefined || workflows === undefined) return
-    defaultsSeededRef.current = true
-    if (hasStartFromDeepLink || templateId || fromProjectId || settingsRef.current.workflowSteps.length > 0) return
-    void seedDefaultWorkflow()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepDefinitions, workflows, defaultSettings])
-
   // "From scratch" after a template / project prefill: the untouched form
-  // again — default settings, no source, and the same seeded workflow a
-  // fresh page gets.
+  // again — default settings, no source and no steps.
   const resetToDefaults = async () => {
     await handleTemplateChange('')
-    await seedDefaultWorkflow()
   }
 
   // Workflow steps are owned by the Workflow card; the settings editor's draft
@@ -142,6 +112,23 @@ export function useProjectCreateSettings({ ready, tmCollections, termBases, appl
     applySettings({ ...settingsRef.current, workflowSteps })
   }, [applySettings])
 
+  // A submit with no workflow points at the dropdown and frames it red until
+  // a workflow is picked.
+  const [workflowRequired, setWorkflowRequired] = useState(false)
+  const workflowInvalid = workflowRequired && workflowStepsError(settingsSnapshot.workflowSteps, workflowId) != null
+  // `optional`: a template may have no workflow, so no workflow and no steps
+  // pass; a half-filled step list is still refused.
+  const requireWorkflow = ({ optional = false }: { optional?: boolean } = {}) => {
+    const steps = settingsRef.current.workflowSteps
+    if (optional && !workflowId && steps.length === 0) return true
+    const stepsError = workflowStepsError(steps, workflowId)
+    if (!stepsError) return true
+    toast.error(stepsError)
+    setWorkflowRequired(true)
+    focusWorkflowPicker()
+    return false
+  }
+
   return {
     /** Render-time values for the editors; re-set by prefills and seeding. */
     settings: settingsSnapshot,
@@ -153,6 +140,10 @@ export function useProjectCreateSettings({ ready, tmCollections, termBases, appl
     fromProjectId,
     fromProjectName,
     workflowId,
+    /** True after a refused submit, until a workflow is picked: frame the field red. */
+    workflowInvalid,
+    /** The submit-time workflow check: false, with a toast and the dropdown pointed at, when none is picked (or, with `optional`, when the steps are half-filled). */
+    requireWorkflow,
     /** True when ?fromTemplate= / ?fromProject= prefills the form. */
     hasStartFromDeepLink,
     handleTemplateChange,

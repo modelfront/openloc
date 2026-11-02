@@ -144,10 +144,15 @@ func compile(tenantID int64, req Request) (*compiled, error) {
 	if m.distinctUnit != "" {
 		// Two-layer shape: dedupe the fact stream on (unit × dim combo)
 		// before aggregating, so repeated events per translation count once
-		// per group. Carries haul the fact columns the outer aggregates use.
+		// per group. Carries haul the fact columns the outer aggregates use;
+		// they can differ between a unit's events (a split or join stores the
+		// counts an event was written for), so the unit's earliest event in
+		// the group supplies them.
+		key := []string{m.distinctUnit}
 		inner := []string{fmt.Sprintf("%s AS _unit", m.distinctUnit)}
 		inner = append(inner, carriesSorted()...)
 		for _, d := range dims {
+			key = append(key, d.expr)
 			inner = append(inner, fmt.Sprintf("%s AS %s", d.expr, quoteIdent(d.key)))
 		}
 		b.WriteString("SELECT ")
@@ -155,12 +160,13 @@ func compile(tenantID int64, req Request) (*compiled, error) {
 			b.WriteString(quoteIdent(d.key) + ", ")
 		}
 		b.WriteString(strings.Join(valueParts, ", "))
-		b.WriteString("\nFROM (\n  SELECT DISTINCT ")
+		b.WriteString("\nFROM (\n  SELECT DISTINCT ON (" + strings.Join(key, ", ") + ") ")
 		b.WriteString(strings.Join(inner, ", "))
 		b.WriteString("\n  FROM ")
 		b.WriteString(m.from)
 		b.WriteString("\n  WHERE ")
 		b.WriteString(strings.Join(where, " AND "))
+		b.WriteString("\n  ORDER BY " + strings.Join(key, ", ") + ", " + m.timeExpr)
 		b.WriteString("\n) sub")
 		if len(dims) > 0 {
 			b.WriteString("\nGROUP BY " + joinDimKeys(dims))

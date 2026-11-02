@@ -53,6 +53,7 @@ func TestSavedAnalysis_FullJourney(t *testing.T) {
 			t.Fatalf("seed translation %d: %v", x.segID, err)
 		}
 	}
+	testutil.SeedTranslation(t, q, seg3.ID, "de", db.TranslationStatusNeedsReview)
 	// Mark job past the gate.
 	if _, err := pool.Exec(ctx, `UPDATE jobs SET status='completed' WHERE id=$1`, job.ID); err != nil {
 		t.Fatalf("set job completed: %v", err)
@@ -117,7 +118,7 @@ func TestSavedAnalysis_FullJourney(t *testing.T) {
 	if row.Tm6584Segments != 1 || row.Tm6584Words != 5 || row.Tm6584SegmentsAutoApproved != 0 {
 		t.Errorf("tm_65_84: want 1 seg / 5 words / 0 aa, got %d / %d / %d", row.Tm6584Segments, row.Tm6584Words, row.Tm6584SegmentsAutoApproved)
 	}
-	// new: seg3 (no translation row, 5 words)
+	// new: seg3 (untranslated, 5 words)
 	if row.NewSegments != 1 || row.NewWords != 5 || row.NewSegmentsAutoApproved != 0 {
 		t.Errorf("new: want 1 seg / 5 words / 0 aa, got %d / %d / %d", row.NewSegments, row.NewWords, row.NewSegmentsAutoApproved)
 	}

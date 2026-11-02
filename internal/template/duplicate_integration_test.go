@@ -49,7 +49,7 @@ func TestIntegrationTemplateDuplicate(t *testing.T) {
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusOK)
 	rec = testutil.DoRequest(t, router, "PUT", fmt.Sprintf("/api/templates/%d/terminology", src.ID), map[string]any{
-		"assignments": []map[string]any{{"term_base_id": tb.ID, "source_language": "en", "target_language": "de", "mode": "enforce", "priority": 1}},
+		"assignments": []map[string]any{{"term_base_id": tb.ID, "source_language": "en", "target_language": "de", "mode": "read_write", "priority": 1}},
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusOK)
 	rec = testutil.DoRequest(t, router, "PUT", fmt.Sprintf("/api/templates/%d/workflow-steps", src.ID), map[string]any{

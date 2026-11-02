@@ -67,6 +67,9 @@ func (s *Service) Reject(ctx context.Context, tenantID, jobID int64, actor Actor
 	if review {
 		mode = stepround.Review
 	}
+	// A reject hands the text back, so history records it like a completed
+	// step: the reopened step's track changes mark against it.
+	s.flushUnrecordedText(ctx, jobID, active.ID)
 
 	var dismissed *string
 	// A deadlock victim runs again: the body resets what it sets.

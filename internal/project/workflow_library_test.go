@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
@@ -41,11 +43,20 @@ func projectSettings(t *testing.T, router http.Handler, projectID, userID, tenan
 	return out
 }
 
-func createProjectWithBody(t *testing.T, router http.Handler, body map[string]any, userID, tenantID int64) int64 {
+// createProjectWithBody creates a project from body over a default name and
+// languages. With no workflow_id, workflow_steps or template_id in body, the
+// project gets the tenant's library workflow.
+func createProjectWithBody(t *testing.T, q db.Querier, router http.Handler, body map[string]any, userID, tenantID int64) int64 {
 	t.Helper()
 	base := map[string]any{"name": "P", "source_language": "en", "target_languages": []string{"de"}}
 	for k, v := range body {
 		base[k] = v
+	}
+	_, hasWF := base["workflow_id"]
+	_, hasSteps := base["workflow_steps"]
+	_, hasTpl := base["template_id"]
+	if !hasWF && !hasSteps && !hasTpl {
+		base["workflow_id"] = testutil.LibraryWorkflow(t, q, tenantID)
 	}
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", base, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
@@ -106,26 +117,10 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	autoAPE := testutil.SeedStepDefinition(t, q, tenant.ID, "Auto APE", "ai", "", &aiRouterID)
 	proofread := testutil.SeedStepDefinition(t, q, tenant.ID, "Proofread", "human", "", nil)
 
-	t.Run("a new project gets Translation → Review linked to the library defaults", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
-		s := projectSettings(t, router, pid, user.ID, tenant.ID)
-		if got := names(s.Data.WorkflowSteps); len(got) != 2 || got[0] != "Translation" || got[1] != "Review" {
-			t.Fatalf("expected default Translation → Review, got %v", got)
-		}
-		for _, st := range s.Data.WorkflowSteps {
-			if st.StepDefinitionID == nil || st.StepType != "human" {
-				t.Errorf("default step must link to a human library definition, got %+v", st)
-			}
-		}
-		if s.Data.Project.WorkflowID != nil {
-			t.Errorf("an inline default workflow has no library provenance, got %v", *s.Data.Project.WorkflowID)
-		}
-	})
-
 	aiFirst := createLibraryWorkflow(t, router, "AI-first", []int64{autoAPE.ID, proofread.ID}, user.ID, tenant.ID)
 
 	t.Run("create with workflow_id copies the library steps and stamps provenance", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, map[string]any{"workflow_id": aiFirst}, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, map[string]any{"workflow_id": aiFirst}, user.ID, tenant.ID)
 		s := projectSettings(t, router, pid, user.ID, tenant.ID)
 		if got := names(s.Data.WorkflowSteps); len(got) != 2 || got[0] != "Auto APE" || got[1] != "Proofread" {
 			t.Fatalf("expected the workflow's steps, got %v", got)
@@ -153,7 +148,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	})
 
 	t.Run("apply replaces the steps, stamps provenance, and refuses over in-flight jobs", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, nil, user.ID, tenant.ID)
 		rec := testutil.DoRequest(t, router, "POST", fmt.Sprintf("/api/projects/%d/workflow/apply", pid),
 			map[string]any{"workflow_id": aiFirst}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusOK)
@@ -191,14 +186,14 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 		testutil.AssertStatus(t, rec, http.StatusOK)
 
 		// Unknown / foreign workflow → 400.
-		pid2 := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
+		pid2 := createProjectWithBody(t, q, router, nil, user.ID, tenant.ID)
 		rec = testutil.DoRequest(t, router, "POST", fmt.Sprintf("/api/projects/%d/workflow/apply", pid2),
 			map[string]any{"workflow_id": 999999}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusBadRequest)
 	})
 
 	t.Run("detach clears the provenance pointer and keeps the copied steps", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, map[string]any{
+		pid := createProjectWithBody(t, q, router, map[string]any{
 			"name": "Detach", "source_language": "en", "target_languages": []string{"de"}, "workflow_id": aiFirst,
 		}, user.ID, tenant.ID)
 		before := projectSettings(t, router, pid, user.ID, tenant.ID)
@@ -225,7 +220,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 
 	t.Run("cross-tenant: outsider gets 404 on every workflow route, a foreign workflow id is 400", func(t *testing.T) {
 		outsider := testutil.SeedUserWithRole(t, q, other.ID, "out-routes@other.test", "pass", "admin")
-		pid := createProjectWithBody(t, router, map[string]any{"workflow_id": aiFirst}, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, map[string]any{"workflow_id": aiFirst}, user.ID, tenant.ID)
 		rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Scoped", "workflow_id": aiFirst}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var tmpl struct {
@@ -309,7 +304,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	})
 
 	t.Run("save-as promotes the project's steps into the library", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, nil, user.ID, tenant.ID)
 		// Tweak the inline workflow first: Translation → Proofread.
 		s := projectSettings(t, router, pid, user.ID, tenant.ID)
 		rec := testutil.DoRequest(t, router, "PUT", fmt.Sprintf("/api/projects/%d/workflow-steps", pid), map[string]any{
@@ -348,7 +343,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	})
 
 	t.Run("save-as refuses a step without library provenance", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, nil, user.ID, tenant.ID)
 		project, _ := q.GetProject(ctx, db.GetProjectParams{ID: pid, TenantID: tenant.ID})
 		if _, err := q.CreateSettingsWorkflowStep(ctx, db.CreateSettingsWorkflowStepParams{
 			SettingsProfileID: project.SettingsProfileID, Name: "Legacy custom", StepOrder: 5, RoleRequired: "linguist",
@@ -377,7 +372,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	})
 
 	t.Run("a legacy step survives a re-save through existing_step_id", func(t *testing.T) {
-		pid := createProjectWithBody(t, router, nil, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, nil, user.ID, tenant.ID)
 		project, _ := q.GetProject(ctx, db.GetProjectParams{ID: pid, TenantID: tenant.ID})
 		legacy, err := q.CreateSettingsWorkflowStep(ctx, db.CreateSettingsWorkflowStepParams{
 			SettingsProfileID: project.SettingsProfileID, Name: "LQA", StepOrder: 2, RoleRequired: "admin", AiRouterID: &aiRouterID,
@@ -444,7 +439,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 		if tget.Data.Template.WorkflowID == nil || *tget.Data.Template.WorkflowID != aiFirst {
 			t.Fatalf("template should inherit the project's provenance, got %v", tget.Data.Template.WorkflowID)
 		}
-		pid2 := createProjectWithBody(t, router, map[string]any{"template_id": tmpl.Data.ID}, user.ID, tenant.ID)
+		pid2 := createProjectWithBody(t, q, router, map[string]any{"template_id": tmpl.Data.ID}, user.ID, tenant.ID)
 		s := projectSettings(t, router, pid2, user.ID, tenant.ID)
 		if s.Data.Project.WorkflowID == nil || *s.Data.Project.WorkflowID != aiFirst || names(s.Data.WorkflowSteps)[0] != "Auto APE" {
 			t.Errorf("project from template should carry provenance + steps, got %v / %v", s.Data.Project.WorkflowID, names(s.Data.WorkflowSteps))
@@ -452,7 +447,7 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 	})
 
 	t.Run("workflow_id overrides the template's steps at create", func(t *testing.T) {
-		rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Plain"}, user.ID, tenant.ID)
+		rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID), "name": "Plain"}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var tmpl struct {
 			Data struct {
@@ -460,10 +455,10 @@ func TestIntegrationProjectWorkflowLibrary(t *testing.T) {
 			} `json:"data"`
 		}
 		testutil.DecodeJSON(t, rec, &tmpl)
-		pid := createProjectWithBody(t, router, map[string]any{"template_id": tmpl.Data.ID, "workflow_id": aiFirst}, user.ID, tenant.ID)
+		pid := createProjectWithBody(t, q, router, map[string]any{"template_id": tmpl.Data.ID, "workflow_id": aiFirst}, user.ID, tenant.ID)
 		s := projectSettings(t, router, pid, user.ID, tenant.ID)
 		if got := names(s.Data.WorkflowSteps); got[0] != "Auto APE" {
-			t.Errorf("workflow should win over the template's default steps, got %v", got)
+			t.Errorf("workflow should win over the template's Standard workflow, got %v", got)
 		}
 	})
 }
@@ -477,7 +472,36 @@ func TestIntegrationTemplateWorkflowLibrary(t *testing.T) {
 	tenant := testutil.SeedTenant(t, q, "TplLib")
 	user := testutil.SeedUserWithRole(t, q, tenant.ID, "pm@tpl.test", "pass", "project_manager")
 	proofread := testutil.SeedStepDefinition(t, q, tenant.ID, "Proofread", "human", "", nil)
-	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Default"}, user.ID, tenant.ID)
+
+	// A template may have no workflow: it is created with no steps (nothing
+	// fills in a default), and a project made from it picks its own workflow.
+	for _, body := range []map[string]any{
+		{"name": "No workflow"},
+		{"name": "Empty steps", "workflow_steps": []any{}},
+	} {
+		rec := testutil.DoRequest(t, router, "POST", "/api/templates", body, user.ID, tenant.ID)
+		testutil.AssertStatus(t, rec, http.StatusCreated)
+		var bare struct {
+			Data struct {
+				ID         int64  `json:"id"`
+				WorkflowID *int64 `json:"workflow_id"`
+			} `json:"data"`
+		}
+		testutil.DecodeJSON(t, rec, &bare)
+		if bare.Data.WorkflowID != nil {
+			t.Errorf("%v: workflow_id = %v, want none", body["name"], *bare.Data.WorkflowID)
+		}
+		rec = testutil.DoRequest(t, router, "GET", fmt.Sprintf("/api/templates/%d/workflow-steps", bare.Data.ID), nil, user.ID, tenant.ID)
+		testutil.AssertStatus(t, rec, http.StatusOK)
+		var bareSteps struct{ Data []stepRow }
+		testutil.DecodeJSON(t, rec, &bareSteps)
+		if len(bareSteps.Data) != 0 {
+			t.Errorf("%v: steps %v, want none", body["name"], names(bareSteps.Data))
+		}
+	}
+
+	standard := testutil.LibraryWorkflow(t, q, tenant.ID)
+	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Default", "workflow_id": standard}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmpl struct {
 		Data struct {
@@ -486,17 +510,17 @@ func TestIntegrationTemplateWorkflowLibrary(t *testing.T) {
 		} `json:"data"`
 	}
 	testutil.DecodeJSON(t, rec, &tmpl)
-	if tmpl.Data.WorkflowID != nil {
-		t.Errorf("a fresh template has no provenance, got %v", *tmpl.Data.WorkflowID)
+	if tmpl.Data.WorkflowID == nil || *tmpl.Data.WorkflowID != standard {
+		t.Errorf("the template should be based on the workflow, got %v", tmpl.Data.WorkflowID)
 	}
 
-	// A fresh template gets the default pair.
+	// It carries the workflow's steps.
 	rec = testutil.DoRequest(t, router, "GET", fmt.Sprintf("/api/templates/%d/workflow-steps", tmpl.Data.ID), nil, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusOK)
 	var steps struct{ Data []stepRow }
 	testutil.DecodeJSON(t, rec, &steps)
 	if got := names(steps.Data); len(got) != 2 || got[0] != "Translation" || got[1] != "Review" {
-		t.Fatalf("expected default steps on a new template, got %v", got)
+		t.Fatalf("expected the workflow's steps on the new template, got %v", got)
 	}
 
 	// Save the template's steps as a workflow, then create a template FROM it.
@@ -541,5 +565,88 @@ func TestIntegrationTemplateWorkflowLibrary(t *testing.T) {
 	after, _ := q.ListTemplates(ctx, tenant.ID)
 	if len(after) != len(before) {
 		t.Errorf("rejected create must not leave a template: %d → %d", len(before), len(after))
+	}
+}
+
+// A project needs a workflow: a library workflow, its own steps, or a template
+// that brings steps. Nothing adds default steps, and a refused create leaves no
+// project.
+func TestIntegrationProjectCreateNeedsAWorkflow(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+	router := testutil.NewTestRouter(pool)
+	ctx := context.Background()
+	tenant := testutil.SeedTenant(t, q, "NeedsWorkflow")
+	user := testutil.SeedUserWithRole(t, q, tenant.ID, "pm@needs.test", "pass", "project_manager")
+	standard := testutil.LibraryWorkflow(t, q, tenant.ID)
+	bare := testutil.SeedTemplate(t, q, tenant.ID, "No steps")
+
+	countProjects := func() int {
+		t.Helper()
+		rows, err := q.ListProjects(ctx, tenant.ID)
+		if err != nil {
+			t.Fatalf("list projects: %v", err)
+		}
+		return len(rows)
+	}
+	body := func(extra map[string]any) map[string]any {
+		b := map[string]any{"name": "Needs", "source_language": "en", "target_languages": []string{"fr"}}
+		for k, v := range extra {
+			b[k] = v
+		}
+		return b
+	}
+	stepNames := func(rec *httptest.ResponseRecorder) []string {
+		t.Helper()
+		var resp struct {
+			Data struct {
+				ID int64 `json:"id"`
+			} `json:"data"`
+		}
+		testutil.DecodeJSON(t, rec, &resp)
+		rec = testutil.DoRequest(t, router, "GET", fmt.Sprintf("/api/projects/%d/settings", resp.Data.ID), nil, user.ID, tenant.ID)
+		testutil.AssertStatus(t, rec, http.StatusOK)
+		var settings struct {
+			Data struct {
+				WorkflowSteps []stepRow `json:"workflow_steps"`
+			} `json:"data"`
+		}
+		testutil.DecodeJSON(t, rec, &settings)
+		return names(settings.Data.WorkflowSteps)
+	}
+
+	before := countProjects()
+	for label, extra := range map[string]map[string]any{
+		"nothing":                  nil,
+		"a template with no steps": {"template_id": bare.ID},
+	} {
+		rec := testutil.DoRequest(t, router, "POST", "/api/projects", body(extra), user.ID, tenant.ID)
+		testutil.AssertStatus(t, rec, http.StatusBadRequest)
+		if !strings.Contains(rec.Body.String(), "workflow_id is required") {
+			t.Errorf("%s: want \"workflow_id is required\", got %s", label, rec.Body.String())
+		}
+	}
+	if after := countProjects(); after != before {
+		t.Fatalf("a refused create left a project: %d → %d", before, after)
+	}
+
+	rec := testutil.DoRequest(t, router, "POST", "/api/projects", body(map[string]any{"workflow_id": standard}), user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	if got := stepNames(rec); len(got) != 2 || got[0] != "Translation" || got[1] != "Review" {
+		t.Errorf("project from the workflow: steps %v, want Translation, Review", got)
+	}
+
+	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "With steps", "workflow_id": standard}, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	var tmpl struct {
+		Data struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+	}
+	testutil.DecodeJSON(t, rec, &tmpl)
+	rec = testutil.DoRequest(t, router, "POST", "/api/projects", body(map[string]any{"template_id": tmpl.Data.ID}), user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	if got := stepNames(rec); len(got) != 2 {
+		t.Errorf("project from the template: steps %v, want the template's two", got)
 	}
 }

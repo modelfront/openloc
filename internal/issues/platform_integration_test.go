@@ -79,8 +79,8 @@ func TestIntegrationIssue_Conversation(t *testing.T) {
 		*last.Status != issues.StatusOpen || len(last.Attachments) != 1 || last.Attachments[0].Filename != "answer.png" {
 		t.Fatalf("after the answer: %+v", d)
 	}
-	if s := subjects(f.outbox, operatorEmail); len(s) != 2 || s[0] != fmt.Sprintf("Issue #%d: Export does nothing", issue.ID) {
-		t.Errorf("operator emails (newest first) = %v", s)
+	if s := subjects(f.outbox, operatorEmail); len(s) != 0 {
+		t.Errorf("operator emails = %v, want none: the issue is not assigned", s)
 	}
 
 	d = decodeDetail(t, f.operatorMultipart(t, platformPath(issue.ID, "/comments"), map[string]string{"body": "Thanks, looking."}))
@@ -241,9 +241,9 @@ func TestIntegrationIssue_PlatformOrgFilter(t *testing.T) {
 	}
 }
 
-// Both lists are by last update, newest first by default, oldest first with
-// sort=updated, and a page boundary keeps that order. A reply moves an issue
-// up; an unknown sort is refused.
+// Both lists show the newest report first by default, and by last update with
+// sort=-updated (a reply moves an issue up) or sort=updated; a page boundary
+// keeps the order. An unknown sort is refused.
 func TestIntegrationIssue_SortByUpdated(t *testing.T) {
 	f := newFixture(t)
 	first := f.report(t, "First")
@@ -281,6 +281,7 @@ func TestIntegrationIssue_SortByUpdated(t *testing.T) {
 	asOperator := func(p string) *httptest.ResponseRecorder { return f.asOperator(t, http.MethodGet, p, nil) }
 	asReporter := func(p string) *httptest.ResponseRecorder { return f.get(t, p, f.reporter.ID, f.tenant.ID) }
 
+	reported := []int64{third.ID, second.ID, first.ID}
 	newest := []int64{first.ID, third.ID, second.ID}
 	oldest := []int64{second.ID, third.ID, first.ID}
 	for name, c := range map[string]struct {
@@ -288,10 +289,11 @@ func TestIntegrationIssue_SortByUpdated(t *testing.T) {
 		get  func(string) *httptest.ResponseRecorder
 		want []int64
 	}{
-		"operator default":  {"/api/platform/issues", asOperator, newest},
+		"operator default":  {"/api/platform/issues", asOperator, reported},
 		"operator -updated": {"/api/platform/issues?sort=-updated", asOperator, newest},
 		"operator updated":  {"/api/platform/issues?sort=updated", asOperator, oldest},
-		"reporter default":  {"/api/issues", asReporter, newest},
+		"reporter default":  {"/api/issues", asReporter, reported},
+		"reporter -updated": {"/api/issues?sort=-updated", asReporter, newest},
 		"reporter updated":  {"/api/issues?sort=updated", asReporter, oldest},
 	} {
 		t.Run(name, func(t *testing.T) {

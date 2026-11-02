@@ -171,6 +171,7 @@ func TestIntegrationTMLookupOrder_Surfaces(t *testing.T) {
 		rec := do("POST", "/api/projects", map[string]any{
 			"name": "From ordered template", "source_language": "en", "target_languages": []string{"fr"},
 			"template_id": tmpl.ID,
+			"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 		})
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var created struct {
@@ -185,10 +186,12 @@ func TestIntegrationTMLookupOrder_Surfaces(t *testing.T) {
 	})
 
 	t.Run("wizard setup and template-from-form carry it; unknown value is refused", func(t *testing.T) {
+		standard := testutil.LibraryWorkflow(t, q, tenant.ID)
 		base := func(name string, order string) map[string]any {
 			return map[string]any{
 				"name": name, "source_language": "en", "target_languages": []string{"fr"},
-				"settings": map[string]any{"tm_lookup_order": order},
+				"workflow_id": standard,
+				"settings":    map[string]any{"tm_lookup_order": order},
 			}
 		}
 		rec := do("POST", "/api/projects", base("Wizard ordered", "tm_order"))
@@ -204,7 +207,6 @@ func TestIntegrationTMLookupOrder_Surfaces(t *testing.T) {
 			t.Errorf("wizard project order = %q, want tm_order", got)
 		}
 		testutil.AssertStatus(t, do("POST", "/api/projects", base("Wizard bad", "best")), http.StatusBadRequest)
-
 		rec = do("POST", "/api/templates", base("Form template", "tm_order"))
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		testutil.DecodeJSON(t, rec, &created)

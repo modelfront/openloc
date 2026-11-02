@@ -45,6 +45,7 @@ import { EditableTitle } from '@/components/list/EditableTitle'
 import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { LoadFailed } from '@/components/layout/LoadFailed'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 interface Props {
   /** False hides every editing control — the list stays readable. */
@@ -198,13 +199,7 @@ export function LabelManager({ canEdit = true, canDelete = false, enabled = true
       {adding && (
         <div
           className="flex items-center gap-2"
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              e.stopPropagation()
-              submitNewLabel()
-            }
-          }}
+          onKeyDown={submitOnEnter(submitNewLabel)}
         >
           <Input
             value={newLabelName}
@@ -217,7 +212,14 @@ export function LabelManager({ canEdit = true, canDelete = false, enabled = true
           {/* `sm` is the stock size nearest the 30px field beside them: 2px
               shorter reads as inset, where the default size is 2px taller and
               sticks out of the row. */}
-          <Button type="button" size="sm" onClick={submitNewLabel} disabled={createMut.isPending} data-testid="new-label-submit">
+          <Button
+            type="button"
+            size="sm"
+            onClick={submitNewLabel}
+            disabled={createMut.isPending || !newLabelName.trim()}
+            disabledReason={newLabelName.trim() ? undefined : 'Enter a label name first.'}
+            data-testid="new-label-submit"
+          >
             {createMut.isPending ? 'Adding…' : 'Add'}
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => { setAdding(false); setNewLabelName('') }}>
@@ -227,8 +229,7 @@ export function LabelManager({ canEdit = true, canDelete = false, enabled = true
       )}
 
       {canEdit && !adding && (
-        <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => setAdding(true)} data-testid="add-label-button">
-          <Plus />
+        <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => setAdding(true)} startIcon={<Plus />} data-testid="add-label-button">
           Add label
         </Button>
       )}

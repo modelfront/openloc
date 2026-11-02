@@ -41,6 +41,22 @@ WHERE p.tenant_id = @tenant_id AND p.deleted_at IS NULL
 ORDER BY p.id DESC
 LIMIT @lim;
 
+-- name: GetProjectListRow :one
+-- One project as ListProjectsFiltered returns it (creator and customer names
+-- included), for GET /api/projects/{id}. Its own statement, so the lookup
+-- always plans on the primary key.
+SELECT p.*,
+  COALESCE(NULLIF(u.name, ''), u.email, '')::text AS created_by_name,
+  COALESCE(cv.value, '')::text AS customer_name,
+  cv.id AS customer_value_id
+FROM projects p
+LEFT JOIN users u ON u.id = p.created_by
+LEFT JOIN label_definitions cd ON cd.tenant_id = p.tenant_id
+                              AND cd.system_key = 'customer' AND cd.deleted_at IS NULL
+LEFT JOIN project_labels cpl ON cpl.project_id = p.id AND cpl.label_definition_id = cd.id
+LEFT JOIN label_values cv ON cv.id = cpl.label_value_id AND cv.deleted_at IS NULL
+WHERE p.id = @id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
+
 -- name: ListProjectCreators :many
 -- Distinct creators of the tenant's projects — the option set for the list's
 -- "Created by" filter.

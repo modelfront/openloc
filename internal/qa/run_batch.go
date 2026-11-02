@@ -116,11 +116,11 @@ func (s *Service) runJobPages(ctx context.Context, job db.Job, js jobScope) (Job
 		return JobRunResult{}, err
 	}
 	var result JobRunResult
-	afterPos, afterSeg := int32(math.MinInt32), int64(0)
+	afterPos, afterSub, afterSeg := int32(math.MinInt32), int32(0), int64(0)
 	for {
 		page, err := s.queries.ListTranslationsForQAPage(ctx, db.ListTranslationsForQAPageParams{
 			FileID: job.FileID, TargetLanguage: job.TargetLanguage,
-			AfterPosition: afterPos, AfterSegmentID: afterSeg, PageSize: runPageSize,
+			AfterPosition: afterPos, AfterSubPosition: afterSub, AfterSegmentID: afterSeg, PageSize: runPageSize,
 		})
 		if err != nil {
 			return result, fmt.Errorf("list translations: %w", err)
@@ -139,7 +139,7 @@ func (s *Service) runJobPages(ctx context.Context, job db.Job, js jobScope) (Job
 			return result, err
 		}
 		last := page[len(page)-1]
-		afterPos, afterSeg = last.Position, last.SegmentID
+		afterPos, afterSub, afterSeg = last.Position, last.SubPosition, last.SegmentID
 		if len(page) < runPageSize {
 			return result, nil
 		}
@@ -175,7 +175,7 @@ func (s *Service) runRows(ctx context.Context, js jobScope, terms *termIndex, ro
 	var w issueWrite
 	findings := 0
 	for _, r := range rows {
-		issues := s.checkSegment(ctx, js.rs, lk, r.id, r.source, r.target, r.sourceRich, r.targetRich)
+		issues := s.checkSegment(ctx, js.rs, js.sc, lk, r.id, r.source, r.target, r.sourceRich, r.targetRich)
 		if len(issues) == 0 && !hadFindings[r.id] {
 			continue
 		}

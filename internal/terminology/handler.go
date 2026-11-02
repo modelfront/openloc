@@ -493,10 +493,8 @@ func (h *Handler) HandleLookup(w http.ResponseWriter, r *http.Request) {
 		// Domain is a built-in label, so the value comes from the project's
 		// pick. No pick = no domain preference, which is the same as the empty
 		// string the ranking already treats as "do not prefer".
-		if v, err := h.queries.GetProjectSystemLabelValue(r.Context(), db.GetProjectSystemLabelValueParams{
-			ProjectID: projectID, TenantID: tenantID, SystemKey: &domainSystemKey,
-		}); err == nil {
-			projectDomain = v.Value
+		if d, err := h.projectDomain(r.Context(), projectID); err == nil {
+			projectDomain = d
 		}
 	} else {
 		templateID, parseErr := strconv.ParseInt(templateIDStr, 10, 64)

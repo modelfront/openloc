@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -101,7 +102,7 @@ func TestIntegrationDraftCreateAllowsMissingRequiredFields(t *testing.T) {
 	}
 	assertOnlyCreated(t, f, id, "fresh draft")
 
-	rec := testutil.DoRequestWithRole(t, f.router, "POST", "/api/projects", map[string]any{"name": ""}, f.user.ID, f.tenant.ID, "project_manager")
+	rec := testutil.DoRequestWithRole(t, f.router, "POST", "/api/projects", map[string]any{"name": "", "workflow_id": testutil.LibraryWorkflow(t, f.q, f.tenant.ID)}, f.user.ID, f.tenant.ID, "project_manager")
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 }
 
@@ -275,6 +276,7 @@ func TestIntegrationDraftPublishEmitsSingleCreatedEvent(t *testing.T) {
 	id := f.createDraft(t, map[string]any{"name": "Half"})
 	testutil.AssertStatus(t, f.saveDraft(t, id, map[string]any{
 		"name": "Whole", "source_language": "en", "target_languages": []string{"fr"},
+		"workflow_id":    testutil.LibraryWorkflow(t, f.q, f.tenant.ID),
 		"settings":       map[string]any{"mt_on_upload": true},
 		"tm_assignments": []map[string]any{{"tm_id": tm.ID, "mode": "read", "priority": 1}},
 	}), http.StatusOK)
@@ -456,6 +458,7 @@ func TestIntegrationProjectPatchRefusesPublishingADraft(t *testing.T) {
 	// the handler is what has to refuse.
 	id := f.createDraft(t, map[string]any{
 		"name": "Complete draft", "source_language": "en", "target_languages": []string{"fr"},
+		"workflow_id": testutil.LibraryWorkflow(t, f.q, f.tenant.ID),
 	})
 
 	for _, status := range []string{"in_progress", "completed", "on_hold"} {
@@ -478,5 +481,49 @@ func TestIntegrationProjectPatchRefusesPublishingADraft(t *testing.T) {
 	}
 
 	// And publish still takes it live.
+	testutil.AssertStatus(t, f.publish(t, id), http.StatusOK)
+}
+
+// A draft's steps are the form's: none until a workflow is picked, none again
+// when the form drops it. Publish needs a workflow.
+func TestIntegrationDraftWorkflowIsTheForms(t *testing.T) {
+	f, cleanup := newDraftFixture(t, "DraftWorkflow")
+	defer cleanup()
+	standard := testutil.LibraryWorkflow(t, f.q, f.tenant.ID)
+	steps := func(id int64) int {
+		t.Helper()
+		rows, err := f.q.ListSettingsWorkflowSteps(context.Background(), f.project(t, id).SettingsProfileID)
+		if err != nil {
+			t.Fatalf("list steps: %v", err)
+		}
+		return len(rows)
+	}
+	form := map[string]any{"name": "Picked", "source_language": "en", "target_languages": []string{"fr"}}
+
+	id := f.createDraft(t, map[string]any{"name": "Fresh"})
+	if n := steps(id); n != 0 {
+		t.Fatalf("a draft without a workflow has %d steps, want 0", n)
+	}
+
+	testutil.AssertStatus(t, f.saveDraft(t, id, form), http.StatusOK)
+	rec := f.publish(t, id)
+	testutil.AssertStatus(t, rec, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "workflow is required") {
+		t.Errorf("publish without a workflow: want \"workflow is required\", got %s", rec.Body.String())
+	}
+	if p := f.project(t, id); p.Status != db.ProjectStatusDraft {
+		t.Errorf("status after refused publish = %s, want draft", p.Status)
+	}
+
+	testutil.AssertStatus(t, f.saveDraft(t, id, withKey(form, "workflow_id", standard)), http.StatusOK)
+	if n := steps(id); n != 2 {
+		t.Fatalf("after picking the workflow: %d steps, want 2", n)
+	}
+	testutil.AssertStatus(t, f.saveDraft(t, id, form), http.StatusOK)
+	if n := steps(id); n != 0 {
+		t.Fatalf("after the form dropped the workflow: %d steps, want 0", n)
+	}
+
+	testutil.AssertStatus(t, f.saveDraft(t, id, withKey(form, "workflow_id", standard)), http.StatusOK)
 	testutil.AssertStatus(t, f.publish(t, id), http.StatusOK)
 }

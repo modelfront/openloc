@@ -252,9 +252,10 @@ export default function LanguagePairsEditor({ userId, userName, open, onOpenChan
                 variant="outline"
                 size="sm"
                 onClick={addRow}
+                startIcon={<Plus />}
                 data-testid="add-row-button"
               >
-                <Plus className="w-3 h-3 mr-1" />Add languages
+                Add languages
               </Button>
             </div>
 

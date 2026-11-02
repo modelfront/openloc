@@ -25,8 +25,9 @@ func TestIntegrationTemplateFromForm_CarriesPenaltiesAndTMProfile(t *testing.T) 
 	tp := testutil.SeedTMProfile(t, q, tenant.ID, "Shared", 0.6)
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name":     "Snapshot",
-		"settings": map[string]any{"sublanguage_penalty_pct": 9, "near_exact_penalty_pct": 4, "tm_profile_id": tp.ID},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
+		"name":        "Snapshot",
+		"settings":    map[string]any{"sublanguage_penalty_pct": 9, "near_exact_penalty_pct": 4, "tm_profile_id": tp.ID},
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var resp struct {
@@ -220,8 +221,9 @@ func TestIntegrationProjectCreate_TMProfile(t *testing.T) {
 	do := func(body any) *httptest.ResponseRecorder {
 		return testutil.DoRequestWithRole(t, router, "POST", "/api/projects", body, pm.ID, tenant.ID, "project_manager")
 	}
+	wf := testutil.LibraryWorkflow(t, q, tenant.ID)
 	base := func(name string) map[string]any {
-		return map[string]any{"name": name, "source_language": "en", "target_languages": []string{"fr"}}
+		return map[string]any{"name": name, "source_language": "en", "target_languages": []string{"fr"}, "workflow_id": wf}
 	}
 	linkOf := func(projectID int64) *int64 {
 		t.Helper()

@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMutationWithToast } from '@/hooks/use-mutation-with-toast'
 import { listAnalyses, getAnalysis, deleteAnalysis, type Analysis } from '../api/analyses'
 import { queryKeys } from '../lib/query-keys'
-import { Button } from './ui/button'
+import { CreateButton } from './ui/create-button'
 import { DeleteButton } from './ui/delete-button'
 import { DisclosureToggle } from './ui/disclosure-toggle'
 import { ChoiceToggle, type ChoiceToggleOption } from './ui/choice-toggle'
@@ -72,7 +72,7 @@ export default function ProjectAnalysesTab({ projectId }: Props) {
       <div className="space-y-3" data-guide="project_analyses.list">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Saved analyses</h2>
-          <Button onClick={() => setModalOpen(true)} data-guide="project_analyses.new">New analysis</Button>
+          <CreateButton onClick={() => setModalOpen(true)} data-guide="project_analyses.new">New analysis</CreateButton>
         </div>
 
         {listQuery.isLoading ? (

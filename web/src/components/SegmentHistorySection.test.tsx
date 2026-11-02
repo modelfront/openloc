@@ -350,4 +350,20 @@ describe('SegmentHistorySection track changes', () => {
     expect(markTexts(rows()[0], DEL)).toEqual([])
     expect(markTexts(rows()[0], HL)).toEqual([])
   })
+
+  // A join moves the removed row's history to the row it keeps; each moved
+  // event names the row it happened on, and the join names the rows it put
+  // together.
+  it('labels history a join moved, and the rows a join put together', async () => {
+    mockList.mockResolvedValue([
+      event({ id: 3, kind: 'joined', text: 'Eins zwei', details: { joined_segments: ['1', '1.1'] } }),
+      event({ id: 2, kind: 'human', text: 'zwei', details: { from_segment: '1.1' }, created_by: 8 }),
+      event({ id: 1, kind: 'mt', text: 'Eins', created_by: null, created_by_name: null, created_by_email: null }),
+    ])
+    setup()
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    expect(screen.getByText('Joined')).toBeInTheDocument()
+    expect(screen.getByText('Segments 1 + 1.1')).toBeInTheDocument()
+    expect(screen.getAllByTestId('history-from-segment').map(c => c.textContent)).toEqual(['From segment 1.1'])
+  })
 })

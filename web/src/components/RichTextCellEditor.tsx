@@ -7,6 +7,7 @@ import Superscript from '@tiptap/extension-superscript'
 import Subscript from '@tiptap/extension-subscript'
 import type { Extension } from '@tiptap/core'
 import { XliffTag, setTagLabelMode, setChipRefResolver } from '../lib/tiptap-xliff-tag'
+import { XliffBreakAttrs } from '../lib/tiptap-xliff-break'
 import { SpellCheck, toggleSpellCheck, clearSpellWord, type SpellFixRequest } from '../lib/tiptap-spellcheck'
 import { WhitespaceMarkers, toggleWhitespace } from '../lib/tiptap-whitespace'
 import { labelModeFor, type RefResolver } from '../lib/xliff-tag-label'
@@ -14,7 +15,8 @@ import { richTextToTipTapContent, tipTapToRichText, hasXliffTags } from '../lib/
 import { plainOffsetToPm, pmToPlainOffset } from '../lib/pm-offset'
 import { count } from '../lib/plural'
 import { positionFixMenu, FIX_MENU_WIDTH } from '../lib/spellcheck-menu-position'
-import type { SpellFixActions, SpellFixScope } from '../lib/spellcheck-scope'
+import type { ScopeCounts, SpellFixActions, SpellFixScope } from '../lib/spellcheck-scope'
+import { focusAtEntry, type EntryCaret } from '../lib/entry-caret'
 import SpellFixFields from './SpellFixFields'
 import { Button } from '@/components/ui/button'
 
@@ -68,6 +70,8 @@ interface RichTextCellEditorProps {
   spellSourceText?: string
   // Captured at mount; subsequent changes are ignored (TipTap extensions can't be hot-swapped).
   extraExtensions?: Extension[]
+  /** Where the mount focus puts the caret; the end of the text when absent. */
+  initialCaret?: EntryCaret
   onTextChange: (plainText: string) => void
   onSelectionChange?: (from: number, to: number) => void
   onBlur?: () => void
@@ -92,6 +96,7 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
     spellFixActions,
     spellSourceText,
     extraExtensions,
+    initialCaret,
     onTextChange,
     onSelectionChange,
     onBlur,
@@ -120,6 +125,18 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
   // Prefilled with LanguageTool's top pick so the common case is one click.
   const [fixChoice, setFixChoice] = useState('')
   const [fixBusy, setFixBusy] = useState(false)
+  // How often the flagged word occurs across the file, for the scope buttons.
+  // Asked of the server when the menu opens; until it answers, or if it
+  // fails, the file-wide buttons stay disabled and the one-segment fix works.
+  const [fixCounts, setFixCounts] = useState<ScopeCounts | null>(null)
+  const fixWord = fixMenu?.word
+  useEffect(() => {
+    setFixCounts(null)
+    if (!fixWord || !spellFixActions) return
+    let live = true
+    spellFixActions.counts(fixWord).then(c => { if (live) setFixCounts(c) }, () => {})
+    return () => { live = false }
+  }, [fixWord, spellFixActions])
   const fixRequestRef = useRef<(r: SpellFixRequest) => void>(() => {})
   fixRequestRef.current = r => {
     if (readOnly) return
@@ -144,6 +161,7 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
       Superscript,
       Subscript,
       XliffTag.configure({ labelMode: labelModeFor(showWhitespace), resolveRef }),
+      XliffBreakAttrs,
       SpellCheck.configure({
         language,
         enabled: spellCheckEnabled,
@@ -215,13 +233,18 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
     }
   }, [editor, initialText])
 
-  // Focus on mount, caret at the end. An editor that already has focus by
-  // then (a busy machine can show the text well before this timer runs) keeps
-  // the caret or selection the user put there.
+  // Focus on mount, caret at `initialCaret` or the end. An editor that already
+  // has focus by then (a busy machine can show the text well before this timer
+  // runs) keeps the caret or selection the user put there, and so does another
+  // editable element the user put the caret in, such as the CAT editor's source.
+  const initialCaretRef = useRef(initialCaret)
+  useEffect(() => { initialCaretRef.current = initialCaret }, [initialCaret])
   useEffect(() => {
     if (editor) {
       const t = setTimeout(() => {
-        if (!editor.isDestroyed && !editor.view.hasFocus()) editor.commands.focus('end')
+        if (editor.isDestroyed || editor.view.hasFocus()) return
+        if (document.activeElement?.closest('[contenteditable="true"]')) return
+        focusAtEntry(editor, initialCaretRef.current)
       }, 0)
       return () => clearTimeout(t)
     }
@@ -425,7 +448,7 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
           className="rounded-xl border border-gray-200 dark:border-gray-700 bg-card shadow-xl text-sm overflow-hidden"
         >
           {(() => {
-            const counts = spellFixActions?.counts(fixMenu.word)
+            const counts = fixCounts
             const canWriteLocked = spellFixActions?.canWriteLocked ?? false
             const disabled = fixBusy || !fixChoice.trim()
             const target = editor?.getText({ blockSeparator: '\n' }) ?? ''

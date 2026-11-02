@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { deleteProjectViaAPI, login, uploadFileViaAPI } from "./helpers";
+import { deleteProjectViaAPI, login, standardWorkflowId, uploadFileViaAPI } from "./helpers";
 
 const API = "";
 
@@ -28,7 +28,7 @@ test.describe("Multi-file Upload", () => {
     const token = await page.evaluate(() => localStorage.getItem("token"));
     const projRes = await page.request.post(`${API}/api/projects`, {
       headers: { Authorization: `Bearer ${token}` },
-      data: { name: `multi-upload ${Date.now()}`, source_language: "en", target_languages: ["de"] },
+      data: { name: `multi-upload ${Date.now()}`, source_language: "en", target_languages: ["de"], workflow_id: await standardWorkflowId(page) },
     });
     expect(projRes.ok(), `create project: ${projRes.status()}`).toBe(true);
     const projectId: number = (await projRes.json()).data.id;

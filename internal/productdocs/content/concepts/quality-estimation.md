@@ -3,7 +3,7 @@ title: "Quality estimation and automatic post-editing"
 summary: "How a quality check decides which machine translations a person still has to read, and the four outcomes."
 order: 40
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-29
 sources:
   - internal/pipeline/**
   - internal/airouter/**
@@ -39,7 +39,7 @@ A language model does the work with your own prompt. You choose per workflow ste
 
 The check runs over every segment that automation filled in and no human has touched yet: machine translation output, fuzzy matches from the translation memory, and any memory match that was not confirmed automatically — one from another language variant, for example. Segments a linguist already edited are left alone, and so are clean exact matches, which are already **Approved**. See [How TM matching works](/docs/concepts/tm-matching).
 
-A language model gets segments in batches of 30, and each batch carries only what the prompt asks for: the source, the translation, and — if you tick them — a translation memory match and the glossary terms that apply. See [Choose what each segment carries](/docs/guides/ai-engines-and-prompts#choose-what-each-segment-carries).
+A language model gets segments in batches of 10, and each batch carries only what the prompt asks for: the source, the translation, and — if you tick them — a translation memory match and the glossary terms that apply. See [Choose what each segment carries](/docs/guides/ai-engines-and-prompts#choose-what-each-segment-carries).
 
 Inline tags travel with the text: the check reads the same numbered chips the editor shows, in the source and in the translation, so it can judge where a tag sits and a rewrite can move it. If it returns a tag that matches nothing in the source, the segment gets an AI [comment](/docs/guides/cat-editor#comment-on-a-segment) naming that tag, so somebody checks the tags before delivery.
 
@@ -72,11 +72,11 @@ A Hybrid or AI step needs an **AI router**. Pick one in the step dialog and ever
 
 ![The workflow steps of a project: Translation and Review, each assigned to a linguist](assets/workflow-steps.png)
 
-The check runs when a job reaches the step: after pre-translation on upload if the Hybrid or AI step is the first one, or when the job is advanced into it. While it runs, the job's badge shows the progress — **Running AI step** at first, then a count such as **AI step (QE+APE): 30 / 880** — and the editor is locked, so nobody edits sentences the model is about to rewrite. On the **Tasks** page the card is marked **QE+APE running**.
+The check runs when a job reaches the step: after pre-translation on upload if the Hybrid or AI step is the first one, or when the job is advanced into it. While it runs, the job's badge shows the progress — **Running AI step** at first, then a count such as **AI step (QE+APE): 30 / 880** — and the editor is locked, so nobody edits sentences the model is about to rewrite. On the **Tasks** page the card is marked **QE+APE running**. **Apply TM** and **Apply MT**, from the CAT editor toolbar or the project's selection bar, never start the check; use **Re-run AI step** for that.
 
-What happens when the check finishes depends on the step type. On a Hybrid step the editor opens on its own and the assignee reviews. An AI step completes itself: the job moves to the next step with the [comment](/docs/guides/workflows-and-tasks#complete-a-step) the previous person left. There every segment starts unconfirmed for the next person, and the ones the AI approved show a grey **Auto-approved** chip. If the AI step is the last step, the job is completed; a manager who then edits a segment reopens the step, and completes it again by hand. A run that fails keeps the job on the step — see [When the run fails](#when-the-run-fails).
+What happens when the check finishes depends on the step type. On a Hybrid step the editor opens on its own and the assignee reviews. An AI step completes itself: the job moves to the next step with the [comment](/docs/guides/workflows-and-tasks#complete-a-step) the previous person left. There every segment starts unconfirmed for the next person, and the ones the AI approved show a grey check with sparkles in the status column. If the AI step is the last step, the job is completed; a manager who then edits a segment reopens the step, and completes it again by hand. A run that fails keeps the job on the step — see [When the run fails](#when-the-run-fails).
 
-The pipeline actions menu offers **Re-run AI step** to managers when a job sits on a Hybrid or AI step that has not failed and nothing else is running. The re-run checks only segments that have not been checked yet, for example segments filled after the first pass. Clearing a job removes the earlier verdicts, so its segments are checked afresh once they are filled again.
+The pipeline actions menu offers **Re-run AI step** to managers when a job sits on a Hybrid or AI step that has not failed and nothing else is running. The re-run checks only segments that have not been checked yet, for example segments filled after the first pass. Clearing a job removes the earlier verdicts, so its segments are checked afresh once they are filled again. [Splitting or joining](/docs/reference/file-formats#split-and-join-in-the-editor) a segment removes the verdict and score of the rows it changes, because they were given on the old source, and leaves those rows needing review.
 
 A long run does not have to be waited out. While the check is running, **Stop** is the one action that stays clickable, and a manager or the job's assigned linguist can use it. Every segment the check answered for keeps its text and its verdict, and **Re-run AI step** picks up exactly the segments that were never checked. See [Stop a running pipeline run](/docs/guides/workflows-and-tasks#stop-a-running-pipeline-run).
 
@@ -92,7 +92,7 @@ The step can finish without touching a single segment, and it says so rather tha
 
 ## When the run fails
 
-If the run fails, the job stays on the step and its task is in error: nobody can edit its segments. A row under the CAT editor toolbar shows the provider's message, for example *The AI step could not complete: … Check AI settings → Providers and try again.*, and the task shows as **Error** on the project's **Tasks** tab.
+If the run fails, the job stays on the step and its task is in error: nobody can edit its segments. A row under the CAT editor toolbar shows the provider's message, for example *The AI step could not complete: OpenAI rejected the API key. Check the key in AI settings → Providers.*, and the task shows as **Error** on the project's **Tasks** tab.
 
 A failed attempt is tried again on its own, up to three attempts in all. Until the last attempt fails, the job's badge reads **Retrying AI step after an error** and the editor stays locked, as during the run.
 

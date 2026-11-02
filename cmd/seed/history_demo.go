@@ -126,7 +126,7 @@ func createHistoryDemo(ctx context.Context, q *db.Queries, tx pgx.Tx, tenantID, 
 	}
 
 	// Read-only, so the confirms below never write back into the memory.
-	profile, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75})
+	profile, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75}, source)
 	if err != nil {
 		return 0, fmt.Errorf("create settings profile: %w", err)
 	}

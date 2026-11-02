@@ -3,7 +3,7 @@ title: "Report an issue"
 summary: "Send a bug, an enhancement or a feature request to the support team, and follow the answer."
 order: 120
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - web/src/components/issues/**
   - web/src/pages/issues/IssuesPage.tsx
@@ -46,13 +46,13 @@ The support team may change the kind, the severity or the area after reading you
 
 ## Change the kind
 
-You can fix the kind yourself: open the report and pick another kind under **Kind**; it saves at once. The reporter and a manager who sees the report can do this. As when the support team changes it, a report that becomes a bug starts at **Major**, and a bug that becomes something else loses its severity. The conversation records "changed the kind to …"; nobody is notified.
+You can fix the kind yourself: open the report and pick another kind under **Kind**; it saves at once. The reporter and a manager who sees the report can do this. As when the support team changes it, a report that becomes a bug starts at **Major**, and a bug that becomes something else loses its severity. The conversation records "changed the kind to …"; nobody in your organization is notified.
 
 ## Report it with the assistant
 
 When your organization has the assistant set up, the **Report an issue** form offers **Ask the assistant**. It opens the assistant; describe the problem in your own words. The assistant asks for what it still needs, such as the severity of a bug, and shows the report in a card. This works in read-only mode too.
 
-To see the problem, the assistant may ask for a screenshot or for you to repeat the steps. Nothing is captured until you click, and you can **Skip** either.
+To see the problem, the assistant may ask for a screenshot or for you to repeat the steps. Nothing is captured until you click, and you can **Skip** either. Each request takes one screenshot; for more, the assistant asks again. Only its newest request takes an answer.
 
 - **Add screenshot** takes a picture of the page you are on, without the assistant panel. The chat shows it before you decide: **Send** gives it to the assistant, **Skip** drops it. If the assistant does not answer, the button reads **Send again**. An assistant whose model cannot view images says so, and the screenshot still goes with the report.
 - **Start recording** hides the assistant panel; the conversation stays. A banner stays on top of the page, "Do it again — I’ll record it for the team. 🎬", with the time left and **Done**. Repeat the steps, then click **Done**. The recording also stops by itself after 3 minutes. Either way the panel comes back and the assistant carries on.
@@ -61,11 +61,9 @@ A recording holds the same things every time: what you do while it runs, what yo
 
 Click **Review and send** on the card. The **Report an issue** form opens, filled in by the assistant. Up to 3 of the screenshots you sent the assistant, and the one from the recording, are among the files, where you can remove them; a screenshot that has expired is left out. To leave out the steps you recorded, click the **×** next to them. Check the form, change what you like, attach files or paste a screenshot, and click **Send report**. The report goes with the same details as any other, plus **Sent through: AI assistant**. Nothing is sent until you click **Send report**.
 
-You can also just ask the assistant, or an AI tool connected to OpenLoc, to report an issue at any time.
+You can also just ask the assistant, or an AI tool connected to OpenLoc, to report an issue at any time. It can also list and read the reports you can see, and in write mode reply to them, confirm a fix and change their kind.
 
 If a page fails to load and shows an error panel, click **Report this issue** on that panel. The title is filled in from the error message.
-
-You can send up to 10 reports and 30 replies an hour.
 
 ## What goes with your report
 
@@ -93,7 +91,7 @@ Click your name in the top right and choose **Reported issues**.
 - Owners, admins and project managers see every report of the organization, with who sent it.
 - Linguists see the reports they sent.
 
-The list shows the reports that still need work, the most recently updated first. Click the **Updated** heading to show the oldest first. Search by a word in the title or the description, and filter by status, kind, severity and area. The search works within the filters: the default shows only reports that still need work, so pick **Resolved**, **Won't fix** or **Duplicate** under **Status** to find a closed one. **Clear filters** resets the search too. An icon before each title shows its kind; point at it to see the name. A bug's severity is at the end of the title.
+The list shows the reports that still need work, the newest first. Click a column heading to sort by it, click it again to reverse the order, and a third time to go back to the newest first. Shift+click another heading to sort by it next, up to three columns; a number on each heading shows its place. The **Issue** column sorts by kind, bugs first, then by severity, the worst first. The list remembers the order you chose last, in this browser, and uses it the next time you open it. Search by a word in the title or the description, and filter by status, kind, severity and area. The search works within the filters: the default shows only reports that still need work, so pick **Resolved**, **Won't fix** or **Duplicate** under **Status** to find a closed one. **Clear filters** resets the search too. Under the filters, the list shows how many reports match them. Each report shows its number and title, with an icon before them for its kind; point at the icon to see the name. A bug's severity is at the end of the title.
 
 Under each status, a chip shows who has to act next, **Support team** or **Your organization**. It is yellow when the turn is your organization's, and closed reports show none. The report page reads it as **Waiting on**.
 
@@ -106,7 +104,7 @@ Under each status, a chip shows who has to act next, **Support team** or **Your 
 | **Won't fix** | The team decided not to change this. |
 | **Duplicate** | The team tracks the problem in another report. The page always shows the original's number and status, and its title and a link only when you may open it. If that report is deleted, yours goes back to **Open**, without a notification. |
 
-Click a report to read the conversation. Each reply, status change, assignment and fix confirmation appears in order, oldest first. Images pasted into a reply show in the text; click any other file to download it. Once someone on the support team takes the report, the page reads **Assigned to** and their name.
+Click a report to read the conversation; Cmd+click (Ctrl+click on Windows and Linux) or a middle click opens it in a new tab. Each reply, status change, assignment and fix confirmation appears in order, oldest first. Images pasted into a reply show in the text; click one to see it full size, with **Download**, and close it to go back to the report. Web addresses in a report or a reply are links that open in a new tab. Click any other file to download it. Once someone on the support team takes the report, the page reads **Assigned to** and their name.
 
 ## Answer the team or add details
 

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ReactNode, ReactElement } from 'react'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import { waitForSave } from '@/test/debounced-save'
 import { toast } from 'sonner'
 import { AssignmentSection, type AssignmentItem } from './AssignmentSection'
 
@@ -51,7 +53,7 @@ function renderSection(overrides: Partial<Parameters<typeof AssignmentSection>[0
     onSave: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
-  return { ...render(<AssignmentSection {...defaults} />), onSave: defaults.onSave as ReturnType<typeof vi.fn> }
+  return { ...render(<MemoryRouter><AssignmentSection {...defaults} /></MemoryRouter>), onSave: defaults.onSave as ReturnType<typeof vi.fn> }
 }
 
 describe('AssignmentSection', () => {
@@ -96,7 +98,7 @@ describe('AssignmentSection', () => {
     await user.click(addBtn)
 
     // Debounced: onSave fires ~400ms later with the final state.
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     const savedItems = onSave.mock.calls[0][0]
     expect(savedItems).toHaveLength(1)
     expect(savedItems[0]).toMatchObject({
@@ -115,7 +117,7 @@ describe('AssignmentSection', () => {
     expect(removeBtn).toBeTruthy()
     await user.click(removeBtn!)
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     expect(onSave.mock.calls[0][0]).toHaveLength(0)
     expect(await screen.findByText('Saved ✓')).toBeInTheDocument()
   })
@@ -125,7 +127,7 @@ describe('AssignmentSection', () => {
     const { onSave } = renderSection({ onSave: vi.fn().mockRejectedValue(new Error('The TM was deleted.')) })
     await user.click(screen.getAllByRole('button', { name: /remove/i })[0]!)
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('The TM was deleted.'))
     expect(screen.queryByText('Saved ✓')).not.toBeInTheDocument()
   })
@@ -182,7 +184,7 @@ describe('AssignmentSection', () => {
     const { onSave } = renderSection({ hasMode: true, items })
     expect(screen.getByTestId('assignment-write-1-en-es')).toBeChecked()
     await user.click(screen.getByTestId('assignment-write-1-en-es'))
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0][0]).toMatchObject({ mode: 'read' })
   })
 
@@ -200,7 +202,7 @@ describe('AssignmentSection', () => {
     fireEvent.dragStart(row2, { dataTransfer: {} })
     fireEvent.dragEnter(row1, { dataTransfer: {} })
     fireEvent.dragEnd(row2, { dataTransfer: {} })
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0]).toEqual([
       expect.objectContaining({ id: 11, priority: 0 }),
       expect.objectContaining({ id: 10, priority: 1 }),
@@ -259,7 +261,7 @@ describe('AssignmentSection', () => {
     await user.selectOptions(screen.getByTestId('resource-select'), '1')
     await user.selectOptions(screen.getByLabelText('Target'), 'fr')
     await user.click(screen.getByRole('button', { name: /add/i }))
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0][0]).toMatchObject({ sourceLang: 'en', targetLang: 'fr' })
   })
 
@@ -272,7 +274,7 @@ describe('AssignmentSection', () => {
 
   it('resource mode: add control in the title, source-filtered, no in-table add-row', () => {
     renderSection({
-      resourceLabel: 'Term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
+      resourceLabel: 'term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
       autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS, items: [],
     })
     const select = screen.getByTestId('resource-select') as HTMLSelectElement
@@ -283,13 +285,54 @@ describe('AssignmentSection', () => {
     expect(screen.queryByTestId('assignment-add-row-term-base')).not.toBeInTheDocument()
   })
 
-  it('resource mode: rows show read-only languages, no Source/Target columns', () => {
+  it('resource mode: a resource\'s meta is its picker chip and its row\'s second line', () => {
     renderSection({
-      resourceLabel: 'Term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
+      resourceLabel: 'term base',
+      resources: [{ id: 1, name: 'TB-en-de', meta: '3 concepts' }, { id: 3, name: 'TB-en-fr', meta: '1 concept' }],
+      resourceLangs: { 1: TB_LANGS[1], 3: { source_language: 'en', target_languages: ['fr'] } },
       autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS,
       items: [{ id: 10, resourceId: 1, resourceName: 'TB-en-de', sourceLang: 'en', targetLang: 'de', mode: 'read_write', priority: 0 }],
     })
-    expect(screen.getByText('en → de')).toBeInTheDocument()
+    const option = within(screen.getByTestId('resource-select')).getByRole('option', { name: 'TB-en-fr' })
+    expect(option).toHaveAttribute('data-chip', '1 concept')
+    expect(screen.getByTestId('assignment-resource-meta-1')).toHaveTextContent(/^3 concepts$/)
+  })
+
+  it('resource mode: the picker reads "Add term base", the column header "Term base"', () => {
+    renderSection({
+      resourceLabel: 'term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
+      autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS, items: [],
+    })
+    expect(screen.getByRole('combobox', { name: 'Add term base' })).toBeInTheDocument()
+    expect(screen.getByText('Term base', { exact: true })).toBeInTheDocument()
+  })
+
+  it("resource mode: a row's name links to the resource's page, in a new tab, with no icon", () => {
+    renderSection({
+      resourceLabel: 'term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS, resourcePath: id => `/terminology/${id}`,
+      autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS,
+      items: [
+        { id: 10, resourceId: 1, resourceName: 'TB-en-de', sourceLang: 'en', targetLang: 'de', mode: 'read_write', priority: 0 },
+        { id: 11, resourceId: 9, resourceName: 'Gone TB', sourceLang: 'en', targetLang: 'de', mode: 'read_write', priority: 1 },
+      ],
+    })
+    const link = screen.getByTestId('assignment-link-1-en-de')
+    expect(link).toHaveAttribute('href', '/terminology/1')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveTextContent('TB-en-de')
+    expect(link.querySelector('svg')).toBeNull()
+    // A resource no longer in the list keeps its stored name, unlinked.
+    expect(screen.getByText('Gone TB')).toBeInTheDocument()
+    expect(screen.queryByTestId('assignment-link-9-en-de')).toBeNull()
+  })
+
+  it('resource mode: rows show read-only languages, no Source/Target columns', () => {
+    const { container } = renderSection({
+      resourceLabel: 'term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
+      autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS,
+      items: [{ id: 10, resourceId: 1, resourceName: 'TB-en-de', sourceLang: 'en', targetLang: 'de', mode: 'read_write', priority: 0 }],
+    })
+    expect(container).toHaveTextContent('en → de')
     expect(screen.getByText('Languages')).toBeInTheDocument()
     expect(screen.queryByText('Source')).not.toBeInTheDocument()
     expect(screen.queryByText('Target')).not.toBeInTheDocument()
@@ -298,11 +341,11 @@ describe('AssignmentSection', () => {
   it('resource mode: adding via the picker uses the resource\'s declared languages', async () => {
     const user = userEvent.setup()
     const { onSave } = renderSection({
-      resourceLabel: 'Term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
+      resourceLabel: 'term base', resources: TB_RESOURCES, resourceLangs: TB_LANGS,
       autoSourceLanguage: 'en', hasMode: true, hasPriority: true, languages: MT_LANGS, items: [],
     })
     await user.selectOptions(screen.getByTestId('resource-select'), '1')
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0]).toEqual([
       expect.objectContaining({ resourceId: 1, sourceLang: 'en', targetLang: 'de', mode: 'read_write', priority: 0 }),
     ])
@@ -315,12 +358,12 @@ describe('AssignmentSection', () => {
     const resources = [{ id: 5, name: 'TB-multi' }]
     const resourceLangs = { 5: { source_language: 'en', target_languages: ['de', 'fr'] } }
     const { onSave } = renderSection({
-      resourceLabel: 'Term base', resources, resourceLangs,
+      resourceLabel: 'term base', resources, resourceLangs,
       autoSourceLanguage: 'en', restrictTargetsTo: ['de', 'fr', 'es'],
       hasMode: true, hasPriority: true, languages: MT_LANGS, items: [],
     })
     await user.selectOptions(screen.getByTestId('resource-select'), '5')
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     const saved = onSave.mock.calls.at(-1)![0]
     expect(saved).toEqual([
       expect.objectContaining({ resourceId: 5, sourceLang: 'en', targetLang: 'de', priority: 0 }),
@@ -336,12 +379,12 @@ describe('AssignmentSection', () => {
     const resources = [{ id: 6, name: 'TB-locale' }]
     const resourceLangs = { 6: { source_language: 'en-us', target_languages: ['de-de', 'fr-fr'] } }
     const { onSave } = renderSection({
-      resourceLabel: 'Term base', resources, resourceLangs,
+      resourceLabel: 'term base', resources, resourceLangs,
       autoSourceLanguage: 'en', restrictTargetsTo: ['de', 'fr', 'es'],
       languages: MT_LANGS, items: [],
     })
     await user.selectOptions(screen.getByTestId('resource-select'), '6')
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     const saved = onSave.mock.calls.at(-1)![0]
     expect(saved.map((r: AssignmentItem) => r.targetLang)).toEqual(['de', 'fr'])
     // Source stored lower-cased from the base's declared source.
@@ -353,12 +396,12 @@ describe('AssignmentSection', () => {
     const resources = [{ id: 7, name: 'TB-empty' }]
     const resourceLangs = { 7: { source_language: 'en', target_languages: [] as string[] } }
     const { onSave } = renderSection({
-      resourceLabel: 'Term base', resources, resourceLangs,
+      resourceLabel: 'term base', resources, resourceLangs,
       autoSourceLanguage: 'en', restrictTargetsTo: ['de', 'fr', 'es'],
       languages: MT_LANGS, items: [],
     })
     await user.selectOptions(screen.getByTestId('resource-select'), '7')
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     const saved = onSave.mock.calls.at(-1)![0]
     // No terms yet → could cover any target once filled → one row per project target.
     expect(saved.map((r: AssignmentItem) => r.targetLang)).toEqual(['de', 'fr', 'es'])
@@ -377,7 +420,7 @@ describe('AssignmentSection', () => {
     const removeBtn = screen.getAllByRole('button', { name: /remove/i })[0]
     await user.click(removeBtn!)
 
-    await waitFor(() =>
+    await waitForSave(() =>
       expect(onSave).toHaveBeenCalledWith([
         expect.objectContaining({ resourceId: 2, sourceLang: 'fr' }),
       ]),
@@ -411,7 +454,7 @@ describe('AssignmentSection', () => {
     }
 
     // Exactly ONE call, containing the final state (empty list), after the debounce settles.
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     expect(onSave.mock.calls[0][0]).toHaveLength(0)
   })
 

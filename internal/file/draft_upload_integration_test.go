@@ -30,8 +30,8 @@ type draftUploadFixture struct {
 	draftID  int64
 }
 
-// newDraftUploadFixture creates a complete draft (en → fr, de; MT on upload)
-// through the API, with in-memory storage so publish can read the source back.
+// newDraftUploadFixture creates a complete draft (en → fr, de; MT on upload;
+// the library Translation → Review workflow) through the API, with in-memory storage so publish can read the source back.
 func newDraftUploadFixture(t *testing.T, name string) draftUploadFixture {
 	t.Helper()
 	pool, q, cleanup := testutil.SetupTestDB(t)
@@ -44,7 +44,8 @@ func newDraftUploadFixture(t *testing.T, name string) draftUploadFixture {
 
 	rec := testutil.DoRequestWithRole(t, router, "POST", "/api/projects", map[string]any{
 		"status": "draft", "name": "Draft with files", "source_language": "en", "target_languages": []string{"fr", "de"},
-		"settings": map[string]any{"mt_on_upload": true, "tm_on_upload": false},
+		"settings":    map[string]any{"mt_on_upload": true, "tm_on_upload": false},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, pm.ID, tenant.ID, "project_manager")
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var resp struct {

@@ -38,16 +38,19 @@ const customerFieldsMessage = "customer and domain are labels: set them with PUT
 // projects only; drafts are the app's New project form. Customer, Client and
 // Domain are decoded only to be refused (customerFieldsMessage).
 type projectCreate struct {
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	SourceLanguage  string          `json:"source_language"`
-	TargetLanguages []string        `json:"target_languages"`
-	Deadline        string          `json:"deadline"`
-	TemplateID      *int64          `json:"template_id"`
-	WorkflowID      *int64          `json:"workflow_id"`
-	CustomerID      json.RawMessage `json:"customer_id"`
-	Client          json.RawMessage `json:"client"`
-	Domain          json.RawMessage `json:"domain"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	SourceLanguage  string   `json:"source_language"`
+	TargetLanguages []string `json:"target_languages"`
+	Deadline        string   `json:"deadline"`
+	TemplateID      *int64   `json:"template_id"`
+	WorkflowID      *int64   `json:"workflow_id"`
+	// SegmentationProfileID, left out, keeps the template's profile while it
+	// fits the source language, else takes the suggested one.
+	SegmentationProfileID *int64          `json:"segmentation_profile_id"`
+	CustomerID            json.RawMessage `json:"customer_id"`
+	Client                json.RawMessage `json:"client"`
+	Domain                json.RawMessage `json:"domain"`
 }
 
 func (h Handlers) createProject(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +76,7 @@ func (h Handlers) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	p, err := project.CreateWithSetup(ctx, h.Pool, h.Queries, auth.TenantIDFromContext(ctx), auth.UserIDFromContext(ctx),
-		params, templateID, project.SetupConfig{WorkflowID: req.WorkflowID})
+		params, templateID, project.SetupConfig{WorkflowID: req.WorkflowID, SegmentationProfileID: req.SegmentationProfileID})
 	if err != nil {
 		project.WriteCreateError(w, r, err)
 		return

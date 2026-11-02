@@ -21,13 +21,16 @@ import { SettingsCard } from '@/components/layout/SettingsCard'
 import { QueryBoundary } from '@/components/layout/QueryBoundary'
 import { EditorSidebarSection } from '@/components/EditorSidebarSection'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
+import { SegmentRowAction, SegmentRowActionBar } from '../components/SegmentRowAction'
 import { DownloadOptionsMenu, type DownloadOption } from '@/components/ui/download-options-menu'
 import { PinButton } from '@/components/charts/PinButton'
 import { CopyLinkButton } from '@/components/ui/copy-link-button'
 import { AttachmentsField } from '@/components/issues/AttachmentsField'
 import { addAttachments } from '@/components/issues/attachments'
 import { IssueTextField } from '@/components/issues/IssueTextField'
+import { FileDropOverlay } from '@/components/ui/file-drop-overlay'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -37,6 +40,7 @@ import { ChoiceToggle } from '@/components/ui/choice-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Chip, ChipButton, chipStripeClass, chipSurfaceClass, type ChipColor } from '@/components/ui/chip'
 import { AIStepChip, HumanStepChip, HybridStepChip, PretranslateStepChip } from '@/components/ui/chip-presets'
+import { SegmentStatusIcon, LockIcon } from '@/components/SegmentStatusIcon'
 import { CountMeta } from '@/components/ui/count-meta'
 import { DotSeparator } from '@/components/ui/dot-separator'
 import { VerticalDivider } from '@/components/ui/vertical-divider'
@@ -62,7 +66,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { DataTable, type ColumnDef } from '@/components/ui/data-table'
-import { AddFilterMenu, FilterChip, FilterOption, InlineRenameField, InlineNameField, AddItemButton, ClearFiltersButton, LoadMoreButton } from '@/components/list'
+import { AddFilterMenu, AssetFilterBar, FilterChip, FilterOption, InlineRenameField, InlineNameField, AddItemButton, ClearFiltersButton, LoadMoreButton } from '@/components/list'
 import { FormField } from '@/components/ui/form-field'
 import { CheckboxField } from '@/components/ui/checkbox-field'
 import { SearchOptionsFields, SearchOptionsPanel, SearchOptionsToggle } from '@/components/SearchOptions'
@@ -75,9 +79,10 @@ import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { WorkflowStepsWithDeadlines } from '@/components/workflow/WorkflowDeadlines'
 import { DeadlinePicker } from '@/components/ui/deadline-picker'
-import type { WorkflowStep as WorkflowDeadlineStep } from '@/components/WorkflowStepsEditor'
+import { WorkflowStepsEditor, type WorkflowStep as WorkflowDeadlineStep } from '@/components/WorkflowStepsEditor'
 import { DateTimePicker } from '@/components/ui/date-picker'
 import { DateTimePickerDemo } from './debug/DatePickerDemos'
+import { SortableGridRowDemo } from './debug/SortableGridRowDemo'
 import { LanguageCode, LanguagePair } from '@/components/ui/language-code'
 import { ReorderIcon } from '@/components/ui/reorder-icon'
 import { DragHandle } from '@/components/ui/drag-handle'
@@ -106,6 +111,8 @@ import { ProviderTile, ProviderTileRow } from '@/components/ai/ProviderTile'
 import { useForm, useWatch } from 'react-hook-form'
 import { usePageTitle } from '../hooks/usePageTitle'
 import { TextLink } from '@/components/ui/text-link'
+import { OpenLinkButton } from '@/components/ui/open-link-button'
+import { LinkedText } from '@/components/ui/linked-text'
 import { SaveStatus } from '@/components/ui/save-status'
 import { useSavedFlash } from '@/hooks/useSavedFlash'
 import { WorkflowStepChips } from '@/components/workflow/WorkflowStepChips'
@@ -335,6 +342,26 @@ const DEMO_TABLE_ROWS: DemoTerm[] = [
   { term: 'warranty', translation: 'garantía', status: 'Approved' },
 ]
 
+// The sort header states: an unsorted column, then two levels with rank badges.
+const noop = () => {}
+const DEMO_SORTED_COLUMNS: ColumnDef<DemoTerm>[] = [
+  { ...DEMO_TABLE_COLUMNS[0], meta: { sort: { direction: null, onToggle: noop } } },
+  { ...DEMO_TABLE_COLUMNS[1], meta: { sort: { direction: 'desc', rank: 2, onToggle: noop } } },
+  { ...DEMO_TABLE_COLUMNS[2], meta: { sort: { direction: 'asc', rank: 1, hint: 'Shift+click to sort by more than one column.', onToggle: noop } } },
+]
+
+// Option groups: orgs, a line, then people.
+const DEMO_GROUPED = [
+  { value: 'org:1', label: 'Acme', group: 'orgs' },
+  { value: 'org:2', label: 'Globex', group: 'orgs' },
+  { value: 'user:7', label: 'Rita', chip: 'Acme', group: 'people' },
+  { value: 'user:8', label: 'Carl', chip: 'Globex', group: 'people' },
+]
+function GroupedMultiDemo() {
+  const [value, setValue] = useState<string[]>([])
+  return <MultiCombobox value={value} onChange={setValue} options={DEMO_GROUPED} placeholder="Any reporter" className="w-64" />
+}
+
 // VirtualDataTable needs a scroll viewport + enough rows to actually virtualize.
 const DEMO_VIRTUAL_ROWS: DemoTerm[] = Array.from({ length: 60 }, (_, i) => ({
   term: `term ${i + 1}`,
@@ -348,6 +375,14 @@ function DeadlinePickerDemo({ initial = null, variant }: { initial?: string | nu
   return <DeadlinePicker value={value} onChange={setValue} variant={variant} aria-label="Demo deadline" />
 }
 
+function WorkflowStepsWithDeadlinesReadOnlyDemo() {
+  const steps: WorkflowDeadlineStep[] = [
+    { step_definition_id: 1, name: 'Translation', step_type: 'human', deadline: '2030-03-04T16:00:00Z', language_deadlines: { de: '2030-03-02T16:00:00Z' } },
+    { step_definition_id: 2, name: 'Review', step_type: 'human', deadline: null },
+  ]
+  return <WorkflowStepsWithDeadlines steps={steps} targetLanguages={['de', 'fr', 'es']} />
+}
+
 function WorkflowStepsWithDeadlinesDemo() {
   const [steps, setSteps] = useState<WorkflowDeadlineStep[]>([
     {
@@ -357,6 +392,16 @@ function WorkflowStepsWithDeadlinesDemo() {
     { step_definition_id: 2, name: 'Review', step_type: 'human', deadline: null },
   ])
   return <WorkflowStepsWithDeadlines steps={steps} targetLanguages={['de', 'fr', 'es']} onChange={setSteps} />
+}
+
+// WorkflowStepsEditor on a project: step 1 is locked, steps 2–3 sort.
+function WorkflowStepsEditorDemo() {
+  const [steps, setSteps] = useState<WorkflowDeadlineStep[]>([
+    { id: 1, step_definition_id: 1, name: 'Translation', step_type: 'human', deadline: null, locked: true, reached_jobs: 3 },
+    { id: 2, step_definition_id: 2, name: 'Review', step_type: 'human', deadline: null },
+    { id: 3, step_definition_id: 3, name: 'Proofread', step_type: 'human', deadline: null },
+  ])
+  return <WorkflowStepsEditor steps={steps} onChange={setSteps} sourceLang="en" targetLangs={['de', 'fr']} deadlines />
 }
 
 // EditableTitle — name + pencil that swaps to an inline rename field. Keeps its
@@ -552,6 +597,32 @@ function DisclosureToggleDemo() {
   )
 }
 
+// AssetFilterBar on local state: the search box alone, or with the "Created by"
+// chip and "Clear filters".
+function AssetFilterBarDemo({ withCreator }: { withCreator?: boolean }) {
+  const [search, setSearch] = useState('')
+  const [createdBy, setCreatedBy] = useState<number | null>(null)
+  const suffix = withCreator ? 'creator' : 'search'
+  return (
+    <AssetFilterBar
+      total={3}
+      search={search}
+      onSearchChange={setSearch}
+      placeholder={withCreator ? 'Search translation memories...' : 'Search TM profiles...'}
+      searchTestId={`debug-asset-filter-${suffix}`}
+      createdBy={withCreator ? {
+        value: createdBy,
+        onChange: setCreatedBy,
+        myUserId: 1,
+        options: [{ id: 1, name: 'Ana Ruiz' }, { id: 2, name: 'Ben Okafor' }],
+        testId: 'debug-asset-filter-created-by',
+      } : undefined}
+      onClear={withCreator ? () => setCreatedBy(null) : undefined}
+      clearTestId="debug-asset-filter-clear"
+    />
+  )
+}
+
 // Self-contained FilterChip demo — the chip is controlled (it closes on select),
 // so the gallery wires a tiny local state to show the selected value.
 function FilterChipDemo({ size, removable }: { size?: 'sm' | 'md'; removable?: boolean }) {
@@ -672,6 +743,14 @@ export default function DebugPage() {
             <Button variant="ghost" hoverColor="red">default → red</Button>
             <Button variant="outline" color="primary">primary (a toggle whose section holds something)</Button>
           </Row>
+          <Row label="toggle: outline + aria-pressed (on / off)">
+            <Button variant="outline" size="sm" aria-pressed={true}>Track changes</Button>
+            <Button variant="outline" size="sm" aria-pressed={false}>Track changes</Button>
+          </Row>
+          <Row label="CreateButton: a New … action in a page or section header">
+            <CreateButton>New project</CreateButton>
+            <CreateButton disabled disabledReason="Says why on hover and focus.">New template</CreateButton>
+          </Row>
           <SubSection
             title="DeleteButton"
             description="Use this in any place where you need to delete an entity (components/ui/delete-button.tsx)."
@@ -681,6 +760,38 @@ export default function DebugPage() {
               <DeleteButton size="icon-xs" onClick={() => {}} />
               <DeleteButton disabled onClick={() => {}} />
               <DeleteButton loading onClick={() => {}} />
+            </Row>
+          </SubSection>
+          <SubSection
+            title="SegmentRowAction / SegmentRowActionBar"
+            description="The compact text actions on the open segment's borders in the CAT editor: Clear on the translation, Split on the source (components/SegmentRowAction.tsx). 9px, filled on hover across the bar's full height. SegmentRowActionBar holds them, centred on the top border of a relative box, on its own fill and border, so it covers the row line it overlaps; placement='bottom' puts them on the bottom border, for the open row right under the sticky column header. The editor's boxes draw no border: the dashed ones here show where it is. Only there; everywhere else, Button."
+          >
+            <Row label="neutral / danger / disabled">
+              <SegmentRowAction onClick={() => {}}>✂ Split</SegmentRowAction>
+              <SegmentRowAction tone="danger" onClick={() => {}}>🧹 Clear</SegmentRowAction>
+              <SegmentRowAction disabled onClick={() => {}}>🧹 Clear</SegmentRowAction>
+            </Row>
+            <Row label="bar on the source box / the translation box">
+              <div className="relative w-56 rounded border border-dashed border-gray-300 dark:border-gray-700 bg-(--seg-editor-bg-readonly) px-2 py-1 text-sm">
+                <SegmentRowActionBar>
+                  <SegmentRowAction onClick={() => {}}>✂ Split</SegmentRowAction>
+                </SegmentRowActionBar>
+                Source text
+              </div>
+              <div className="relative w-56 rounded border border-dashed border-gray-300 dark:border-gray-700 bg-(--seg-editor-bg) px-2 py-1 text-sm">
+                <SegmentRowActionBar>
+                  <SegmentRowAction tone="danger" onClick={() => {}}>🧹 Clear</SegmentRowAction>
+                </SegmentRowActionBar>
+                Translation
+              </div>
+            </Row>
+            <Row label="placement bottom">
+              <div className="relative w-56 rounded border border-dashed border-gray-300 dark:border-gray-700 bg-(--seg-editor-bg) px-2 py-1 text-sm">
+                <SegmentRowActionBar placement="bottom">
+                  <SegmentRowAction tone="danger" onClick={() => {}}>🧹 Clear</SegmentRowAction>
+                </SegmentRowActionBar>
+                Translation
+              </div>
             </Row>
           </SubSection>
           <SubSection
@@ -708,13 +819,33 @@ export default function DebugPage() {
           </SubSection>
           <SubSection
             title="TextLink"
-            description="The inline link (components/ui/text-link.tsx): primary colour, underline on hover, and the size and weight of the text around it — never its own. `to` for a route, `href` for an outside URL or a download, `onClick` for an action that only looks like a link; `tone` for its colour — `muted` for the grey kind that must not compete with the page, `inherit` inside coloured text, a chip colour beside a chip — and `underlined` for running text. The only inline link: no hand-rolled text-primary hover:underline, and Button has no link variant."
+            description="The inline link (components/ui/text-link.tsx): primary colour, underline on hover, and the size and weight of the text around it — never its own. `to` for a route, `href` for an outside URL or a download, `onClick` for an action that only looks like a link; `tone` for its colour — `muted` for the grey kind that must not compete with the page, `inherit` inside coloured text, a chip colour beside a chip — `underlined` for running text, and `newTab` to open in a new tab with the external-link icon, for a link out of a form holding unsaved input (`newTabIcon={false}` drops the icon, for a name in a table row such as a TM in a project's settings). Beside a picker, use OpenLinkButton instead. The only inline link: no hand-rolled text-primary hover:underline, and Button has no link variant."
           >
             <p className="text-sm">
               Body text with <TextLink to="/projects">a route</TextLink>, <TextLink href="https://openloc.com" target="_blank" rel="noopener noreferrer">an outside page</TextLink> and <TextLink onClick={() => toast('Clicked')}>an action</TextLink>.
             </p>
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
               A caption keeps its size: <TextLink to="/projects">a route</TextLink> · <TextLink tone="muted" to="/projects">a muted one</TextLink>.
+            </p>
+            <p className="mt-2 text-sm">
+              In a new tab: <TextLink to="/memories" newTab>Main TM</TextLink> · without the icon: <TextLink to="/memories" newTab newTabIcon={false}>Main TM</TextLink>
+            </p>
+          </SubSection>
+          <SubSection
+            title="OpenLinkButton"
+            description="An icon-only link that opens a page in a new tab (components/ui/open-link-button.tsx): the external-link icon, muted, with the label as its tooltip and accessible name. It goes last on a picker's line and opens the picked thing — the TM profile, MT router, QA profile, segmentation profile and workflow in project settings. Use it where a text link would crowd the line."
+          >
+            <div className="flex items-center gap-3 text-sm">
+              <span className="rounded-md border px-2 py-1">Marketing QA</span>
+              <OpenLinkButton to="/quality" label="Open QA profile" />
+            </div>
+          </SubSection>
+          <SubSection
+            title="LinkedText"
+            description="Text a person typed, with each http(s) address made an underlined TextLink that opens in a new tab (components/ui/linked-text.tsx). Not Markdown and not HTML. Used for the user's chat messages and for issue descriptions and comments."
+          >
+            <p className="whitespace-pre-wrap text-sm">
+              <LinkedText text={'The export fails on https://example.com/projects/12.\nSee *this* too: http://example.com/help'} />
             </p>
           </SubSection>
           <SubSection
@@ -744,6 +875,14 @@ export default function DebugPage() {
             description="The text of an issue or a reply with its files (components/issues/IssueTextField.tsx). An image pasted, dropped or picked goes into the text at the cursor as ![name](upload:N); any other file joins the list. The page shows each placed image in place with IssueText. Used by the issue report and its replies."
           >
             <IssueTextFieldDemo />
+          </SubSection>
+          <SubSection
+            title="FileDropOverlay"
+            description="The view over an area while files are dragged onto it (components/ui/file-drop-overlay.tsx), with an optional hint line. The area must be positioned; the view lets pointer events through, so the area keeps its own drop handlers. Pair it with useFileDrop. Used by the project page and the assistant panel."
+          >
+            <div className="relative h-32 max-w-lg rounded-xl border border-gray-200 dark:border-gray-800">
+              <FileDropOverlay show label="Drop files to attach" hint="Up to 10 files per message" />
+            </div>
           </SubSection>
         </Section>
 
@@ -810,6 +949,25 @@ export default function DebugPage() {
         </Section>
 
         <Section
+          title="SegmentStatusIcon"
+          description="The CAT editor's Status column icons, in components/SegmentStatusIcon.tsx. Colour is the state (yellow not confirmed, green approved, grey a previous step's state); the sparkles mean no person approved it. Hover an icon for its name."
+        >
+          <Row label="this step">
+            <SegmentStatusIcon kind="draft" label="Draft" />
+            <SegmentStatusIcon kind="approved" label="Approved" />
+            <SegmentStatusIcon kind="machine_approved" label="Auto-approved" />
+            <SegmentStatusIcon kind="machine_approved" label="Confirmed by assistant" />
+          </Row>
+          <Row label="previous step">
+            <SegmentStatusIcon kind="machine_approved" label="Auto-approved in the previous step." history />
+          </Row>
+          <Row label="last column: icon / unlock button">
+            <LockIcon />
+            <LockIcon onUnlock={() => {}} />
+          </Row>
+        </Section>
+
+        <Section
           title="SelectionBar"
           description="The bar above a selectable list once something is selected (components/list/SelectionBar.tsx): what is selected, a clear button, then the actions. Used by the Tasks matrix, the Files table and the CAT editor's segment selection. Separate action groups with SelectionBarDivider. The list's header checkbox is SelectAllCheckbox (components/list/SelectAllCheckbox.tsx)."
         >
@@ -871,10 +1029,13 @@ export default function DebugPage() {
           </Row>
           <SubSection
             title="MultiCombobox"
-            description="Use this when the user picks several entries from a list (same file). The picks sit as chips inside the field."
+            description="Use this when the user picks several entries from a list (same file). The picks sit as chips inside the field, and are pinned above the list when it opens. An option's group lists it with its group, a line between groups, as the Reported issues Reporter filter lists orgs, then people; with groups, picks stay in their group, not pinned on top."
           >
             <Row label="default"><EngineMultiDemo /></Row>
             <Row label="wrap"><EngineMultiDemo wrap /></Row>
+            <Row label="groups">
+              <GroupedMultiDemo />
+            </Row>
             <Row label="invalid">
               <MultiCombobox value={[]} onChange={() => {}} options={DEMO_ENGINES} placeholder="Engines…" aria-invalid className="w-64" />
             </Row>
@@ -1045,8 +1206,9 @@ export default function DebugPage() {
           <Row label="disabled"><DeadlinePicker value="2026-07-15T17:00:00Z" onChange={() => {}} disabled aria-label="Demo deadline" /></Row>
         </Section>
 
-        <Section title="WorkflowDeadlines" description="When each workflow step is due (components/workflow/WorkflowDeadlines.tsx). A project's jobs are one file per target language, so a step can be due on a different date per language; the step's own deadline covers every language without one, and the project's covers a step without one. WorkflowStepsWithDeadlines puts each step&apos;s deadline at the right end of the step&apos;s own row (the New Project wizard and a project&apos;s attached workflow); the globe beside it opens a row per override — the languages it covers and the date they share. The globe turns primary while any language carries its own date. AI steps get no deadline — they run by themselves.">
+        <Section title="WorkflowDeadlines" description="When each workflow step is due (components/workflow/WorkflowDeadlines.tsx). A project's jobs are one file per target language, so a step can be due on a different date per language; the step's own deadline covers every language without one, and the project's covers a step without one. WorkflowStepsWithDeadlines puts each step&apos;s deadline at the right end of the step&apos;s own row (the New Project wizard and a project&apos;s attached workflow); the globe beside it opens a row per override — the languages it covers and the date they share. The globe turns primary while any language carries its own date. Without onChange the list is read-only (a project's Workflow tab before Edit steps): dates as chips, and the globe only on a step where a language has a date of its own, listing them. AI steps get no deadline — they run by themselves.">
           <Row label="with steps"><WorkflowStepsWithDeadlinesDemo /></Row>
+          <Row label="read-only"><WorkflowStepsWithDeadlinesReadOnlyDemo /></Row>
         </Section>
 
         <Section title="DateTimePicker" description="react-day-picker in the app's tokens (components/ui/date-picker.tsx), in a popover. DeadlinePicker (above) and the job list's bulk Set deadline are built on it. It holds an instant (Date), shown in the browser's time zone unless onTimeZoneChange adds a zone selector — switching zones keeps the wall-clock time. presets are any list of { label, resolve(now) }; lib/date-presets.ts has daysFromNow, businessDaysFromNow and hoursFromNow (rounded up to the next hour unless `at` sets a time).">
@@ -1108,6 +1270,18 @@ export default function DebugPage() {
               <FilterChipDemo size="md" />
               <Input placeholder="…next to a 30px input" className="text-sm max-w-[220px]" />
             </div>
+          </Row>
+        </Section>
+
+        <Section
+          title="AssetFilterBar"
+          description="The filter row of the lists fetched whole and filtered in the browser (components/list): TMs, TM profiles and term bases. A name search box that narrows the list as you type (kept in ?q=, total hides the row for an empty, unfiltered list), then the optional Created by chip (shown with 2+ creators or an active value) and Clear filters."
+        >
+          <Row label="with Created by + Clear filters">
+            <AssetFilterBarDemo withCreator />
+          </Row>
+          <Row label="search only (TM profiles)">
+            <AssetFilterBarDemo />
           </Row>
         </Section>
 
@@ -1191,13 +1365,28 @@ export default function DebugPage() {
 
         <Section
           title="DragHandle"
-          description="The grip on a sortable row (components/ui/drag-handle.tsx): a ghost icon-xs Button holding ReorderIcon, cursor-grab, muted until hovered — same focus ring and hover box as every other icon button. dnd-kit rows pass ref + attributes + listeners; HTML5-drag rows pass their mouse handlers. Used by the TM rows table, assignment rows, workflow steps and the sidebar customizer."
+          description="The grip on a sortable row (components/ui/drag-handle.tsx): a ghost icon-xs Button holding ReorderIcon, cursor-grab, muted until hovered — same focus ring and hover box as every other icon button. dnd-kit rows pass ref + attributes + listeners; HTML5-drag rows pass their mouse handlers. Used by the TM rows table, assignment rows, workflow steps and the sidebar customizer; a dnd-kit list wraps its rows in SortableList / SortableGridRow."
         >
           <Row label="default">
             <DragHandle />
           </Row>
           <Row label="custom title">
             <DragHandle title="Drag to reorder (top = checked first)" />
+          </Row>
+        </Section>
+
+        <Section
+          title="SortableList & SortableGridRow"
+          description="Drag-to-sort for a vertical list (components/list, dnd-kit). SortableList takes the ids in order and reports a drop as onMove(from, to); it renders no DOM, starts a pointer drag after 4 px, sorts from the keyboard with Space and arrows, and keeps rows inside the list's parent. Each SortableGridRow is one CSS grid row: it owns the slide transform and the dragged-row placeholder (tinted, outlined, data-dragging), and its children render the DragHandle with handleRef + handleProps, so only the grip starts a drag. Used by the TM rows table, the segmentation rules, the editor sidebar settings and the workflow step editor."
+        >
+          <Row label="drag a grip">
+            <SortableGridRowDemo />
+          </Row>
+        </Section>
+
+        <Section title="WorkflowStepsEditor" description="The ordered step list as an editor (components/WorkflowStepsEditor.tsx, rows in workflow/WorkflowStepRow.tsx), controlled: steps in, the whole list back on every change. Each row picks a library step and a default assignee; on a project (deadlines) each step also gets its deadline column. A locked row — a project step jobs have reached — comes first, shows a lock that says why instead of a grip, cannot change its step or be removed, and keeps its assignee and deadline editable; the rows after it sort among themselves and never move above it. Add step stops at 9. Used by the library workflow dialog and the project Workflow tab.">
+          <Row label="project, step 1 locked">
+            <div className="w-full max-w-4xl"><WorkflowStepsEditorDemo /></div>
           </Row>
         </Section>
 
@@ -1241,7 +1430,7 @@ export default function DebugPage() {
             <PageHeader
               title="Projects"
               subtitle="en → es, fr, de"
-              actions={<Button>New project</Button>}
+              actions={<CreateButton>New project</CreateButton>}
             />
           </div>
         </Section>
@@ -1384,8 +1573,9 @@ export default function DebugPage() {
           <Row label="dialog"><DialogDemo /></Row>
         </Section>
 
-        <Section title="DataTable" description="Sortable table (components/ui/data-table.tsx, TanStack Table) behind Terminology / TM / Analyses. Pass columns + data; cells can render any component (status pill below). A column with meta.sort ({ direction, onToggle }) gets a sort button with an arrow in its header and aria-sort; the caller sorts the data (on the server when the list loads in pages, as Reported issues does by Updated). VirtualDataTable is the virtualized variant for large sets.">
+        <Section title="DataTable" description="Sortable table (components/ui/data-table.tsx, TanStack Table) behind Terminology / TM / Analyses. Pass columns + data; cells can render any component (status pill below). A column with meta.sort ({ direction, rank?, hint?, arrow?, onToggle(shift) }) gets a sort button in its header: a faint arrow when direction is null, else the direction's arrow (arrow overrides it: down for a column's natural order, as the issue lists do), a rank badge from 2 levels up, and a hint tooltip. aria-sort goes on rank 1 only. The caller sorts the data (on the server when the list loads in pages, as Reported issues does, up to 3 levels with Shift+click). onRowClick gets the click event too, and onRowAuxClick (opt-in) a middle click outside the row's links and controls, so openRowLink (lib/row-link.ts) opens the row's page in a new tab on Cmd/Ctrl+click or a middle click. VirtualDataTable is the virtualized variant for large sets.">
           <DataTable columns={DEMO_TABLE_COLUMNS} data={DEMO_TABLE_ROWS} />
+          <DataTable columns={DEMO_SORTED_COLUMNS} data={DEMO_TABLE_ROWS} />
         </Section>
 
         <Section title="VirtualDataTable" description="Virtualized table for large sets (components/ui/virtual-data-table.tsx, TanStack Table + Virtual) — used by TM / Terminology browsers. Sticky header, only visible rows are in the DOM, optional infinite-scroll via onLoadMore. Needs a bounded-height scroll container; 60 rows shown in a fixed viewport.">
@@ -1407,10 +1597,11 @@ export default function DebugPage() {
           </Tabs>
         </Section>
 
-        <Section title="ChoiceToggle" description="Segmented single choice (components/ui/choice-toggle.tsx): a few options in one pill, one checked. Radio semantics — it answers &quot;which of these?&quot; — unlike Tabs, which switch panels. Used by the chart builder's chart type and the new dashboard's visibility. size=&quot;sm&quot; fits a row of small controls: Search in, in the search options and the TM find &amp; replace popup.">
+        <Section title="ChoiceToggle" description="Segmented single choice (components/ui/choice-toggle.tsx): a few options in one pill, one checked. Radio semantics — it answers &quot;which of these?&quot; — unlike Tabs, which switch panels. Used by the chart builder's chart type and the new dashboard's visibility. size=&quot;sm&quot; fits a row of small controls: Search in, in the search options and the TM find &amp; replace popup. fill stretches it to a fixed-width column and shares the width among the options, as in a segmentation rule's Break / No break.">
           <Row label="with icons"><ChoiceToggleDemo /></Row>
           <Row label="small"><ChoiceToggleSmallDemo /></Row>
-          <Row label="primary tone + caption"><ChoiceTogglePrimaryDemo /></Row>
+          <Row label="primary tone + caption (heads a card)"><ChoiceTogglePrimaryDemo /></Row>
+          <Row label="small, fill (168px column)"><ChoiceToggleFillDemo /></Row>
         </Section>
 
         <Section title="Toast" description="Transient notifications via sonner (the toast() helper). Success / error / info — used app-wide after mutations.">
@@ -1484,7 +1675,7 @@ export default function DebugPage() {
             defaultOpen
             info={<SectionInfo label="About providers">Reusable model configs — define once, reference from any AI engine row.</SectionInfo>}
             chip={<Badge variant="outline" className="uppercase tracking-wide">Advanced</Badge>}
-            action={<Button size="xs">New provider</Button>}
+            action={<CreateButton>New provider</CreateButton>}
           >
             <div className={listRowClass}>
               <span className="font-medium">A list row</span>
@@ -1562,6 +1753,25 @@ export default function DebugPage() {
         </Section>
       </PageContainer>
     </TooltipProvider>
+  )
+}
+
+function ChoiceToggleFillDemo() {
+  const [value, setValue] = useState<'break' | 'no-break'>('break')
+  return (
+    <div className="w-[168px]">
+      <ChoiceToggle
+        size="sm"
+        fill
+        value={value}
+        onChange={setValue}
+        aria-label="Action"
+        options={[
+          { value: 'break', label: 'Break' },
+          { value: 'no-break', label: 'No break' },
+        ]}
+      />
+    </div>
   )
 }
 

@@ -8,7 +8,7 @@
 // both projects stay visible after searching → this test goes RED.
 
 import { test, expect } from '@playwright/test'
-import { login } from './helpers'
+import { login, standardWorkflowId } from './helpers'
 
 const TS = Date.now()
 const NAME_MATCH = `SearchZebra ${TS}`
@@ -21,12 +21,12 @@ test.describe('project name search', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)
     const a = await page.request.post('/api/projects', {
-      data: { name: NAME_MATCH, source_language: 'en', target_languages: ['fr'] },
+      data: { name: NAME_MATCH, source_language: 'en', target_languages: ['fr'], workflow_id: await standardWorkflowId(page) },
     })
     expect(a.ok()).toBe(true)
     idMatch = (await a.json()).data.id
     const b = await page.request.post('/api/projects', {
-      data: { name: NAME_OTHER, source_language: 'en', target_languages: ['fr'] },
+      data: { name: NAME_OTHER, source_language: 'en', target_languages: ['fr'], workflow_id: await standardWorkflowId(page) },
     })
     expect(b.ok()).toBe(true)
     idOther = (await b.json()).data.id

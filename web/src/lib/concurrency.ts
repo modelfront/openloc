@@ -1,10 +1,9 @@
 // Bounded-concurrency fan-out for client-side batch operations.
 //
-// Used by bulk job actions (Apply TM/MT/Predict, Assign, Set deadline) where
-// the UI loops over N selected jobs and calls a per-job endpoint for each.
-// The apply endpoints just enqueue an async pipeline task, so firing them off
-// concurrently is fine — but firing *all* of them at once against a large
-// project would hammer the server, so we cap the in-flight count.
+// Used by bulk job actions (Assign, Set deadline, Clear, Stop…) where the UI
+// loops over N selected jobs and calls a per-job endpoint for each. Firing
+// *all* of them at once against a large project would hammer the server, so
+// we cap the in-flight count.
 //
 // Never rejects: each item's outcome (ok/error) is captured so callers can
 // show a partial-failure summary ("applied 8, 2 failed") instead of aborting

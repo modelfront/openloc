@@ -179,7 +179,12 @@ func (h *Handler) storedContent(ctx context.Context, f db.File) ([]byte, error) 
 // segments with the parse it gives, in one transaction.
 func (h *Handler) relayoutDraftFile(r *http.Request, f db.File, content []byte, layout *parser.XLSXLayout, stored []byte, tenantID int64) (db.File, error) {
 	ctx := r.Context()
-	p, err := parser.GetParserWith(string(f.Format), parser.ParseOptions{InlineHTML: f.InlineHtml, XLSXLayout: layout})
+	opts, err := parser.FileOptions(f.InlineHtml, nil, f.Segmentation)
+	if err != nil {
+		return db.File{}, err
+	}
+	opts.XLSXLayout = layout
+	p, err := parser.GetParserWith(string(f.Format), opts)
 	if err != nil {
 		return db.File{}, err
 	}

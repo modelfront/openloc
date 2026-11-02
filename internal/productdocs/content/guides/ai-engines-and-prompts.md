@@ -3,7 +3,7 @@ title: "AI engines and prompts"
 summary: "Set up the AI engines that check and post-edit translations, the routers that pick an engine for each target language, and the prompts that tell the model what to send back."
 order: 75
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - web/src/pages/ai/**
   - web/src/components/ai/AIRoutersSection.tsx
@@ -108,7 +108,7 @@ The JSON example below the checkboxes updates to show the selected context with 
 | Option | What it sends |
 | --- | --- |
 | Translation memory match | The closest memory entry: source, target and match score. The score is the one in the Match column, after penalties, so the model can tell a weak or less trusted match from a strong one. |
-| Glossary terms | The approved and forbidden terms found in the segment's source text. |
+| Glossary terms | The approved and forbidden terms found in the segment's source text, each with its concept's definition and domain and the term's notes when you filled them in. They help the model choose between two meanings of the same source term. |
 
 Leave one unticked and it costs nothing — the lookup is skipped entirely. A field with nothing to fill in is left out, so a segment with no memory match does not send the model an empty one.
 

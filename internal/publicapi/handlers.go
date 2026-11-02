@@ -22,6 +22,8 @@ import (
 	"openloc/internal/invite"
 	"openloc/internal/job"
 	"openloc/internal/project"
+	"openloc/internal/segmentationapi"
+	"openloc/internal/segmentedit"
 	tmpl "openloc/internal/template"
 	"openloc/internal/terminology"
 	"openloc/internal/translation"
@@ -48,4 +50,8 @@ type Handlers struct {
 	AIPrompts    *aiprompt.Handler
 	// AICatalog gates which models an AI engine may use.
 	AICatalog *ai.Catalog
+	// Segmentation serves the SRX download and the delete of a profile.
+	Segmentation *segmentationapi.Handler
+	// SegmentEdit splits and joins a job's segments.
+	SegmentEdit *segmentedit.Service
 }

@@ -75,12 +75,14 @@ func (b *builder) qaProfile() (int64, error) {
 	if err := b.record(ItemQAProfile, p.ID); err != nil {
 		return 0, err
 	}
-	rules := []struct{ check, severity string }{
-		{"empty_target", "error"}, {"forbidden_terms", "error"}, {"tag_checks", "error"},
-		{"number_consistency", "error"}, {"terminology", "warning"}, {"punctuation", "warning"}, {"consistency", "warning"},
+	rules := []struct{ check, severity, config string }{
+		{"empty_target", "error", "{}"}, {"forbidden_terms", "error", "{}"}, {"tag_checks", "error", "{}"},
+		{"number_consistency", "error", "{}"}, {"number_format", "warning", `{"mode":"require","languages":[{"language":"de-ch","decimal":".","group":"'"}]}`},
+		{"date_consistency", "warning", "{}"}, {"time_consistency", "warning", "{}"}, {"unit_conversion", "warning", "{}"},
+		{"terminology", "warning", "{}"}, {"punctuation", "warning", "{}"}, {"consistency", "warning", "{}"},
 	}
 	for _, r := range rules {
-		if _, err := b.q.UpsertQARule(b.ctx, db.UpsertQARuleParams{ProfileID: p.ID, CheckType: r.check, Enabled: true, Severity: r.severity, Config: []byte("{}")}); err != nil {
+		if _, err := b.q.UpsertQARule(b.ctx, db.UpsertQARuleParams{ProfileID: p.ID, CheckType: r.check, Enabled: true, Severity: r.severity, Config: []byte(r.config)}); err != nil {
 			return 0, fmt.Errorf("qa rule %s: %w", r.check, err)
 		}
 	}
@@ -156,11 +158,14 @@ func (b *builder) translation(segID int64, lang string, t tr) error {
 	if t.text != "" {
 		text = &t.text
 	}
+	// A person's text left at needs_review was edited in the job's current
+	// step: the editor shows it as Draft, not Pretranslated.
+	stepEdited := status == "needs_review" && editedBy != nil && text != nil
 	var tid int64
 	if err := b.tx.QueryRow(b.ctx,
-		`INSERT INTO translations (segment_id, target_language, status, active_text, origin, tm_match_percent, edited_by)
-	         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		segID, lang, status, text, origin, pct, editedBy).Scan(&tid); err != nil {
+		`INSERT INTO translations (segment_id, target_language, status, active_text, origin, tm_match_percent, edited_by, step_edited)
+	         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		segID, lang, status, text, origin, pct, editedBy, stepEdited).Scan(&tid); err != nil {
 		return fmt.Errorf("translation: %w", err)
 	}
 	return b.history(tid, lang, t)

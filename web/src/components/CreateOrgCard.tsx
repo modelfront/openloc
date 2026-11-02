@@ -4,6 +4,7 @@ import { Building2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { createOrg, ApiError } from '../api'
+import { capitalize } from '@/lib/utils'
 
 // Personal/free email providers can't create an org (mirrors the backend
 // blocklist in internal/auth/freemail.go). Client-side check is UX-only — the
@@ -23,7 +24,7 @@ function domainOf(email?: string): string {
 function orgNameFromDomain(domain: string): string {
   const label = (domain.split('.')[0] || '').trim()
   if (!label) return ''
-  return label.charAt(0).toUpperCase() + label.slice(1)
+  return capitalize(label)
 }
 
 // Empty-state card on the org picker: an identity with no org creates

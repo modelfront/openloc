@@ -21,6 +21,12 @@ async function openDeTermBase(page: Page) {
   await expect(page).toHaveURL(/\/terminology\/\d+/);
 }
 
+/** The text of each range in the editor's "remembered source selection" CSS
+ *  highlight (hooks/useSourceSelection.ts); empty when nothing is marked. */
+function markedSourceText(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...(CSS.highlights.get("term-source-selection") ?? [])].map((r) => r.toString()));
+}
+
 test.describe("Term base", () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
@@ -423,6 +429,119 @@ test.describe("Term base", () => {
       'span[class*="underline"][title*="Passwort"]'
     );
     await expect(underlined.first()).toBeVisible();
+  });
+
+  test.describe("quick-add from the editor", () => {
+    // What the test added, removed afterwards: the concept when the add made
+    // one, else only the term it attached to an existing concept.
+    let added: { baseId: number; conceptId: number; termId: number; createdConcept: boolean } | null = null;
+
+    test.afterEach(async ({ page }) => {
+      if (!added) return;
+      const { baseId, conceptId, termId, createdConcept } = added;
+      added = null;
+      await deleteViaAPI(
+        page,
+        createdConcept
+          ? `/api/terminology/${baseId}/concepts/${conceptId}`
+          : `/api/terminology/${baseId}/concepts/${conceptId}/terms/${termId}`,
+        "quick-added term",
+      );
+    });
+
+    test("Alt+Shift+G adds the selected source word and the panel shows it at once", async ({ page }, testInfo) => {
+      await page.getByRole("link", { name: /demo project/i }).click();
+      await openJob(page, { lang: "de", fileName: "demo.txt" });
+      await page.getByText(/Setzen Sie Ihr Passwort/i).first().click();
+      const editor = segmentEditor(page).first();
+      await expect(editor).toBeVisible({ timeout: 5000 });
+      const termSection = page.getByTestId("terminology-section");
+      await expect(termSection).toContainText("Passwort", { timeout: 10000 });
+
+      // Double-click selects the first source word, "Reset". Then the first
+      // word of the translation, "Setzen": the source selection is kept.
+      await page.getByTestId("active-source-text").dblclick({ position: { x: 4, y: 8 } });
+      await editor.dblclick({ position: { x: 10, y: 8 } });
+      // The source word stays marked, so the user sees what the add will use.
+      await expect.poll(() => markedSourceText(page)).toEqual(["Reset"]);
+      await page.keyboard.press("Alt+Shift+KeyG");
+
+      const dialog = page.getByTestId("quick-add-term-dialog");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByTestId("quick-add-source")).toHaveValue("Reset");
+      await expect(dialog.getByTestId("quick-add-target")).toHaveValue("Setzen");
+      const target = `Zurücksetzen w${testInfo.workerIndex}r${testInfo.retry}`;
+      await dialog.getByTestId("quick-add-target").fill(target);
+
+      const [resp] = await Promise.all([
+        page.waitForResponse((r) => /\/api\/jobs\/\d+\/terms$/.test(r.url()) && r.request().method() === "POST"),
+        dialog.getByTestId("quick-add-save").click(),
+      ]);
+      expect(resp.status()).toBe(201);
+      const body = await resp.json();
+      added = {
+        baseId: JSON.parse(resp.request().postData() ?? "{}").term_base_id,
+        conceptId: body.data.concept_id,
+        termId: body.data.term_id,
+        createdConcept: body.data.created_concept,
+      };
+
+      await expect(dialog).toBeHidden();
+      await expect.poll(() => markedSourceText(page)).toEqual([]);
+      // No reload: the same segment stays open and the panel lists the term.
+      await expect(termSection).toContainText(target, { timeout: 10000 });
+      await expect(editor).toContainText("Setzen Sie Ihr Passwort zurück.");
+    });
+
+    // The editor's term-base list, answered by the test so it can change
+    // while the editor is open.
+    const termBasesURL = /\/api\/jobs\/\d+\/term-bases$/;
+    const isTermBases = (r: { url(): string }) => termBasesURL.test(r.url());
+
+    async function openPasswordSegment(page: Page) {
+      await page.getByRole("link", { name: /demo project/i }).click();
+      const listed = page.waitForResponse(isTermBases);
+      await openJob(page, { lang: "de", fileName: "demo.txt" });
+      await listed;
+      await page.getByText(/Setzen Sie Ihr Passwort/i).first().click();
+      await expect(segmentEditor(page).first()).toBeVisible({ timeout: 5000 });
+    }
+
+    test("Alt+Shift+G checks the list again: adding turned off meanwhile only explains", async ({ page }) => {
+      let canAdd = true;
+      await page.route(termBasesURL, (route) =>
+        route.fulfill({
+          json: canAdd
+            ? { data: { term_bases: [{ id: 1, name: "Main" }], can_add: true, linguist_status: "pending" } }
+            : { data: { term_bases: [], can_add: false, linguist_status: "off" } },
+        }),
+      );
+      await openPasswordSegment(page);
+      await expect(page.getByTestId("add-term-btn")).toBeVisible();
+
+      // A project manager turns adding off while the editor is open.
+      canAdd = false;
+      await Promise.all([page.waitForResponse(isTermBases), page.keyboard.press("Alt+Shift+KeyG")]);
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Adding terms is turned off for this project." }),
+      ).toBeVisible();
+      await expect(page.getByTestId("quick-add-term-dialog")).toHaveCount(0);
+      await expect(page.getByTestId("add-term-btn")).toHaveCount(0);
+    });
+
+    test("a list that fails to load keeps the + and Alt+Shift+G says so", async ({ page }) => {
+      // The query retries once, a second apart, on every load.
+      test.setTimeout(20_000);
+      await page.route(termBasesURL, (route) => route.fulfill({ status: 500, json: { error: "boom" } }));
+      await openPasswordSegment(page);
+      await expect(page.getByTestId("add-term-btn")).toBeVisible({ timeout: 5000 });
+
+      await page.keyboard.press("Alt+Shift+KeyG");
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "The term bases could not be loaded. Try again." }),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(page.getByTestId("quick-add-term-dialog")).toHaveCount(0);
+    });
   });
 
   test("clicking outside active segment deactivates it", async ({ page }) => {

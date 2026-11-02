@@ -52,6 +52,10 @@ type JobView struct {
 	CreatedAt       string            `json:"created_at"`
 	UpdatedAt       string            `json:"updated_at"`
 	WorkflowStep    *WorkflowStepInfo `json:"workflow_step,omitempty"`
+	// LastClearStepOrder is the order of the workflow's first human or hybrid
+	// step (0 without one): Clear is offered while the current task's step
+	// order is at or before it. Set on finished workflows too.
+	LastClearStepOrder int32 `json:"last_clear_step_order"`
 }
 
 type WorkflowStepInfo struct {
@@ -132,6 +136,25 @@ func (s *Service) ListByProject(ctx context.Context, tenantID, projectID int64) 
 	return s.views(ctx, tenantID, project, jobs, nil)
 }
 
+// ListByProjectIDs returns the jobs of a project among jobIDs, with counts
+// and steps for those jobs only; ids of other projects' jobs are left out. An
+// unknown or foreign project is pgx.ErrNoRows.
+func (s *Service) ListByProjectIDs(ctx context.Context, tenantID, projectID int64, jobIDs []int64) ([]JobView, error) {
+	project, err := s.queries.GetProject(ctx, db.GetProjectParams{ID: projectID, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.queries.ListJobsByProjectIDs(ctx, db.ListJobsByProjectIDsParams{ProjectID: projectID, JobIds: jobIDs})
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	jobs := make([]db.ListJobsByProjectRow, len(rows))
+	for i, r := range rows {
+		jobs[i] = db.ListJobsByProjectRow(r)
+	}
+	return s.views(ctx, tenantID, project, jobs, jobIDs)
+}
+
 // ListPageByProject returns up to limit jobs of a project with id above
 // cursor, oldest first, with counts and steps for those jobs only. An unknown
 // or foreign project is pgx.ErrNoRows.
@@ -186,6 +209,7 @@ func (s *Service) views(ctx context.Context, tenantID int64, project db.Project,
 		logging.Warn(ctx, wfErr, "active workflow steps lookup failed; jobs listed without them", "job-list-workflow-steps-failed", logging.ProjectID(projectID))
 	}
 	wfMap := make(map[int64]*WorkflowStepInfo, len(wfSteps))
+	lastClear := make(map[int64]int32, len(wfSteps))
 	for _, ws := range wfSteps {
 		info := &WorkflowStepInfo{
 			ID:         ws.StepAssignmentID,
@@ -202,6 +226,7 @@ func (s *Service) views(ctx context.Context, tenantID int64, project db.Project,
 			info.AssigneeName = *ws.AssigneeName
 		}
 		wfMap[ws.JobID] = info
+		lastClear[ws.JobID] = ws.LastClearStepOrder
 	}
 
 	result := make([]JobView, len(jobs))
@@ -233,6 +258,8 @@ func (s *Service) views(ctx context.Context, tenantID int64, project db.Project,
 			CreatedAt:       formatTS(j.CreatedAt),
 			UpdatedAt:       formatTS(j.UpdatedAt),
 			WorkflowStep:    wfMap[j.ID],
+
+			LastClearStepOrder: lastClear[j.ID],
 		}
 	}
 	return result, nil
@@ -286,7 +313,7 @@ func (s *Service) Detail(ctx context.Context, tenantID, jobID int64) (JobView, e
 		FileFormat:      string(file.Format),
 		FileInlineHTML:  file.InlineHtml,
 		FileCreatedAt:   formatTS(file.CreatedAt),
-		SegmentCount:    file.SegmentCount,
+		SegmentCount:    c.Total,
 		Status:          deriveStatus(c),
 		PipelineStatus:  job.Status,
 		CurrentStep:     job.CurrentStep,
@@ -300,6 +327,12 @@ func (s *Service) Detail(ctx context.Context, tenantID, jobID int64) (JobView, e
 		CreatedAt:       formatTS(job.CreatedAt),
 		UpdatedAt:       formatTS(job.UpdatedAt),
 	}
+
+	lastClear, err := s.queries.GetJobLastClearStepOrder(ctx, job.ID)
+	if err != nil {
+		return JobView{}, fmt.Errorf("last clear step: %w", err)
+	}
+	view.LastClearStepOrder = lastClear
 
 	if job.CurrentStepID != nil {
 		step, err := s.queries.GetCurrentStepForJob(ctx, *job.CurrentStepID)

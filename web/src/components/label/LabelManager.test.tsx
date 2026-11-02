@@ -46,3 +46,21 @@ describe('LabelManager', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('LabelManager add form', () => {
+  it('keeps Add disabled until a name is typed, and says why', async () => {
+    const user = userEvent.setup()
+    listLabels.mockResolvedValue([])
+    renderManager()
+    await user.click(await screen.findByTestId('add-label-button'))
+    const add = () => screen.getByTestId('new-label-submit')
+    expect(add()).toHaveAttribute('aria-disabled', 'true')
+    await user.hover(add())
+    expect(await screen.findByText('Enter a label name first.')).toBeInTheDocument()
+    await user.type(screen.getByTestId('new-label-name'), '   ')
+    expect(add()).toHaveAttribute('aria-disabled', 'true')
+    await user.type(screen.getByTestId('new-label-name'), 'Country')
+    expect(add()).not.toHaveAttribute('aria-disabled')
+    expect(add()).toBeEnabled()
+  })
+})

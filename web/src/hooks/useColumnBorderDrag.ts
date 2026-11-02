@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
-import { moveColumnBorder } from '../lib/segment-columns'
+import { dragSegmentBorder } from '../lib/segment-columns'
 
 /**
  * Drag the borders between a grid header's columns. `widths` is null until the
@@ -26,7 +26,7 @@ export function useColumnBorderDrag(headerRef: RefObject<HTMLElement | null>, mi
     const start = cells.map(c => c.getBoundingClientRect().width)
     const startX = e.clientX
     setDragging(i)
-    const onMove = (ev: PointerEvent) => setWidths(moveColumnBorder(start, i, ev.clientX - startX, minWidths))
+    const onMove = (ev: PointerEvent) => setWidths(dragSegmentBorder(start, i, ev.clientX - startX, minWidths))
     // pointercancel / blur: the browser can take the pointer away (a touch
     // pan, an OS gesture, switching windows) without ever sending pointerup.
     const stop = () => {

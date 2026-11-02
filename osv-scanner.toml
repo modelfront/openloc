@@ -44,6 +44,11 @@ ignoreUntil = 2026-11-12
 reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."
 
 [[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-02
+reason = "minimatch 3.1.5 and 10.2.4 are dev-only in web/: eslint 9 and typescript-eslint use them to match lint file patterns from our own config, never user input, and nothing in the built app imports them. The fix is minimatch 11, which eslint 9 does not support; it goes when eslint and typescript-eslint ship on a fixed version."
+
+[[IgnoredVulns]]
 id = "GHSA-jrfj-fhj2-jjvm"
 ignoreUntil = 2026-11-12
 reason = "github.com/xuri/excelize/v2 2.11.0 ships in the server binary and is fixed only in untagged upstream commits; it stays until a tagged release. The XLSX pre-check and panic recovery (internal/parser/xlsx_open.go) refuse encrypted files, oversized parts and references outside Excel's grid, and turn panics into errors. Memory use up to the 256 MB cap and CPU-burn bugs are not covered: accepted in the dependency-triage ADR."

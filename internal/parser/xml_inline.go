@@ -176,7 +176,7 @@ func buildXMLContent(src string, rng TextRange, node *xmlNode, refs referenceInd
 	return c
 }
 
-// canBreakAt returns the veto callback SplitSentences needs: a break is only
+// canBreakAt returns the veto callback Segmenter.Split needs: a break is only
 // allowed where the terminator it follows is breakable text.
 func (c xmlContent) canBreakAt() func(int) bool {
 	return breakVeto(c.breakable)
@@ -198,6 +198,10 @@ func (c xmlContent) sourceRange(r TextRange) TextRange {
 	end := c.offsets[r.End]
 	if r.End > r.Start && r.End-1 < len(c.owners) && c.owners[r.End-1] != nil {
 		end = c.owners[r.End-1].outerEnd
+	} else if r.End < len(c.owners) && c.owners[r.End] != nil {
+		// The next sentence opens with an inline element: its start tag
+		// belongs to that sentence.
+		end = c.owners[r.End].outerStart
 	}
 	return TextRange{Start: start, End: end}
 }

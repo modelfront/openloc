@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"openloc/internal/logging"
+	"openloc/internal/segmentation"
 )
 
 // PPTX parses PowerPoint presentations (.pptx).
@@ -20,7 +22,11 @@ import (
 // the package byte for byte, so the deck keeps everything this parser does
 // not touch. Keys are the part name plus the element path, which are stable
 // for the same file.
-type PPTX struct{}
+type PPTX struct {
+	// Segmenter splits a paragraph or an alt text into sentences; nil is the
+	// conservative built-in set.
+	Segmenter *segmentation.Segmenter
+}
 
 var (
 	ErrPPTXLegacy    = errors.New("pptx: PowerPoint 97-2003 presentations are not supported")
@@ -55,7 +61,7 @@ func (p PPTX) Parse(content []byte) (_ []Segment, err error) {
 	if err != nil {
 		return nil, err
 	}
-	units, err := collectPPTX(pkg)
+	units, err := collectPPTX(pkg, segmenterOr(p.Segmenter))
 	if err != nil {
 		return nil, err
 	}
@@ -80,14 +86,14 @@ func (p PPTX) Parse(content []byte) (_ []Segment, err error) {
 // Reconstruct writes translations without knowing the job's languages, so
 // run languages stay as they are. The export uses ReconstructForLang.
 func (p PPTX) Reconstruct(original []byte, translations map[string]string) ([]byte, error) {
-	out, _, err := reconstructPPTX(context.Background(), original, translations, ExportLangs{})
+	out, _, err := p.reconstruct(context.Background(), original, translations, ExportLangs{})
 	return out, err
 }
 
 // ReconstructForLang writes translations and marks translated text that was
 // in the source language with the target language.
 func (p PPTX) ReconstructForLang(ctx context.Context, original []byte, translations map[string]string, langs ExportLangs) ([]byte, error) {
-	out, unmirrored, err := reconstructPPTX(ctx, original, translations, langs)
+	out, unmirrored, err := p.reconstruct(ctx, original, translations, langs)
 	if err == nil && unmirrored > 0 {
 		logging.Warn(ctx, nil, "SmartArt drawing paragraphs kept their source text", "pptx-smartart-unmirrored",
 			slog.Int("paragraphs", unmirrored))
@@ -95,39 +101,40 @@ func (p PPTX) ReconstructForLang(ctx context.Context, original []byte, translati
 	return out, err
 }
 
-// reconstructPPTX rebuilds the deck. unmirrored counts the SmartArt drawing
+// reconstruct rebuilds the deck. unmirrored counts the SmartArt drawing
 // paragraphs of translated diagrams that keep their source text.
-func reconstructPPTX(ctx context.Context, original []byte, translations map[string]string, langs ExportLangs) (_ []byte, unmirrored int, err error) {
+func (p PPTX) reconstruct(ctx context.Context, original []byte, translations map[string]string, langs ExportLangs) (_ []byte, unmirrored int, err error) {
 	defer recoverPPTX(ctx, "pptx reconstruct", &err)
 	pkg, err := openPPTX(original)
 	if err != nil {
 		return nil, 0, err
 	}
-	units, err := collectPPTX(pkg)
+	units, err := collectPPTX(pkg, segmenterOr(p.Segmenter))
 	if err != nil {
 		return nil, 0, err
 	}
 
 	edits := map[string][]spliceEdit{}
+	ranges := numberedRanges(translations)
 	for _, u := range units {
-		sentences := u.sentences()
-		trans := make([]string, len(sentences))
-		has := make([]bool, len(sentences))
-		any := false
-		for i := range sentences {
-			if t := translations[u.sentenceKey(i)]; t != "" {
-				trans[i], has[i], any = t, true, true
-			}
-		}
-		if !any {
+		// A run of sentences joined in the editor is one sentence here, over
+		// their combined range.
+		runs := runsByStart(ranges[u.key], len(u.sentences()))
+		sentences, trans, has := u.withRuns(translations, runs)
+		if !slices.Contains(has, true) {
 			continue
 		}
 		if u.alt != nil {
+			u.alt.sentences = sentences
 			edits[u.part] = append(edits[u.part], spliceEdit{rng: u.alt.valueRange, text: u.alt.rebuild(trans, has)})
 			continue
 		}
+		u.para.sentences = sentences
 		edits[u.part] = append(edits[u.part], paragraphEdit(u.para, trans, has, langs))
 		for _, m := range u.mirrors {
+			if len(runs) > 0 {
+				m.para.sentences = mirrorRuns(m.para, runs)
+			}
 			edits[m.part] = append(edits[m.part], paragraphEdit(m.para, trans, has, langs))
 		}
 		unmirrored += u.unmirrored

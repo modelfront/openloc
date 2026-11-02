@@ -28,6 +28,7 @@ func TestQAProfileIDTriState(t *testing.T) {
 	// Create a project
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "TriState Project", "source_language": "en", "target_languages": []string{"fr"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var createResp struct {

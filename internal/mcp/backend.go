@@ -37,13 +37,19 @@ import (
 // Every method is implicitly scoped to one tenant and one user: implementations
 // read them from the auth claims in ctx. No method takes a tenantID parameter,
 // and no tool argument carries one, so there is no path by which a model can
-// name a tenant it doesn't already hold a token for.
+// name a tenant it doesn't already hold a token for. The exceptions are
+// supportIssueTools and SupportListLLMCalls: the support team's queue and the
+// LLM call log hold every organization's data, and those tools are served to
+// platform operators only.
 type Backend interface {
 	projectOpsTools
 	jobOpsTools
 	resourceTools
 	configTools
+	segmentationTools
 	insightTools
+	supportIssueTools
+	llmLogTools
 
 	ListProjects(ctx context.Context, in ListProjectsIn) (ProjectList, error)
 	GetProject(ctx context.Context, in GetProjectIn) (ProjectDetail, error)
@@ -173,6 +179,11 @@ type Backend interface {
 	// operators changes none of the org's data. Guarded, so the user confirms.
 	PreviewReportIssue(ctx context.Context, in ReportIssueIn) (Preview, error)
 	ReportIssue(ctx context.Context, in ReportIssueIn) (ReportIssueResult, error)
+	ListIssues(ctx context.Context, in ListIssuesIn) (IssueList, error)
+	GetIssue(ctx context.Context, in IssueIDIn) (IssueThread, error)
+	ReplyToIssue(ctx context.Context, in ReplyToIssueIn) (IssueThread, error)
+	ConfirmIssueFix(ctx context.Context, in IssueIDIn) (IssueThread, error)
+	ChangeIssueKind(ctx context.Context, in ChangeIssueKindIn) (IssueThread, error)
 
 	// --- User documentation ---
 	//
@@ -201,10 +212,15 @@ var errDenied = errors.New("denied")
 // errInvalid signals a caller mistake the model can fix by changing arguments
 // (empty text, no QA profile configured, bad enum). Its message IS surfaced, so
 // it must never carry internal detail — construct it with a sentence written for
-// the model.
-type errInvalid struct{ msg string }
+// the model. cause, when set, is the error it words (a vendor outage), kept for
+// the server-side log and never surfaced.
+type errInvalid struct {
+	msg   string
+	cause error
+}
 
 func (e errInvalid) Error() string { return e.msg }
+func (e errInvalid) Unwrap() error { return e.cause }
 
 func invalidf(format string, args ...any) error {
 	return errInvalid{msg: fmt.Sprintf(format, args...)}

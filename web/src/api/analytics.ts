@@ -3,7 +3,7 @@ import { downloadFrom, downloadJobExport } from './download';
 // `ExportFormat` is defined once in api/projects.ts (the file-level export
 // path) and re-used here by the job-level path so both surfaces share
 // one enum and one mental model. See ExportFormat docstring there.
-import type { Translation, ExportFormat } from './projects';
+import type { ExportFormat } from './projects';
 import type { StepType } from './workflows';
 
 // Jobs
@@ -65,6 +65,9 @@ export interface Job {
   translated_count?: number;
   total_count?: number;
   workflow_step?: JobWorkflowStep;
+  // Order of the workflow's first human or hybrid step (0 without one):
+  // Clear is offered while the current task's step_order is at or before it.
+  last_clear_step_order: number;
   counts: {
     total: number;
     untranslated: number;
@@ -81,14 +84,21 @@ export interface Job {
   updated_at: string;
 }
 
-export const listJobs = (projectId: number) =>
-  request<{ data: Job[] }>(`/projects/${projectId}/jobs`).then(r => r.data);
+// The server takes at most 500 ids per request.
+const LIST_JOB_IDS_MAX = 500
+
+// listJobs: every job of the project, or with `ids` only those jobs.
+export async function listJobs(projectId: number, opts: { ids?: number[] } = {}): Promise<Job[]> {
+  if (!opts.ids) return request<{ data: Job[] }>(`/projects/${projectId}/jobs`).then(r => r.data)
+  const chunks: number[][] = []
+  for (let i = 0; i < opts.ids.length; i += LIST_JOB_IDS_MAX) chunks.push(opts.ids.slice(i, i + LIST_JOB_IDS_MAX))
+  const pages = await Promise.all(chunks.map(ids =>
+    request<{ data: Job[] }>(`/projects/${projectId}/jobs?ids=${ids.join(',')}`).then(r => r.data)))
+  return pages.flat()
+}
 
 export const getJob = (jobId: number) =>
   request<{ data: Job }>(`/jobs/${jobId}`).then(r => r.data);
-
-export const listJobTranslations = (jobId: number) =>
-  request<{ data: Translation[] }>(`/jobs/${jobId}/translations`).then(r => r.data);
 
 // Wire literal must match pipeline.PhaseSkipNoSegments in
 // internal/pipeline/translate.go.

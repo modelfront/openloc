@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { useOnChange } from '@/hooks/useOnChange'
 
@@ -17,8 +17,9 @@ import { controlBoxClasses, controlDisabledSelfClasses, controlFocusVisibleClass
 // Anatomy, open:
 //   search            always present, never hidden
 //   actions + divider optional pinned rows (e.g. "New MT engine")
-//   selected          the current selection(s), pinned above a divider
-//   rest              everything else
+//   selected          the current selection(s), pinned above a divider;
+//                     grouped options keep their picks in their group
+//   rest              everything else, by group when options carry one
 // Anatomy of a row: label on the left wall, optional chip right-aligned, check
 // at the far right when selected.
 //
@@ -42,6 +43,13 @@ export interface ComboboxOption {
   chip?: ReactNode
   /** Extra text the search matches, on top of `label` (codes, aliases). */
   keywords?: string
+  /**
+   * The options' section: options of one group are listed together, groups in
+   * the order they first appear, a line between them (organizations, then
+   * people). With groups, selected options stay in their group instead of
+   * being pinned on top, so the group lines are the only lines.
+   */
+  group?: string
   /**
    * Text for this option's chip in the multi-select trigger; defaults to
    * `label`. A chip row is tight, so a language passes its code here and keeps
@@ -231,9 +239,11 @@ function ComboboxBase(props: SingleProps | MultiProps) {
     setOpen(false)
   }
 
-  const pinnedSet = new Set(pinned)
+  // Grouped options keep their place: the groups are the list's only sections.
+  const pinnedSet = new Set(options.some((o) => o.group) ? [] : pinned)
   const selectedOptions = options.filter((o) => pinnedSet.has(o.value))
   const restOptions = options.filter((o) => !pinnedSet.has(o.value))
+  const restGroups = groupOptions(restOptions)
 
   // Multi keeps a value that has no option as a chip labelled with the raw value
   // — it stays removable. Single falls back to the placeholder instead of
@@ -565,12 +575,31 @@ function ComboboxBase(props: SingleProps | MultiProps) {
                 {restOptions.length > 0 && <CommandSeparator />}
               </>
             )}
-            {restOptions.length > 0 && <CommandGroup>{restOptions.map(renderOption)}</CommandGroup>}
+            {restGroups.map((group, i) => (
+              <Fragment key={group.key}>
+                {i > 0 && <CommandSeparator />}
+                <CommandGroup>{group.options.map(renderOption)}</CommandGroup>
+              </Fragment>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
     </Popover>
   )
+}
+
+// Options by their group, the groups in the order they first appear; options
+// without a group form one.
+function groupOptions(options: ComboboxOption[]): { key: string; options: ComboboxOption[] }[] {
+  if (!options.some(o => o.group)) return options.length ? [{ key: '', options }] : []
+  const groups = new Map<string, ComboboxOption[]>()
+  for (const o of options) {
+    const key = o.group ?? ''
+    const group = groups.get(key)
+    if (group) group.push(o)
+    else groups.set(key, [o])
+  }
+  return [...groups].map(([key, opts]) => ({ key, options: opts }))
 }
 
 // A string chip gets the standard Badge; a node is the caller's own.

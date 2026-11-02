@@ -53,14 +53,6 @@ export interface SpellCheckDialogProps {
   filteredIndices: number[]
   /** segment_id → translation row. */
   translationBySegment: Map<number, { id: number; status: string; locked?: boolean }>
-  /** Plain text of a translation — the string offsets are measured against. */
-  textFor: (translationId: number) => string
-  /**
-   * Source text for a segment. Required because a modal covers the grid, so the
-   * source has to be reproduced inside the dialog for the decision to be
-   * makeable at all.
-   */
-  sourceTextFor: (segmentId: number) => string
   /** True when the filter bar has an active filter (enables the third scope). */
   filterActive: boolean
   /** The editor's segment selection on screen (translation ids); enables the
@@ -84,7 +76,7 @@ export interface SpellCheckDialogProps {
 export default function SpellCheckDialog(props: SpellCheckDialogProps) {
   const {
     open, onClose, jobId, spellFixActions, segmentIds, filteredIndices,
-    translationBySegment, textFor, sourceTextFor, filterActive, beforeRun,
+    translationBySegment, filterActive, beforeRun,
     onNavigate, onApply, onApplyAll, readOnly = false,
     selectedIds = EMPTY_SELECTION, initialScope = DEFAULT_RUN_SCOPE,
   } = props
@@ -161,7 +153,6 @@ export default function SpellCheckDialog(props: SpellCheckDialogProps) {
       const result = await runSpellcheck({
         jobId,
         translationIds: ids,
-        textFor,
         ignoredWords: ignoredWords.current,
         check: (job, chunkIds, signal) => checkJobSpelling(job, chunkIds, signal, { includeLocked }),
         segmentIdFor: id => segmentIdByTranslation.get(id) ?? 0,
@@ -337,8 +328,8 @@ export default function SpellCheckDialog(props: SpellCheckDialogProps) {
         {phase === 'review' && current && (
           <div className="space-y-3">
             <SpellFixFields
-              sourceText={current.segmentId ? sourceTextFor(current.segmentId) : undefined}
-              targetText={textFor(current.translationId)}
+              sourceText={current.sourceText}
+              targetText={current.targetText}
               offset={current.offset}
               length={current.length}
               message={current.message}

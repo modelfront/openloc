@@ -25,6 +25,7 @@ export function makeJob(overrides: Partial<Job> = {}): Job {
     segment_count: 10,
     status: 'created',
     pipeline_status: 'idle',
+    last_clear_step_order: 0,
     counts: makeJobCounts(),
     created_at: '2026-09-07T00:00:00Z',
     updated_at: '2026-09-07T00:00:00Z',

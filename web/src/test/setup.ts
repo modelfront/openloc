@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { notifyManager } from '@tanstack/react-query'
 
 // ─── Web Storage polyfill ─────────────────────────────────────────────────
 //
@@ -122,3 +123,11 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
     thresholds = []
   } as unknown as typeof IntersectionObserver
 }
+
+// ─── React Query notifications in a microtask ─────────────────────────────
+// React Query hands its updates to React on a 0 ms timer. An update queued at
+// the end of a file's last test can fire after jsdom is torn down, and React
+// throws "ReferenceError: window is not defined" from that timer, blamed on
+// whichever file ran last. A microtask always runs before teardown; it stays
+// asynchronous, so no update lands in the middle of a render.
+notifyManager.setScheduler(queueMicrotask)

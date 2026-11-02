@@ -83,7 +83,9 @@ e2e/journey-results.json
 !.claude/skills/
 !.claude/commands/
 !.claude/agents/
-e2e/check-results/
+!.claude/hooks/
+!.claude/settings.json
+e2e/check-results
 e2e/.auth/
 
 docs/local/

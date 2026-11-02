@@ -97,6 +97,16 @@ func (r Request) FullSystem() string {
 // their provider's value to this.
 const StopToolUse = "tool_use"
 
+// hitTokenLimit reports a turn cut off by the output-token cap, under each
+// provider's name for it.
+func hitTokenLimit(stopReason string) bool {
+	switch stopReason {
+	case "max_tokens", "length", "max_output_tokens":
+		return true
+	}
+	return false
+}
+
 // LLM is the provider seam. Stream runs one model call, invoking onDelta for
 // each text fragment as it arrives, and returns the accumulated turn.
 type LLM interface {

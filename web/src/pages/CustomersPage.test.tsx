@@ -53,3 +53,19 @@ describe('CustomersPage list load', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('CustomersPage create form', () => {
+  it('keeps Create disabled until the name has more than spaces', async () => {
+    vi.mocked(listCustomers).mockResolvedValue([])
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'New customer' }))
+    const name = screen.getByPlaceholderText('Customer name (e.g. Acme Corp)')
+    const create = () => screen.getByRole('button', { name: 'Create' })
+    await waitFor(() => expect(create()).toHaveAttribute('aria-disabled', 'true'))
+    fireEvent.change(name, { target: { value: '   ' } })
+    await waitFor(() => expect(create()).toHaveAttribute('aria-disabled', 'true'))
+    fireEvent.change(name, { target: { value: 'Acme Corp' } })
+    await waitFor(() => expect(create()).not.toHaveAttribute('aria-disabled'))
+    expect(create()).toBeEnabled()
+  })
+})

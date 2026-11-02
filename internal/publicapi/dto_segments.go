@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/segmentedit"
 	"openloc/internal/stepround"
 )
 
@@ -19,8 +20,12 @@ func version(t pgtype.Timestamptz) string {
 // Segment is one source segment with its translation in the job's language.
 // The id is the translation id, which every segment route takes.
 type Segment struct {
-	ID             int64   `json:"id"`
-	Position       int32   `json:"position"`
+	ID       int64 `json:"id"`
+	Position int32 `json:"position"`
+	// SubPosition orders the pieces of a split at one position (0 for the
+	// first); Number is the segment number the editor shows ("3", "3.1").
+	SubPosition    int32   `json:"sub_position"`
+	Number         string  `json:"number"`
 	SourceText     string  `json:"source_text"`
 	TargetText     *string `json:"target_text"`
 	Status         string  `json:"status"`
@@ -52,6 +57,12 @@ func stepOutcomeDTO(e stepround.Entry) *StepOutcome {
 	}
 }
 
+// SegmentEditResult lists the segments that now stand where the split or
+// joined ones were, in document order.
+type SegmentEditResult struct {
+	SegmentIDs []int64 `json:"segment_ids"`
+}
+
 func segmentDTO(r db.ListJobSegmentsPageRow) Segment {
 	var origin *string
 	if r.Origin.Valid {
@@ -61,6 +72,8 @@ func segmentDTO(r db.ListJobSegmentsPageRow) Segment {
 	return Segment{
 		ID:             r.TranslationID,
 		Position:       r.Position,
+		SubPosition:    r.SubPosition,
+		Number:         segmentedit.Number(r.Position, r.SubPosition),
 		SourceText:     r.SourceText,
 		TargetText:     r.TargetText,
 		Status:         string(r.Status),

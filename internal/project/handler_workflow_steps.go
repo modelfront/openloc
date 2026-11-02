@@ -20,30 +20,40 @@ import (
 // job_step_assignments survive; a changed assignee is pushed onto in-flight
 // jobs). PUT /api/projects/{projectID}/workflow-steps — manager surface.
 func (h *Handler) HandleSetWorkflowSteps(w http.ResponseWriter, r *http.Request) {
+	id, steps, ok := decodeWorkflowSteps(w, r)
+	if !ok {
+		return
+	}
+	tenantID := auth.TenantIDFromContext(r.Context())
+	project, _, err := h.replaceWorkflowSteps(r.Context(), tenantID, id, steps)
+	if err != nil {
+		WriteServiceError(w, err, "update", "workflow steps")
+		return
+	}
+	after, err := settings.ListStepsWithDeadlines(r.Context(), h.queries, tenantID, project.SettingsProfileID)
+	if err != nil {
+		httputil.ServerError(w, "list", "workflow steps")
+		return
+	}
+	httputil.Data(w, after)
+}
+
+// decodeWorkflowSteps reads the project id and the {"steps": [...]} body the
+// step write and its preview share; on a bad request it has answered 400.
+func decodeWorkflowSteps(w http.ResponseWriter, r *http.Request) (int64, []settings.StepInput, bool) {
 	id, err := httputil.ParseID(r, "projectID")
 	if err != nil {
 		httputil.BadRequest(w, "invalid project ID")
-		return
+		return 0, nil, false
 	}
 	var req struct {
 		Steps []settings.StepInput `json:"steps"`
 	}
 	if err := httputil.Decode(r, &req); err != nil {
 		httputil.BadRequest(w, "invalid request body")
-		return
+		return 0, nil, false
 	}
-	tenantID := auth.TenantIDFromContext(r.Context())
-	project, _, err := h.replaceWorkflowSteps(r.Context(), tenantID, id, req.Steps)
-	if err != nil {
-		WriteServiceError(w, err, "update", "workflow steps")
-		return
-	}
-	after, err := settings.ListStepsWithDeadlines(r.Context(), h.queries, project.SettingsProfileID)
-	if err != nil {
-		httputil.ServerError(w, "list", "workflow steps")
-		return
-	}
-	httputil.Data(w, after)
+	return id, req.Steps, true
 }
 
 // ReplaceStepsWithAudit replaces a project's workflow steps and records the

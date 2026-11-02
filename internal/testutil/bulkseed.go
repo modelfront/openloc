@@ -24,7 +24,7 @@ func SeedSegmentsBulk(t testing.TB, pool *pgxpool.Pool, fileID int64, lang strin
 		INSERT INTO translations (segment_id, target_language, status, active_text)
 		SELECT s.id, $2, 'needs_review', $5 FROM segments s
 		WHERE s.file_id = $1 AND s.position > $3 AND s.position <= $3 + $4
-		ORDER BY s.position
+		ORDER BY s.position, s.sub_position
 		RETURNING id`, fileID, lang, from, n, text)
 	if err != nil {
 		t.Fatalf("SeedSegmentsBulk translations: %v", err)

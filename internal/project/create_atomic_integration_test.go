@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"openloc/internal/project"
+	"openloc/internal/settings"
 	"openloc/internal/testutil"
 )
 
@@ -31,9 +32,11 @@ func TestIntegrationProjectCreate_RefusedSetupLeavesNothing(t *testing.T) {
 		t.Helper()
 		return testutil.DoRequestWithRole(t, router, http.MethodPost, "/api/projects", body, pm.ID, tenant.ID, "project_manager").Code
 	}
+	wf := testutil.LibraryWorkflow(t, q, tenant.ID)
 	body := func(name string, tmID, termBaseID int64) map[string]any {
 		return map[string]any{
 			"name": name, "source_language": "en", "target_languages": []string{"fr"},
+			"workflow_id":    wf,
 			"tm_assignments": []map[string]any{{"tm_id": tmID, "mode": "read", "priority": 1}},
 			"term_assignments": []map[string]any{{
 				"term_base_id": termBaseID, "source_language": "en", "target_language": "fr", "mode": "read", "priority": 1,
@@ -88,6 +91,9 @@ func TestIntegrationProjectCreateWithTemplate_FailedApplyLeavesNothing(t *testin
 	tenant := testutil.SeedTenant(t, q, "TemplateAtomicCorp")
 	pm := testutil.SeedUserWithRole(t, q, tenant.ID, "pm@test.com", "pass", "project_manager")
 	tmpl := testutil.SeedTemplate(t, q, tenant.ID, "Template")
+	if _, err := settings.ApplyWorkflow(ctx, q, tenant.ID, testutil.LibraryWorkflow(t, q, tenant.ID), tmpl.SettingsProfileID); err != nil {
+		t.Fatalf("give the template a workflow: %v", err)
+	}
 	counts := func() (projects, profiles, events int64) {
 		t.Helper()
 		projects = testutil.CountRows(t, pool, `SELECT count(*) FROM projects WHERE tenant_id = $1`, tenant.ID)

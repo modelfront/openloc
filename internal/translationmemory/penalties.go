@@ -1,6 +1,8 @@
 package translationmemory
 
 import (
+	"math"
+
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/langcode"
 )
@@ -86,20 +88,68 @@ func (p Penalties) WithTMs(rows []db.LookupSettingsTMsRow) Penalties {
 	return p
 }
 
+// PenaltyKind names why a match was docked.
+type PenaltyKind string
+
+const (
+	// PenaltySourceVariant: the entry's source language is a region or script
+	// variant of the project's.
+	PenaltySourceVariant PenaltyKind = "source_variant"
+	// PenaltyTargetVariant: the same, on the target side.
+	PenaltyTargetVariant PenaltyKind = "target_variant"
+	// PenaltyNearExact: the source texts differ only in punctuation, case or
+	// whitespace.
+	PenaltyNearExact PenaltyKind = "near_exact"
+	// PenaltyTM: the flat penalty set on the entry's TM.
+	PenaltyTM PenaltyKind = "tm"
+)
+
+// Penalty is one deduction a match attracted, as the Resources panel explains
+// it. Percent is the stored whole-number setting.
+type Penalty struct {
+	Kind    PenaltyKind `json:"kind"`
+	Percent int         `json:"percent"`
+	// TMLanguage and ProjectLanguage are set on the variant kinds only.
+	TMLanguage      string `json:"tm_language,omitempty"`
+	ProjectLanguage string `json:"project_language,omitempty"`
+
+	amount float64
+}
+
+// Breakdown lists the penalties this hit attracts, in a fixed order. A
+// penalty set to 0 is not listed. The amounts sum to Deduction.
+func (p Penalties) Breakdown(in MatchInfo) []Penalty {
+	var out []Penalty
+	p.each(in, func(x Penalty) { out = append(out, x) })
+	return out
+}
+
 // Deduction totals the penalties this hit attracts. Zero means the hit is
 // unimpeachable: full score, and the pipeline may auto-confirm it.
 func (p Penalties) Deduction(in MatchInfo) float64 {
 	var d float64
+	p.each(in, func(x Penalty) { d += x.amount })
+	return d
+}
+
+// each walks the penalties Breakdown and Deduction both read, so the panel's
+// explanation and the score cannot drift apart.
+func (p Penalties) each(in MatchInfo, f func(Penalty)) {
+	charge := func(kind PenaltyKind, amount float64, got, want string) {
+		if amount > 0 {
+			f(Penalty{Kind: kind, Percent: int(math.Round(amount * 100)), TMLanguage: got, ProjectLanguage: want, amount: amount})
+		}
+	}
 	if isSublanguageVariant(in.WantSrc, in.GotSrc) {
-		d += p.Sublanguage
+		charge(PenaltySourceVariant, p.Sublanguage, in.GotSrc, in.WantSrc)
 	}
 	if isSublanguageVariant(in.WantTgt, in.GotTgt) {
-		d += p.Sublanguage
+		charge(PenaltyTargetVariant, p.Sublanguage, in.GotTgt, in.WantTgt)
 	}
 	if in.NearExact {
-		d += p.NearExact
+		charge(PenaltyNearExact, p.NearExact, "", "")
 	}
-	return d + p.PerTM[in.TMID]
+	charge(PenaltyTM, p.PerTM[in.TMID], "", "")
 }
 
 // Apply adjusts a raw similarity score.

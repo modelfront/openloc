@@ -11,7 +11,7 @@ import (
 
 // An organization being closed (its data is deleted in the background) leaves
 // the support team's queue at once: its issues are not listed, cannot be
-// opened or acted on, and the org drops out of the organization filter, so
+// opened or acted on, and the org and its people drop out of the reporter filter, so
 // nobody replies to, resolves or notifies an org that no longer exists.
 func TestIntegrationIssue_ClosingOrgLeavesTheSupportQueue(t *testing.T) {
 	f := newFixture(t)
@@ -70,8 +70,17 @@ func TestIntegrationIssue_ClosingOrgLeavesTheSupportQueue(t *testing.T) {
 	testutil.DecodeJSON(t, f.asOperator(t, http.MethodGet, "/api/platform/issues/orgs", nil), &orgs)
 	for _, o := range orgs.Data {
 		if o.ID == f.tenant.ID {
-			t.Errorf("the closing org is still in the organization filter")
+			t.Errorf("the closing org is still in the reporter filter")
 		}
+	}
+	var people struct{ Data []issues.IssueReporter }
+	testutil.DecodeJSON(t, f.asOperator(t, http.MethodGet, "/api/platform/issues/reporters", nil), &people)
+	listed := map[int64]bool{}
+	for _, p := range people.Data {
+		listed[p.ID] = true
+	}
+	if listed[f.reporter.ID] || !listed[f.outsider.ID] {
+		t.Errorf("reporters %+v: want the other org's, not the closing org's", people.Data)
 	}
 	for name, rec := range map[string]int{
 		"open":    f.asOperator(t, http.MethodGet, platformPath(issue.ID, ""), nil).Code,

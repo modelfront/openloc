@@ -44,10 +44,12 @@ func TestIntegrationTemplateCustomerAndDomain(t *testing.T) {
 	customer := seedCustomer(t, q, tenant.ID, "Nordwind")
 	other := testutil.SeedTenant(t, q, "OtherCorp")
 	foreign := seedCustomer(t, q, other.ID, "Foreign")
+	standard := testutil.LibraryWorkflow(t, q, tenant.ID)
 
 	// Create with all three; free text is stored trimmed.
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
 		"name": "Travel", "project_name": " Summer campaign ", "customer_id": customer.ID, "domain": "  travel  ",
+		"workflow_id":     standard,
 		"source_language": "EN", "target_languages": []string{"de", "FR", "de"},
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
@@ -62,7 +64,7 @@ func TestIntegrationTemplateCustomerAndDomain(t *testing.T) {
 	}
 	// A target equal to the source is refused.
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Bad", "source_language": "en", "target_languages": []string{"en"},
+		"name": "Bad", "source_language": "en", "target_languages": []string{"en"}, "workflow_id": standard,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 	if created.Data.CustomerID == nil || *created.Data.CustomerID != customer.ID {
@@ -119,7 +121,7 @@ func TestIntegrationTemplateCustomerAndDomain(t *testing.T) {
 		t.Fatalf("cross-tenant customer leaked onto the template: %v", row.CustomerID)
 	}
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Leak", "customer_id": foreign.ID,
+		"name": "Leak", "customer_id": foreign.ID, "workflow_id": standard,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 
@@ -145,7 +147,7 @@ func TestIntegrationTemplateCustomerAndDomain(t *testing.T) {
 
 	// A template made without a project name starts with its own name as the
 	// project name.
-	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Bare"}, user.ID, tenant.ID)
+	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Bare", "workflow_id": standard}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var bare templateMeta
 	testutil.DecodeJSON(t, rec, &bare)

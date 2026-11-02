@@ -45,10 +45,13 @@ type CreateProjectIn struct {
 	SourceLanguage  string   `json:"source_language" jsonschema:"source language code, e.g. en or en-us"`
 	TargetLanguages []string `json:"target_languages" jsonschema:"one or more target language codes"`
 	TemplateID      int64    `json:"template_id,omitempty" jsonschema:"optional: a template whose settings (TM/MT/terminology/workflow/QA) are applied to the new project. Prefer this over manual configuration when the org has templates — list them via the app's Templates page or ask the user."`
-	WorkflowID      int64    `json:"workflow_id,omitempty" jsonschema:"optional: a library workflow whose steps are copied onto the new project (overrides the template's steps). List them via the app's Workflows page or ask the user."`
+	WorkflowID      int64    `json:"workflow_id,omitempty" jsonschema:"a library workflow whose steps are copied onto the new project (overrides the template's steps), from openloc_list_workflows. Required unless template_id brings a workflow: a project gets no default steps."`
 	CustomerID      int64    `json:"customer_id,omitempty" jsonschema:"optional customer: a value id of the Customer label, from openloc_list_labels"`
 	Deadline        string   `json:"deadline,omitempty" jsonschema:"optional ISO 8601 project deadline, e.g. 2026-09-01T17:00:00Z"`
 	Description     string   `json:"description,omitempty"`
+	// SegmentationProfileID, left out, takes the template's profile while it
+	// suits the source language, else the suggested one.
+	SegmentationProfileID int64 `json:"segmentation_profile_id,omitempty" jsonschema:"optional segmentation profile new uploads are split with, from openloc_list_segmentation_profiles with the source language; default the template's, else the suggested one for the language"`
 }
 
 type CreateProjectResult struct {

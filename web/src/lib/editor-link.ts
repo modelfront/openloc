@@ -6,9 +6,6 @@ export function editorPath(projectId: number, jobId: number): string {
   return `/projects/${projectId}/jobs/${jobId}/edit`
 }
 
-/** Spread onto a router `<Link>` to the editor. */
-export const EDITOR_LINK_TARGET = { target: '_blank', rel: 'noopener noreferrer' } as const
-
 /**
  * Open the editor in a new tab from a non-link click (a table row). Falls back
  * to `navigate` when the popup is blocked. No 'noopener' feature here: it makes

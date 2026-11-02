@@ -6,8 +6,8 @@
 // Last, the reporter deletes it; if an earlier test failed first, the
 // clean-up deletes it as the operator, with the duplicate report.
 
-import { test, expect, type Browser, type Locator, type Page } from "@playwright/test";
-import { authHeaders, login, pageAs, pickComboboxValue } from "./helpers";
+import type { Browser, Locator, Page } from "@playwright/test";
+import { apiAs, authHeaders, expect, login, pageAs, pickComboboxValue, test } from "./helpers";
 import { SEED_OPERATOR_EMAIL, SEED_OPERATOR_NAME, SEED_ORG_NAME, SEED_VENDOR_EMAIL } from "../seed-identity";
 
 // A 1×1 PNG, enough for the browser to show and the server to accept.
@@ -42,15 +42,15 @@ async function expectChipAtCellEnd(row: Locator) {
   expect(cell!.x + cell!.width - (chip!.x + chip!.width)).toBeLessThan(16);
 }
 
-test.afterAll(async ({ browser }) => {
+test.afterAll(async () => {
   const left = [issueId, copyId].filter(Boolean);
   if (!left.length) return;
-  const page = await operatorPage(browser);
+  const ops = await apiAs(SEED_OPERATOR_EMAIL);
   for (const id of left) {
-    const res = await page.request.delete(`/api/platform/issues/${id}`, { headers: await authHeaders(page) });
+    const res = await ops.delete(`/api/platform/issues/${id}`);
     expect(res.ok(), `delete test issue ${id}: ${res.status()}`).toBe(true);
   }
-  await page.context().close();
+  await ops.dispose();
 });
 
 test("a manager reports a bug with files from the account menu", async ({ page }) => {
@@ -94,6 +94,7 @@ test("a manager reports a bug with files from the account menu", async ({ page }
 
 test("a manager sees every member's issues; a linguist only their own", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   const linguistIssue = "QA flags a number that is the same in both languages"; // seeded for the linguist
 
   await login(page);
@@ -104,9 +105,10 @@ test("a manager sees every member's issues; a linguist only their own", async ({
   const colleague = page.getByRole("row").filter({ hasText: linguistIssue });
   await expect(colleague.getByTestId("issue-reporter")).toContainText(SEED_VENDOR_EMAIL);
 
-  // Most recently updated first; the Updated heading flips it. The order is
-  // checked against the older seeded report, since other specs may file newer
-  // reports in the same org meanwhile.
+  // Newest report first. The Updated heading sorts newest update first, then
+  // oldest first, then goes back to the default. The order is checked against
+  // the older seeded report, since other specs may file newer reports in the
+  // same org meanwhile.
   const rows = page.locator('tbody tr[data-testid^="issue-row-"]');
   const ours = `issue-row-${issueId}`;
   const seeded = await colleague.getAttribute("data-testid");
@@ -114,13 +116,26 @@ test("a manager sees every member's issues; a linguist only their own", async ({
     const order = await rows.evaluateAll(els => els.map(e => e.getAttribute("data-testid")));
     return order.includes(ours) && order.includes(seeded) ? order.indexOf(ours) < order.indexOf(seeded) : undefined;
   };
+  const updated = page.getByRole("columnheader", { name: /Updated/ });
+  const listedBy = (sort: string | null) => page.waitForResponse(r => {
+    const url = new URL(r.url());
+    return url.pathname === "/api/issues" && url.searchParams.get("sort") === sort;
+  });
   await expect.poll(oursFirst).toBe(true);
-  const listed = page.waitForResponse(r => r.url().includes("/api/issues?") && r.url().includes("sort=updated"));
+  await expect(updated).not.toHaveAttribute("aria-sort");
+  for (const [sort, aria, first] of [["-updated", "descending", true], ["updated", "ascending", false]] as const) {
+    const listed = listedBy(sort);
+    await page.getByTestId("sort-updated").click();
+    await listed;
+    await expect(page).toHaveURL(new RegExp(`sort=${sort}`));
+    await expect(updated).toHaveAttribute("aria-sort", aria);
+    await expect.poll(oursFirst).toBe(first);
+  }
+  const listed = listedBy(null);
   await page.getByTestId("sort-updated").click();
   await listed;
-  await expect(page).toHaveURL(/sort=updated/);
-  await expect(page.getByRole("columnheader", { name: /Updated/ })).toHaveAttribute("aria-sort", "ascending");
-  await expect.poll(oursFirst).toBe(false);
+  await expect(page).not.toHaveURL(/sort=/);
+  await expect(updated).not.toHaveAttribute("aria-sort");
 
   const linguist = await pageAs(browser, SEED_VENDOR_EMAIL);
   await linguist.goto("/issues?status=");
@@ -129,7 +144,6 @@ test("a manager sees every member's issues; a linguist only their own", async ({
   await expect(linguist.getByTestId("issue-reporter")).toHaveCount(0);
   const res = await linguist.request.get(`/api/issues/${issueId}`, { headers: await authHeaders(linguist) });
   expect(res.status(), "a linguist opening a colleague's issue").toBe(404);
-  await linguist.context().close();
 });
 
 test("the operator finds it under Reported issues and reads the files", async ({ browser }) => {
@@ -146,21 +160,30 @@ test("the operator finds it under Reported issues and reads the files", async ({
   await expect(row.locator("td").last()).toBeInViewport();
   await row.getByText(title).hover();
   await expect(ops.locator('[data-slot="tooltip-content"]')).toHaveText(title);
+  await expect(row.getByTestId("issue-number")).toHaveText(`${issueId}`);
   await row.click();
 
   await expect(ops.getByTestId("issue-description")).toHaveText("I click Export and nothing downloads.");
   // The image shows inside the description, where the reporter placed it.
   await expect(ops.getByTestId("issue-description").getByTestId("issue-image")).toBeVisible();
   await expect(ops.getByTestId("issue-image")).toHaveCount(1);
+  // The image opens full size over the issue page, and closing it shows the page again.
+  const issueUrl = ops.url();
+  await ops.getByTestId("issue-image").click();
+  const viewer = ops.getByTestId("issue-image-viewer");
+  await expect(viewer.getByRole("img")).toBeVisible();
+  expect(ops.url()).toBe(issueUrl);
+  await viewer.getByRole("button", { name: "Close" }).click();
+  await expect(viewer).toHaveCount(0);
+  await expect(ops.getByTestId("issue-description")).toBeVisible();
   const download = ops.waitForEvent("download");
   await ops.getByTestId("issue-file").click();
   expect((await download).suggestedFilename()).toBe("console.log");
-  await ops.context().close();
 });
 
 test("the operator filters by organization, kind, severity and area", async ({ browser }) => {
-  // Six full page loads (sign-in and five filtered lists), about 3s each on a
-  // CI node with two workers: the default budget ends at the last click.
+  // Five full page loads (the filtered lists), about 3s each on a CI node
+  // with two workers: the default budget ends at the last click.
   test.slow();
   requireIssue();
   const ops = await operatorPage(browser);
@@ -190,13 +213,49 @@ test("the operator filters by organization, kind, severity and area", async ({ b
     await expect(rendered).toBeVisible();
     if (shown) await expect(row).toBeVisible();
     else await expect(row).toHaveCount(0);
+    // No issue belongs to an org id this far past the real ones.
+    if (query.startsWith("org=") && !shown) await expect(ops.getByTestId("issues-count")).toHaveText("0 issues");
   }
 
   // Clear filters goes back to the default list, which holds the open report.
   await ops.getByTestId("issues-clear-filters").click();
   await expect(ops).toHaveURL(/\/platform\/issues$/);
   await expect(row).toBeVisible();
-  await ops.context().close();
+  await expect(ops.getByTestId("issues-count")).toHaveText(/^[1-9][\d,]* issues?$/);
+});
+
+test("the operator sorts by status, then newest update", async ({ browser }) => {
+  requireIssue();
+  const ops = await operatorPage(browser);
+  const listedBy = (sort: string) => ops.waitForResponse(r => {
+    const url = new URL(r.url());
+    return url.pathname === "/api/platform/issues" && url.searchParams.get("sort") === sort;
+  });
+  await ops.goto("/platform/issues?status=");
+  await expect(ops.getByTestId(`issue-row-${issueId}`)).toBeVisible();
+
+  let listed = listedBy("status");
+  await ops.getByTestId("sort-status").click();
+  await listed;
+  listed = listedBy("status,-updated");
+  await ops.getByTestId("sort-updated").click({ modifiers: ["Shift"] });
+  const res = await listed;
+  await expect(ops).toHaveURL(/sort=status%2C-updated/);
+  await expect(ops.getByTestId("sort-rank-status")).toContainText("1");
+  await expect(ops.getByTestId("sort-rank-updated")).toContainText("2");
+  await expect(ops.getByRole("columnheader", { name: /Status/ })).toHaveAttribute("aria-sort", "ascending");
+
+  // The rows run in workflow order, newest update first within a status, as the server sent them.
+  const statuses = ["needs_info", "open", "in_progress", "resolved", "wont_fix", "duplicate"];
+  const data: { id: number; status: string; updated_at: string }[] = (await res.json()).data;
+  for (let i = 1; i < data.length; i++) {
+    const [a, b] = [data[i - 1], data[i]];
+    const byStatus = statuses.indexOf(a.status) - statuses.indexOf(b.status);
+    expect(byStatus < 0 || (byStatus === 0 && Date.parse(a.updated_at) >= Date.parse(b.updated_at)), `${a.id} before ${b.id}`).toBe(true);
+  }
+  const rows = ops.locator('tbody tr[data-testid^="issue-row-"]');
+  await expect.poll(() => rows.evaluateAll(els => els.map(e => e.getAttribute("data-testid"))))
+    .toEqual(data.map(d => `issue-row-${d.id}`));
 });
 
 test("the operator corrects the severity and the area", async ({ browser }) => {
@@ -213,11 +272,11 @@ test("the operator corrects the severity and the area", async ({ browser }) => {
   expect((await moved).status()).toBe(200);
   await expect(summary.getByTestId("issue-area")).toHaveText("Translation memory");
   await expect(summary.getByTestId("issue-severity")).toHaveText("Blocker");
-  await ops.context().close();
 });
 
 test("the operator assigns, prioritizes, tags and writes a note; the reporter sees only the assignee", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   const ops = await operatorPage(browser);
   const team = await ops.request.get("/api/platform/issues/assignees", { headers: await authHeaders(ops) });
   const me = ((await team.json()).data as { id: number; email: string }[]).find(p => p.email === SEED_OPERATOR_EMAIL);
@@ -248,7 +307,6 @@ test("the operator assigns, prioritizes, tags and writes a note; the reporter se
   await ops.getByTestId("issue-comment-send").click();
   expect((await noted).status()).toBe(201);
   await expect(ops.locator('[data-testid="issue-comment"][data-internal="true"]').last()).toContainText("Internal: the exporter drops tables.");
-  await ops.context().close();
 
   await login(page);
   const loaded = page.waitForResponse(r => r.url().endsWith(`/api/issues/${issueId}`) && r.request().method() === "GET");
@@ -265,6 +323,7 @@ test("the operator assigns, prioritizes, tags and writes a note; the reporter se
 
 test("the operator asks a question and the reporter sees it", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   const ops = await operatorPage(browser);
   await ops.goto(`/platform/issues/${issueId}`);
   await pickComboboxValue(ops, "issue-status-select", "needs_info");
@@ -272,7 +331,6 @@ test("the operator asks a question and the reporter sees it", async ({ page, bro
   const updated = ops.waitForResponse(r => r.url().endsWith(`/api/platform/issues/${issueId}/status`));
   await ops.getByTestId("issue-status-save").click();
   expect((await updated).status()).toBe(200);
-  await ops.context().close();
 
   await login(page);
   await page.goto(`/issues/${issueId}`);
@@ -284,6 +342,7 @@ test("the operator asks a question and the reporter sees it", async ({ page, bro
 
 test("the reporter's answer puts the issue back in the operator's queue as Open", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   await login(page);
   await page.goto(`/issues/${issueId}`);
   await page.getByTestId("issue-comment-input").fill("A DOCX file.");
@@ -299,7 +358,6 @@ test("the reporter's answer puts the issue back in the operator's queue as Open"
   const row = ops.getByTestId(`issue-row-${issueId}`);
   await expect(row.getByTestId("issue-status")).toHaveText("Open");
   await expect(row.getByTestId("issue-waiting-on")).toHaveText("Support team");
-  await ops.context().close();
 });
 
 // One scroll area: the form scrolls between the pinned header and footer, so
@@ -318,14 +376,12 @@ test("a long description keeps Send report on screen", async ({ browser }) => {
   const scrolls = (el: Element) => el.scrollHeight > el.clientHeight;
   expect(await description.evaluate(scrolls), "description box has no scrollbar of its own").toBe(false);
   expect(await page.locator("#report-issue-form").evaluate(scrolls), "the form scrolls instead").toBe(true);
-  await page.context().close();
 });
 
-test("the operator marks another report as a duplicate, and its reporter follows the link", async ({ page, browser }) => {
+test("the operator marks another report as a duplicate, and its reporter follows the link", async ({ page, browser, request }) => {
   requireIssue();
-  await login(page);
-  const made = await page.request.post("/api/issues", {
-    headers: await authHeaders(page),
+  test.slow();
+  const made = await request.post("/api/issues", {
     multipart: { kind: "bug", severity: "minor", area: "editor", title: `Same export problem ${Date.now()}`, description: "Found it again." },
   });
   expect(made.status()).toBe(201);
@@ -349,7 +405,6 @@ test("the operator marks another report as a duplicate, and its reporter follows
   const res = await marked;
   expect(res.status()).toBe(200);
   expect(res.request().postDataJSON()).toMatchObject({ status: "duplicate", duplicate_of: issueId });
-  await ops.context().close();
 
   await page.goto(`/issues/${copyId}`);
   await expect(page.getByTestId("issue-summary").getByTestId("issue-status")).toHaveText("Duplicate");
@@ -362,10 +417,10 @@ test("the operator marks another report as a duplicate, and its reporter follows
   await expect(ops2).toHaveURL(new RegExp(`/platform/issues/${copyId}$`));
   await expect(ops2.getByTestId("issue-duplicate-link")).toHaveAttribute("href", `/platform/issues/${issueId}`);
   await expect(ops2.getByTestId("issue-duplicate-link")).toContainText(title.slice(0, 30));
-  await ops2.context().close();
 });
 
 test("the reporter changes the kind of their report, and the change shows in the conversation", async ({ page, browser }) => {
+  test.slow();
   expect(copyId, "the duplicate test ran first").toBeGreaterThan(0);
   await login(page);
   await page.goto(`/issues/${copyId}`);
@@ -392,7 +447,6 @@ test("the reporter changes the kind of their report, and the change shows in the
   const severityEntry = entries.filter({ hasText: "cleared the severity" });
   await expect(severityEntry).toHaveCount(1);
   await expect(severityEntry.getByTestId("issue-comment-internal")).toBeVisible();
-  await ops.context().close();
 });
 
 test("the reporter finds the issue by searching its description", async ({ page }) => {
@@ -418,12 +472,12 @@ test("the reporter finds the issue by searching its description", async ({ page 
 
 test("the reporter confirms the fix of the resolved issue", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   const ops = await operatorPage(browser);
   const resolved = await ops.request.post(`/api/platform/issues/${issueId}/status`, {
     headers: await authHeaders(ops), data: { status: "resolved", note: "Fixed in the exporter." },
   });
   expect(resolved.status()).toBe(200);
-  await ops.context().close();
 
   await login(page);
   await page.goto(`/issues/${issueId}`);
@@ -438,6 +492,7 @@ test("the reporter confirms the fix of the resolved issue", async ({ page, brows
 
 test("the reporter deletes the issue from the list, and the operator no longer sees it", async ({ page, browser }) => {
   requireIssue();
+  test.slow();
   await login(page);
   // The issue is resolved by now, so the list shows every status.
   await page.goto("/issues?status=");
@@ -453,6 +508,5 @@ test("the reporter deletes the issue from the list, and the operator no longer s
   const ops = await operatorPage(browser);
   const res = await ops.request.get(`/api/platform/issues/${issueId}`, { headers: await authHeaders(ops) });
   expect(res.status()).toBe(404);
-  await ops.context().close();
   issueId = 0;
 });

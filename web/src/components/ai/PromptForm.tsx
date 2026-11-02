@@ -333,7 +333,7 @@ export function PromptForm({
 
       {typeChosen && <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
         {readOnly && onDuplicate && (
-          <Button type="button" onClick={onDuplicate} data-testid="ai-prompt-duplicate-form"><Copy /> Duplicate</Button>
+          <Button type="button" variant="outline" onClick={onDuplicate} startIcon={<Copy />} data-testid="ai-prompt-duplicate-form">Duplicate</Button>
         )}
         <Button type="button" variant="outline" onClick={onCancel}>{readOnly ? 'Back' : 'Cancel'}</Button>
         {!readOnly && (

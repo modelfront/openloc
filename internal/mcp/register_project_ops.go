@@ -16,13 +16,15 @@ const (
 	toolPretranslateProject      = "openloc_pretranslate_project"
 	toolClearProjectTranslations = "openloc_clear_project_translations"
 
-	toolGetFile            = "openloc_get_file"
-	toolRenameFile         = "openloc_rename_file"
-	toolAttachUploadedFile = "openloc_attach_uploaded_file"
-	toolUploadTextFile     = "openloc_upload_text_file"
-	toolReimportXLIFF      = "openloc_reimport_xliff"
-	toolExportFile         = "openloc_export_file"
-	toolDownloadSource     = "openloc_download_source"
+	toolGetFile             = "openloc_get_file"
+	toolRenameFile          = "openloc_rename_file"
+	toolAttachUploadedFile  = "openloc_attach_uploaded_file"
+	toolAttachUploadedFiles = "openloc_attach_uploaded_files"
+	toolUploadTextFile      = "openloc_upload_text_file"
+	toolReimportXLIFF       = "openloc_reimport_xliff"
+	toolExportFile          = "openloc_export_file"
+	toolReadUploadedFile    = "openloc_read_uploaded_file"
+	toolDownloadSource      = "openloc_download_source"
 
 	toolListLabels       = "openloc_list_labels"
 	toolCreateLabel      = "openloc_create_label"
@@ -139,7 +141,8 @@ func registerProjectOpsProjects(s *Server, srv *sdk.Server, managerTier bool, b 
 		name:  toolPublishProject,
 		title: "Publish draft project",
 		description: "Publish a draft project: it needs a name, a source and at least one target " +
-			"language. Its files get their jobs and pre-translation starts per the project settings. " +
+			"language, and a workflow (openloc_apply_workflow). Its files get their jobs and " +
+			"pre-translation starts per the project settings. " +
 			"Only drafts can be published.",
 		requireManager: true,
 		requireWrite:   true,
@@ -163,7 +166,7 @@ func registerProjectOpsProjects(s *Server, srv *sdk.Server, managerTier bool, b 
 		description: "Empty the translations of every file and language of a project (scope " +
 			"non_confirmed or all), with their QA findings and AI comments. Segments another user has " +
 			"open are kept and counted in held. Refused while a job is " +
-			"running or past its first workflow step. Two calls: the first returns a preview with the " +
+			"running or past its first human or hybrid workflow step. Two calls: the first returns a preview with the " +
 			"exact count, the second (with confirm_token, after the user approves) clears.",
 		requireManager: true,
 		destructive:    true,
@@ -199,6 +202,21 @@ func registerProjectOpsFiles(s *Server, srv *sdk.Server, managerTier bool, b Bac
 		requireWrite:   true,
 		openWorld:      true,
 	}, b.AttachUploadedFile)
+
+	addTool(s, srv, managerTier, toolSpec{
+		name:  toolAttachUploadedFiles,
+		title: "Add attached documents to project",
+		description: "Add several documents the user attached in the assistant (up to 10) to one project " +
+			"in a single call; use it instead of repeating openloc_attach_uploaded_file when the message " +
+			"carries more than one attachment note. Each file is added as openloc_attach_uploaded_file " +
+			"adds one, on its own: the answer has one row per upload_id, with the new file or the reason " +
+			"it was not added, so tell the user which files failed. A row with not_started had no time " +
+			"left in this call and nothing was added for it: ask the user to send those files again in a " +
+			"new message. The call is an error only when no file was added.",
+		requireManager: true,
+		requireWrite:   true,
+		openWorld:      true,
+	}, b.AttachUploadedFiles)
 
 	addTool(s, srv, managerTier, toolSpec{
 		name:  toolUploadTextFile,
@@ -241,6 +259,18 @@ func registerProjectOpsFiles(s *Server, srv *sdk.Server, managerTier bool, b Bac
 			"for a text format (.txt, .html, .md, .json, .xliff, .po, .strings, .xml, or format " +
 			"xliff) of at most 1 MB; otherwise content_error says why and the link still works.",
 	}, b.ExportFile)
+
+	addTool(s, srv, managerTier, toolSpec{
+		name:  toolReadUploadedFile,
+		title: "Read attached file",
+		description: "Read the text of a file the user attached in the assistant, for example to write " +
+			"an AI prompt, a summary or terms from a style guide. It reads every format a project " +
+			"accepts (.txt, .md, .html, .json, .xliff, .po, .xml, .docx, .pdf, .pptx, .xlsx) and " +
+			"returns the plain text, one piece per line, without the markup; a translation the " +
+			"file carries (XLIFF, PO) follows its source after a tab, and a workbook gives every " +
+			"column of every sheet. Text over 1 MB is refused; ask the user for the part that matters. Only files attached in OpenLoc's own " +
+			"assistant have an upload_id.",
+	}, b.ReadUploadedFile)
 
 	addTool(s, srv, managerTier, toolSpec{
 		name:  toolDownloadSource,

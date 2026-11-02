@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<srx xmlns="http://www.lisa.org/srx20" version="2.0">
+  <header segmentsubflows="yes" cascade="no">
+    <formathandle type="start" include="no"/>
+    <formathandle type="end" include="yes"/>
+    <formathandle type="isolated" include="no"/>
+  </header>
+  <body>
+    <languagerules>
+      <languagerule languagerulename="English">
+        <rule break="no">
+          <beforebreak>\bMr\.</beforebreak>
+          <afterbreak>\s</afterbreak>
+        </rule>
+        <rule break="no">
+          <beforebreak>(?&lt;=\s)Dr\.</beforebreak>
+          <afterbreak>\s</afterbreak>
+        </rule>
+      </languagerule>
+      <languagerule languagerulename="French">
+        <rule break="no">
+          <beforebreak>\bM\.</beforebreak>
+          <afterbreak>\s</afterbreak>
+        </rule>
+      </languagerule>
+      <languagerule languagerulename="Default">
+        <rule>
+          <beforebreak>[\.\?!]+</beforebreak>
+          <afterbreak>\s+A</afterbreak>
+        </rule>
+        <rule break="yes">
+          <beforebreak>\n</beforebreak>
+          <afterbreak></afterbreak>
+        </rule>
+      </languagerule>
+    </languagerules>
+    <maprules>
+      <languagemap languagepattern="EN.*" languagerulename="English"/>
+      <languagemap languagepattern="(?i)fr_CA" languagerulename="French"/>
+      <languagemap languagepattern=".*" languagerulename="Default"/>
+    </maprules>
+  </body>
+</srx>

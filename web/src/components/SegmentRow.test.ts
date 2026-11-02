@@ -129,13 +129,12 @@ interface MinimalProps {
   findHighlightTerm?: string | null
   tmDiffReference?: string | null
   qaIssues: { id: number; check_type?: string; severity?: string; message?: string; ignored?: boolean }[]
-  isAdmin?: boolean
   // Callbacks are deliberately absent from the comparator; the fixture carries
   // them so a test can prove that.
   onActivate?: () => void
   onNavigate?: () => void
   refTerms?: unknown
-  inFirstStep?: boolean
+  inClearWindow?: boolean
   isRepetition?: boolean
   isRepetitionSource?: boolean
   commentCount?: number
@@ -229,23 +228,14 @@ describe('segmentRowEqual (memo comparator)', () => {
     expect(segmentRowEqual(baseProps, withChanges({ qaIssues: [{ id: 1 }] }))).toBe(false)
   })
 
-  // When a user's admin status flips (e.g. role change
-  // mid-session) the lock toggle button must re-render to swap between the
-  // interactive button and the "🔒 Locked" indicator. Without isAdmin in
-  // the comparator the row would stay stale until some unrelated prop
-  // changed.
-  it('returns false when isAdmin changes (lock toggle visibility)', () => {
+  // When the task moves past the clear window the Clear button must go away
+  // at once; without inClearWindow in the comparator the row would stay stale
+  // until some unrelated prop changed.
+  it('returns false when inClearWindow changes (Clear visibility)', () => {
     expect(segmentRowEqual(
-      withChanges({ isAdmin: false }),
-      withChanges({ isAdmin: true }),
+      withChanges({ inClearWindow: false }),
+      withChanges({ inClearWindow: true }),
     )).toBe(false)
-  })
-
-  it('returns true when isAdmin matches on both sides', () => {
-    expect(segmentRowEqual(
-      withChanges({ isAdmin: true }),
-      withChanges({ isAdmin: true }),
-    )).toBe(true)
   })
 
   // The dot's appearance depends on the finding's content

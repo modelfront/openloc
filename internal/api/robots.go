@@ -1,6 +1,12 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"openloc/internal/docseo"
+	"openloc/internal/httputil"
+	"openloc/internal/logging"
+)
 
 // The documentation hosts (open) are public sites: search engines and AI
 // crawlers may index them. Every other host, the app's /docs included, asks
@@ -18,16 +24,41 @@ func blockCrawlers(open []string) func(http.Handler) http.Handler {
 	}
 }
 
-// robotsTxt allows every crawler on the open hosts and turns every crawler
-// away elsewhere, AI scrapers by name.
-func robotsTxt(open []string) http.HandlerFunc {
+// robotsTxt allows every crawler on the open hosts, pointing them at the
+// host's sitemap, and turns every crawler away elsewhere, AI scrapers by name.
+func robotsTxt(baseURL string, open []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		body := disallowAll
-		if onAnyHost(r, open) {
-			body = allowAll
+		for _, h := range open {
+			if onHost(r, h) {
+				body = allowAll
+				if origin := HostOrigin(baseURL, h); origin != "" {
+					body += "\nSitemap: " + origin + "/sitemap.xml\n"
+				}
+				break
+			}
 		}
 		w.Write([]byte(body))
+	}
+}
+
+// sitemapXML lists a documentation host's public pages; 404 on any other host.
+func sitemapXML(pages *docseo.Sites) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		site := pages.ForHost(RequestHost(r))
+		if site == nil {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := site.Sitemap()
+		if err != nil {
+			logging.Error(r.Context(), err, "sitemap failed to render", "docs-sitemap-failed")
+			httputil.ServerError(w, "render", "sitemap")
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.Write(body)
 	}
 }
 

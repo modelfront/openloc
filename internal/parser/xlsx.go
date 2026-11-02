@@ -38,6 +38,9 @@ type XLSX struct {
 	// of either mode above (see xlsx_layout.go); the export writes each
 	// translation back into its own cell, as in the cell mode.
 	Layout *XLSXLayout
+	// AllCells reads every text cell of every visible sheet even when row 1
+	// holds language codes, for a reader that wants the whole workbook.
+	AllCells bool
 }
 
 func (p XLSX) Parse(content []byte) (_ []Segment, err error) {
@@ -50,6 +53,9 @@ func (p XLSX) Parse(content []byte) (_ []Segment, err error) {
 
 	if p.Layout != nil {
 		return parseXLSXLayout(f, content, *p.Layout, p.PlainText)
+	}
+	if p.AllCells {
+		return parseXLSXCells(f, content, p.PlainText)
 	}
 	sheets := f.GetSheetList()
 	if len(sheets) == 0 {

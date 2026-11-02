@@ -100,18 +100,7 @@ async function shootRows(page: Page, rows: Locator, count: number, name: string)
   await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true, clip, animations: "disabled" });
 }
 
-// The editor's Resources panel opens at 200px, which squeezes the TM, terminology
-// and history panels the guides describe. The shots open it wider through the
-// width the panel persists for its own resize handle.
-const DOCS_SIDEBAR_WIDTH = 320;
-
 test.describe("documentation screenshots", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript((width) => {
-      localStorage.setItem("cat-sidebar-width", String(width));
-    }, DOCS_SIDEBAR_WIDTH);
-  });
-
   test("projects-list", async ({ page }) => {
     await page.goto("/projects");
     await expect(page.getByRole("heading", { name: /projects/i })).toBeVisible();
@@ -178,10 +167,11 @@ test.describe("documentation screenshots", () => {
       await page.request.delete(`/api/analyses/${analysisId}`, { headers });
     }
 
-    // Workflow steps live on their own panel: the picker for a library workflow plus its steps,
-    // read-only. Cropped to the panel. Waits for the steps rather than the
-    // picker — the picker renders before the settings query resolves, so a
-    // shot taken on it would picture an empty card.
+    // Workflow steps live on their own panel: the picker for a library
+    // workflow plus the steps with their deadlines. Cropped to the panel.
+    // Waits for the steps rather than the picker — the picker renders before
+    // the settings query resolves, so a shot taken on it would picture an
+    // empty card.
     await page.getByRole("link", { name: /^workflow$/i }).click();
     await expect(page.getByRole("link", { name: /^workflow$/i })).toHaveAttribute("aria-current", "page");
     await expect(page.getByTestId("workflow-step-badge-0")).toBeVisible();

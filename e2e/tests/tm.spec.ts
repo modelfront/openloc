@@ -88,11 +88,12 @@ test.describe("Translation memory", () => {
     const totalEntries = parseInt(unfilteredMatch![1].replace(/,/g, ""), 10);
     expect(totalEntries, "Default TM should have at least one entry").toBeGreaterThan(0);
 
-    // Click the ES target-language filter. Tabs show only the target language
-    // (source is shown once above the list). Hard-assert button exists.
-    const esFilter = page.getByRole("button", { name: /^ES$/i });
+    // Pick ES in the target-language choice. Options show only the target
+    // language (source is shown once above the list).
+    const esFilter = page.getByTestId("tm-pair-filter").getByRole("radio", { name: /^ES$/i });
     await expect(esFilter).toBeVisible({ timeout: 5000 });
     await esFilter.click();
+    await expect(esFilter).toHaveAttribute("aria-checked", "true");
 
     // After filtering, count must be strictly less than the original total
     // (since seed has multiple pairs).
@@ -101,6 +102,33 @@ test.describe("Translation memory", () => {
       const m = text.match(/of\s+([\d,]+)\s+entries/);
       return m ? parseInt(m[1].replace(/,/g, ""), 10) : Infinity;
     }, { timeout: 5000, message: "filter should reduce entry count" }).toBeLessThan(totalEntries);
+  });
+
+  test("TM browser language choice stays inside the row with many target languages", async ({ page }) => {
+    test.setTimeout(30_000);
+    const targets = ["de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "zh", "ko", "sv", "da", "fi", "nb", "cs", "sk", "hu", "ro", "bg",
+      "el", "tr", "uk", "he", "ar", "hi", "th", "vi", "id", "ms", "hr", "sr", "sl", "et", "lv", "lt", "ca", "eu", "gl", "is"];
+    const tuvs = targets.map(t => `<tuv xml:lang="${t}"><seg>Hello ${t}</seg></tuv>`).join("");
+    const tmxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header srclang="en" datatype="plaintext" segtype="sentence" adminlang="en" creationtool="ui-test" creationtoolversion="1"/>
+  <body><tu><tuv xml:lang="en"><seg>Hello</seg></tuv>${tuvs}</tu></body>
+</tmx>`;
+    const tmId = await createTMViaAPI(page, `Many targets ${Date.now()}`, { targets, onCreated: (id) => tmIds.push(id) });
+    await importTMXViaAPI(page, tmId, tmxContent, "many.tmx");
+    await page.goto(`/memories/${tmId}`);
+    const choice = page.getByTestId("tm-pair-filter");
+    const last = choice.getByRole("radio", { name: /^IS$/i });
+    await expect(last).toBeAttached({ timeout: 10_000 });
+
+    // The choice may not run past the filter row: past it, the page clips the
+    // last languages and nobody can reach them.
+    const row = await choice.locator("xpath=..").boundingBox();
+    const pill = await choice.boundingBox();
+    expect(pill!.x + pill!.width).toBeLessThanOrEqual(row!.x + row!.width + 1);
+
+    await last.click();
+    await expect(last).toHaveAttribute("aria-checked", "true");
   });
 
   test("TM browser search options: scope, exact match, regex, and the hit tint", async ({ page }) => {
@@ -619,6 +647,46 @@ test.describe("Translation memory", () => {
       "Alt+F8 must also insert the ept (single keystroke covers all)").toHaveCount(1);
     await expect(bar,
       "bar must hide after Alt+F8 inserts everything").not.toBeVisible({ timeout: 1500 });
+  });
+
+  // Tag chips add nothing to the plain text, so this edit changes only the
+  // rich text; Enter must still save it.
+  test("inserting only the missing tags and pressing Enter saves them", async ({ page }) => {
+    test.setTimeout(30_000);
+    const tmName = `Tag-only edit TM ${Date.now()}`;
+    const tmxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header srclang="en" datatype="plaintext" segtype="sentence" adminlang="en" creationtool="ui-test" creationtoolversion="1"/>
+  <body>
+    <tu><tuv xml:lang="en"><seg>Click <bpt id="1">&lt;b&gt;</bpt>here<ept id="1">&lt;/b&gt;</ept> now</seg></tuv><tuv xml:lang="es"><seg>Pulsa aquí ahora</seg></tuv></tu>
+  </body>
+</tmx>`;
+
+    const tmId = await createTM(page, tmName);
+    await importTMXViaAPI(page, tmId, tmxContent, "tag-only-edit.tmx");
+    await page.goto(`/memories/${tmId}`);
+    await expect(page.getByText(/Pulsa aquí ahora/).first()).toBeVisible({ timeout: 5000 });
+
+    const entries = await (await page.request.get(`/api/tms/${tmId}/entries`, { headers })).json();
+    const entryId = entries.data?.[0]?.id;
+    expect(entryId, "TM entry must exist after import").toBeTruthy();
+
+    await page.locator(`[data-testid="tm-cell-${entryId}-target"]`).click();
+    const editor = page.locator(`[data-testid="tm-cell-edit-${entryId}-target"] .ProseMirror`);
+    await expect(editor).toBeVisible({ timeout: 3000 });
+    await page.keyboard.press("Alt+F8");
+    await expect(editor.locator("span.xliff-tag"), "Alt+F8 inserts both missing tags").toHaveCount(2);
+
+    const saved = page.waitForResponse(r =>
+      r.url().includes(`/api/tms/${tmId}/entries/${entryId}`) && r.request().method() !== "GET");
+    await page.keyboard.press("Enter");
+    const res = await saved;
+    expect(res.ok(), "the tag-only edit is saved").toBe(true);
+
+    const after = await (await page.request.get(`/api/tms/${tmId}/entries`, { headers })).json();
+    const rich: string = after.data?.[0]?.target_rich_text ?? "";
+    expect(rich).toContain('<bpt id="1">');
+    expect(rich).toContain('<ept id="1">');
   });
 
   // Pins that re-editing a TM cell right after

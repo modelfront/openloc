@@ -6,6 +6,9 @@ import { queryKeys } from '../lib/query-keys'
 import { formatDate } from '../utils'
 import { useCRUDList } from '../hooks/use-crud-list'
 import { useCreatedByParam } from '../hooks/use-created-by-param'
+import { useDebouncedUrlParam } from '../hooks/useDebouncedUrlParam'
+import { useUrlParamSetters } from '../hooks/useUrlParamSetters'
+import { filterByNameAndCreator } from '../lib/name-filter'
 import { distinctCreators } from '../lib/creators'
 import { CreateTMDialog } from '../components/CreateTMDialog'
 import { TMProfilesList } from '../components/tm/TMProfilesList'
@@ -17,14 +20,14 @@ import { PageContainer } from '@/components/layout/PageContainer'
 import { SubNav } from '@/components/layout/SubNav'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { LoadFailed } from '@/components/layout/LoadFailed'
-import { CreatedByFilterChip } from '@/components/list'
+import { AssetFilterBar } from '@/components/list'
 import { CreatorLabel } from '@/components/user/CreatorLabel'
-import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { DotSeparator } from '@/components/ui/dot-separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { LanguagePair } from '@/components/ui/language-code'
-import { TM_LANGS_SHOWN } from '@/lib/tm-display'
+import { TM_LANGS_SHOWN, tmEntriesLabel } from '@/lib/tm-display'
 import { listCardClass, listCardHeaderClass, listCardTitleClass } from '@/components/list/list-row'
 
 // Two tabs, each with its own URL so a profile page can link back to the right
@@ -37,6 +40,8 @@ const TM_TABS = [
 
 export default function TMList() {
   const [createdBy, setCreatedBy] = useCreatedByParam()
+  const [search, setSearch] = useDebouncedUrlParam('q')
+  const { clearParams } = useUrlParamSetters()
   const { pathname } = useLocation()
   const tab: 'memories' | 'profiles' = pathname.startsWith(PROFILES_PATH) ? 'profiles' : 'memories'
   const [newProfileOpen, setNewProfileOpen] = useState(false)
@@ -58,12 +63,10 @@ export default function TMList() {
     entityName: 'TM',
   })
 
-  // Client-side creator filter — the list is fetched whole (a handful of rows
-  // per tenant), so there's no server-side filter to add.
-  const tms = useMemo(
-    () => createdBy == null ? allTms : allTms?.filter(tm => tm.created_by === createdBy),
-    [allTms, createdBy],
-  )
+  // Client-side name and creator filters — the list is fetched whole (a
+  // handful of rows per tenant), so there's no server-side filter to add.
+  const tms = useMemo(() => filterByNameAndCreator(allTms, search, createdBy), [allTms, search, createdBy])
+  const filtered = search !== '' || createdBy != null
 
   // Creator options come from the rows themselves, not the org member list —
   // see lib/creators.ts for why.
@@ -77,13 +80,13 @@ export default function TMList() {
         <PageHeader
           title="Translation memories"
           actions={tab === 'memories' ? (
-            <Button onClick={() => setShowForm(true)} data-guide="tms.new">
+            <CreateButton onClick={() => setShowForm(true)} data-guide="tms.new">
               New TM
-            </Button>
+            </CreateButton>
           ) : (
-            <Button onClick={() => setNewProfileOpen(true)} data-testid="new-tm-profile" data-guide="tm_profiles.new">
+            <CreateButton onClick={() => setNewProfileOpen(true)} data-testid="new-tm-profile" data-guide="tm_profiles.new">
               New TM profile
-            </Button>
+            </CreateButton>
           )}
         />
 
@@ -91,6 +94,8 @@ export default function TMList() {
 
         {tab === 'profiles' ? (
           <TMProfilesList
+            search={search}
+            onSearchChange={setSearch}
             canDelete={isAdminRole(me?.role)}
             createOpen={newProfileOpen}
             onCreateClose={() => setNewProfileOpen(false)}
@@ -104,21 +109,17 @@ export default function TMList() {
           onCreated={() => setShowForm(false)}
         />
 
-        {/* Creator filter. Shown when there's something to actually
-            distinguish (2+ known creators), or when a filter is already active
-            — otherwise a URL-set filter would have no way to be cleared from
-            the UI. */}
-        {(creators.length > 1 || createdBy != null) && (
-          <div className="flex items-center gap-2 mb-4" data-testid="tm-filter-bar">
-            <CreatedByFilterChip
-              value={createdBy}
-              myUserId={me?.id ?? null}
-              options={creators}
-              onChange={setCreatedBy}
-              testId="tm-filter-created-by"
-            />
-          </div>
-        )}
+        <AssetFilterBar
+          total={allTms?.length ?? 0}
+          search={search}
+          onSearchChange={setSearch}
+          placeholder="Search translation memories..."
+          searchTestId="tm-list-search"
+          createdBy={{ value: createdBy, onChange: setCreatedBy, myUserId: me?.id ?? null, options: creators, testId: 'tm-filter-created-by' }}
+          onClear={() => clearParams(['q', 'created_by'])}
+          clearTestId="tm-filter-clear"
+          testId="tm-filter-bar"
+        />
 
         {loadFailed && <LoadFailed what="translation memories" error={error} onRetry={refetch} />}
 
@@ -139,10 +140,7 @@ export default function TMList() {
                       here) so there's no extra space to the right of the
                       languages. */}
                   {(hasLangs || tm.customer_name || tm.entry_count != null) && (
-                    <div
-                      className="flex items-center text-xs text-gray-400 dark:text-gray-500 shrink-0"
-                      title={hasLangs ? `${tm.source_language} → ${tm.target_languages!.join(', ')}` : undefined}
-                    >
+                    <div className="flex items-center text-xs text-gray-400 dark:text-gray-500 shrink-0">
                       {hasLangs && (
                         <LanguagePair
                           source={tm.source_language!}
@@ -160,7 +158,7 @@ export default function TMList() {
                       {tm.entry_count != null && (
                         <>
                           {(hasLangs || tm.customer_name) && <DotSeparator />}
-                          <span>{tm.entry_count.toLocaleString()} {tm.entry_count === 1 ? 'entry' : 'entries'}</span>
+                          <span>{tmEntriesLabel(tm.entry_count)}</span>
                         </>
                       )}
                     </div>
@@ -189,7 +187,7 @@ export default function TMList() {
           })}
           {tms?.length === 0 && (
             <EmptyState
-              message={createdBy != null
+              message={filtered
                 ? 'No translation memories match the current filter.'
                 : 'No translation memories yet. Create one to get started.'}
             />

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -236,8 +237,9 @@ func (h *Handler) HandleRunQA(w http.ResponseWriter, r *http.Request) {
 			httputil.BadRequest(w, msg)
 			return
 		}
+		// An expected project state, not a malformed request.
 		if errors.Is(err, ErrNoQAProfile) {
-			httputil.BadRequest(w, ErrNoQAProfile.Error())
+			httputil.Error(w, http.StatusConflict, ErrNoQAProfile.Error())
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -296,9 +298,17 @@ func (h *Handler) HandleQAReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	profileAssigned, err := h.service.JobHasQAProfile(r.Context(), job, tenantID)
+	if err != nil {
+		logging.Error(r.Context(), err, "QA profile lookup failed", "qa.report_profile", logging.JobID(jobID))
+		httputil.ServerError(w, "get", "QA profile")
+		return
+	}
+
 	httputil.Data(w, ReportDTO{
-		Summary: summaryFromBuckets(counts),
-		Results: jobRowsToDTO(results),
+		Summary:         summaryFromBuckets(counts),
+		Results:         jobRowsToDTO(results),
+		ProfileAssigned: profileAssigned,
 	})
 }
 
@@ -392,8 +402,10 @@ func (h *Handler) setIgnored(w http.ResponseWriter, r *http.Request, ignored boo
 		httputil.BadRequest(w, "invalid translation ID")
 		return
 	}
-	checkType := chi.URLParam(r, "checkType")
-	if checkType == "" {
+	// chi matches on the escaped path, so a regex rule's "regex:<id>" arrives
+	// as "regex%3A<id>" from a client that escapes the segment.
+	checkType, err := url.PathUnescape(chi.URLParam(r, "checkType"))
+	if err != nil || checkType == "" {
 		httputil.BadRequest(w, "check_type is required")
 		return
 	}

@@ -10,7 +10,7 @@ import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { queryKeys } from '../lib/query-keys'
 import { invalidateJobContext, invalidateProjectStatus, invalidateTMContext } from '../lib/query-invalidation'
 import { isManagerRole } from '../lib/roles'
-import { isPipelineRunning } from '../lib/project-logic'
+import { isPipelineRunning, jobInClearWindow } from '../lib/project-logic'
 import { finalStepSentence } from '../lib/completion-copy'
 import { Button } from './ui/button'
 import {
@@ -62,6 +62,9 @@ interface Props {
   // omitted, we derive from `job.workflow_step`: first step ⇔ no workflow OR
   // the step has step_order 0.
   inFirstStep?: boolean
+  // Override for the Clear gate (`jobInClearWindow` from the job when unset):
+  // the CAT editor passes its current task's answer.
+  inClearWindow?: boolean
   // False while the current task cannot be edited (lib/current-task
   // `canEditTask`): the actions that write translations are hidden then.
   // Defaults true.
@@ -78,6 +81,8 @@ interface Props {
   hideComplete?: boolean
 }
 
+export const NOTHING_TO_CLEAR_REASON = 'Nothing to clear. Every segment is empty or locked.'
+
 // Pipeline action group: Stop, Apply TM, Apply MT, Re-run AI step, Clear,
 // Complete. Used by the CAT editor toolbar and the project page job rows.
 // Gating:
@@ -92,6 +97,10 @@ interface Props {
 //     is a QE+APE step (workflow_step.is_ai_step). The step
 //     normally auto-runs when the step starts; this button lets
 //     a manager re-run it (e.g. after fixing MT output or the engine key).
+//   - Clear: anyone who may edit the task (the server lets managers and the
+//     assigned linguist clear), up to the workflow's first human or hybrid step
+//     (automated steps before it don't count). With nothing to clear it
+//     stays in place, disabled, with `NOTHING_TO_CLEAR_REASON` on hover.
 //   - Apply TM / Apply MT, Re-run AI step and Clear write translations, so
 //     they are hidden while the task cannot be edited (`canEdit`) and while
 //     the job is failed — the CAT editor's task controls own Re-run then.
@@ -101,6 +110,7 @@ export function JobPipelineActions({
   job,
   projectId,
   inFirstStep,
+  inClearWindow,
   canEdit = true,
   size = 'sm',
   stopPropagationOnClick = false,
@@ -164,8 +174,9 @@ export function JobPipelineActions({
   // Manager re-run of the active QE+APE step. Backend re-checks the
   // engine + role and 400s if the step isn't a connected QE+APE step.
   const showRunAIStep = writable && isManager && job.workflow_step?.is_ai_step === true && !pipelineRunning
-  const hasClearable = counts.total > counts.untranslated
-  const showClear = writable && isManager && computedInFirstStep && hasClearable
+  const showClear = writable && (inClearWindow ?? jobInClearWindow(job))
+  // Same predicate as the clear itself: a row with text that is not locked.
+  const nothingToClear = counts.clearable_all === 0
   // Complete button shows whenever the job has an active workflow
   // step AND isn't already done. The backend HandleAdvanceStep + HandleComplete
   // re-check eligibility (assigned user / role / not-already-completed) and
@@ -208,6 +219,21 @@ export function JobPipelineActions({
     }
     action()
   }
+
+  // With nothing to clear the button stays in place, disabled, and its own
+  // tooltip says why.
+  const clearButton = (
+    <Button
+      onClick={wrap(() => setClearDialogOpen(true))}
+      disabled={disabled || nothingToClear}
+      disabledReason={nothingToClear ? NOTHING_TO_CLEAR_REASON : undefined}
+      variant="destructive"
+      size={size}
+      data-testid="clear-translations-btn"
+    >
+      Clear
+    </Button>
+  )
 
   return (
     <>
@@ -304,26 +330,14 @@ export function JobPipelineActions({
           </TooltipContent>
         </Tooltip>
       )}
-      {showClear && (
+      {showClear && (nothingToClear ? clearButton : (
         <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                onClick={wrap(() => setClearDialogOpen(true))}
-                disabled={disabled}
-                variant="destructive"
-                size={size}
-                data-testid="clear-translations-btn"
-              />
-            }
-          >
-            Clear
-          </TooltipTrigger>
+          <TooltipTrigger render={clearButton} />
           <TooltipContent>
-            Revert translations so Apply TM/MT can re-fire
+            Empty this job's translations
           </TooltipContent>
         </Tooltip>
-      )}
+      ))}
       {showComplete && (
         <Tooltip>
           <TooltipTrigger

@@ -289,14 +289,14 @@ export function richTextToTipTapContent(richText: string): TipTapNode {
         // <x ctype="lb"/> — produced by parsers when they see HTML <br>)
         // need to render as an actual visual line break in the editor,
         // not as an inline `{id}` chip on a single line. We emit a
-        // hardBreak node only. The WhitespaceMarkers extension adds the
+        // hardBreak node. The WhitespaceMarkers extension adds the
         // `¶` widget on hardBreaks when the toggle is on, so
         // the hidden-character indicator works the same as for a
-        // user-typed Shift+Enter. On save, `tipTapToRichText` serializes
-        // the hardBreak back to `<x ctype="lb" original_tag="br"/>` so
-        // the round-trip preserves <br>'s identity for export.
+        // user-typed Shift+Enter. The node keeps the tag's id and
+        // original_tag (XliffBreakAttrs) so `tipTapToRichText` writes the
+        // same tag back.
         if (tagName === 'x' && attrs.ctype === 'lb') {
-          content.push({ type: 'hardBreak' })
+          content.push({ type: 'hardBreak', attrs: { xliffId: attrs.id ?? null, originalTag: attrs.original_tag ?? null } })
           break
         }
 
@@ -358,15 +358,13 @@ export function tipTapToRichText(doc: TipTapNode): string {
 
   let result = ''
   let breakId = 1
-  // Count any xliffTag id="N" already in the doc so emitted hardBreak
-  // wrappers don't collide with existing tag ids.
+  // A typed hardBreak gets an id past every tag and loaded break in the doc.
   for (const paragraph of doc.content) {
     if (paragraph.type !== 'paragraph' || !paragraph.content) continue
     for (const node of paragraph.content) {
-      if (node.type === 'xliffTag') {
-        const id = parseInt(String(node.attrs?.tagId ?? '0'), 10)
-        if (id >= breakId) breakId = id + 1
-      }
+      const raw = node.type === 'xliffTag' ? node.attrs?.tagId : node.type === 'hardBreak' ? node.attrs?.xliffId : null
+      const id = parseInt(String(raw ?? '0'), 10)
+      if (id >= breakId) breakId = id + 1
     }
   }
 
@@ -381,10 +379,11 @@ export function tipTapToRichText(doc: TipTapNode): string {
         // Serialize hardBreak as XLIFF <x ctype="lb"/>
         // so the round-trip preserves the line break across save → reload,
         // and the export-side `XLIFFInlineToHTML` can convert it back to
-        // `<br>`. User-typed Shift+Enter and parser-imported <br> both
-        // round-trip via this single representation.
-        result += `<x id="${breakId}" ctype="lb" original_tag="br"/>`
-        breakId++
+        // its original element. A loaded break keeps its id and
+        // original_tag; a typed one is a new `<br>`.
+        const loadedId = node.attrs?.xliffId
+        const id = loadedId != null && loadedId !== '' ? String(loadedId) : String(breakId++)
+        result += `<x id="${id}" ctype="lb" original_tag="${node.attrs?.originalTag || 'br'}"/>`
       }
     }
   }

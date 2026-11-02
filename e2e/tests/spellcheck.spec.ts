@@ -90,29 +90,29 @@ async function stubLanguageTool(
 ) {
   const word = opts.word ?? TYPO;
   const fix = opts.fix ?? FIX;
-  // The stub needs each translation's text to compute an offset, so it reads the
-  // translation list the page already fetched.
+  // The stub needs each translation's text to compute an offset, and a result
+  // carries the checked target and its source, so it reads the rows the editor
+  // already fetched: GET /api/jobs/:id/editor/rows, one page of rows per
+  // request. The fixture file fits in the first page.
   const snapshot: FixtureRow[] = [];
-  let translations: FixtureRow[] = [];
+  const translations = new Map<number, FixtureRow & { source_text: string }>();
 
-  // The CAT editor loads translations from /api/jobs/:id/translations (see
-  // listJobTranslations) — NOT /api/files/:id/translations, which is a different
-  // endpoint. That is the route to read, or the stub finds nothing.
-  //
   // Intercepted rather than observed via page.on("response"): the handler must
   // populate `translations` BEFORE the spellcheck request fires, and an event
   // listener resolves asynchronously — it loses that race. Fulfilled from the
   // raw body string rather than by passing the fetched `response` object, which
   // is disposed once its body has been read ("Fetch response has been disposed").
-  await page.route("**/api/jobs/*/translations*", async route => {
+  await page.route(/\/api\/jobs\/\d+\/editor\/rows(\?|$)/, async route => {
     const response = await route.fetch();
     const body = await response.text();
     try {
       const parsed = JSON.parse(body);
-      if (parsed?.data) {
-        translations = parsed.data;
+      const rows: { segment: { source_text: string }; translation: FixtureRow | null }[] = parsed?.data ?? [];
+      for (const { segment, translation } of rows) {
+        if (!translation) continue;
+        translations.set(translation.id, { ...translation, source_text: segment.source_text });
         // First read wins: the pre-correction state, used to restore the fixture.
-        if (snapshot.length === 0) snapshot.push(...parsed.data);
+        if (!snapshot.some(r => r.id === translation.id)) snapshot.push(translation);
       }
     } catch {
       // Not JSON — pass it through untouched.
@@ -137,11 +137,14 @@ async function stubLanguageTool(
     const requested: number[] = payload.translation_ids ?? [];
     const results = [];
     for (const id of requested) {
-      const text = translations.find(t => t.id === id)?.active_text ?? "";
+      const row = translations.get(id);
+      const text = row?.active_text ?? "";
       const offset = text.indexOf(word);
       if (offset < 0) continue;
       results.push({
         translation_id: id,
+        text,
+        source_text: row?.source_text ?? "",
         matches: [{
           message: "Possible spelling mistake found.",
           offset,

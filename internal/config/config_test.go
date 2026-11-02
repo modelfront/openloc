@@ -265,3 +265,28 @@ func TestValidate_DevelopmentAllowsDefaultJWTSecret(t *testing.T) {
 }
 
 const strongJWTSecret = "0123456789abcdef0123456789abcdef" // gitleaks:allow
+
+// Slack needs both the token and the channel: one alone would post nowhere,
+// silently.
+func TestValidate_SlackNeedsTokenAndChannel(t *testing.T) {
+	t.Setenv("ENV", "development")
+	for _, c := range []struct {
+		token, channel string
+		ok             bool
+	}{
+		{"", "", true},
+		{"xoxb-test", "C0ISSUES", true},
+		{"xoxb-test", "", false},
+		{"", "C0ISSUES", false},
+	} {
+		t.Setenv("SLACK_BOT_TOKEN", c.token)
+		t.Setenv("ISSUE_SLACK_CHANNEL", c.channel)
+		err := Load().Validate()
+		if c.ok != (err == nil) {
+			t.Errorf("token=%q channel=%q: Validate() = %v, want ok=%v", c.token, c.channel, err, c.ok)
+		}
+		if err != nil && !strings.Contains(err.Error(), "ISSUE_SLACK_CHANNEL") {
+			t.Errorf("Validate() = %v, want it to name ISSUE_SLACK_CHANNEL", err)
+		}
+	}
+}

@@ -76,3 +76,29 @@ describe('SpellCheck extension', () => {
     expect(underlinedWords(editor)).toEqual(['adresse', 'adresse', 'stadt'])
   })
 })
+
+describe('SpellCheck extension with a line break', () => {
+  it('sends the break as a newline and underlines the word after it', async () => {
+    vi.useFakeTimers()
+    checkSpellingMock.mockReset()
+    // The offsets LanguageTool reports for 'eins\nzwie': the typo starts at 5.
+    checkSpellingMock.mockResolvedValue([{
+      message: 'Possible spelling mistake found.', offset: 5, length: 4, replacements: [{ value: 'zwei' }],
+      rule: { id: 'GERMAN_SPELLER_RULE', description: 'Typo', category: { id: 'TYPOS', name: 'Possible Typo' } },
+    }])
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [StarterKit, SpellCheck.configure({ language: 'de', enabled: true, jobId: 42 })],
+      content: '<p>eins<br>zwie</p>',
+    })
+    try {
+      editor.commands.setTextSelection(1)
+      await vi.advanceTimersByTimeAsync(900)
+      expect(checkSpellingMock).toHaveBeenCalledWith('eins\nzwie', 'de', 42)
+      expect(underlinedWords(editor)).toEqual(['zwie'])
+    } finally {
+      editor.destroy()
+      vi.useRealTimers()
+    }
+  })
+})

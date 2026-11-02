@@ -282,3 +282,13 @@ describe('IssueDetailPage delete', () => {
     expect(await screen.findByText('issue list')).toBeInTheDocument()
   })
 })
+
+describe('IssueDetailPage title', () => {
+  it("shows the issue's number before its title", async () => {
+    renderPage('mine', { issue: issue({ id: 42, title: 'Export fails' }), comments: [] })
+    const number = await screen.findByTestId('issue-number')
+    expect(number).toHaveTextContent(/^42$/)
+    expect(number.parentElement).toHaveTextContent(/^42\s*Export fails$/)
+  })
+})
+

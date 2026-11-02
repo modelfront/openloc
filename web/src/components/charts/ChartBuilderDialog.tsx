@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils'
 import { openChatWithPrompt, openChatWithHint } from '@/lib/chat-bus'
 import { useGuideReveal } from '@/lib/guide-reveal'
 import { TextLink } from '@/components/ui/text-link'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 const CHART_TYPES = [
   { value: 'line', label: 'Line', icon: LineChart },
@@ -361,12 +362,7 @@ export function ChartBuilderDialog({ open, onClose, dashboardId, dashboardName, 
                   <Input
                     {...register('title')}
                     data-testid="chart-title"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        submit()
-                      }
-                    }}
+                    onKeyDown={submitOnEnter(submit)}
                   />
                 </FormField>
 

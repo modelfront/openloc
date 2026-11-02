@@ -16,8 +16,6 @@ function renderDialog(extra: Partial<ComponentProps<typeof SpellCheckDialog>> = 
       segmentIds={[10]}
       filteredIndices={[0]}
       translationBySegment={new Map([[10, { id: 100, status: 'draft' }]])}
-      textFor={() => 'Guten Morgan'}
-      sourceTextFor={() => 'Good morning'}
       filterActive={false}
       beforeRun={vi.fn()}
       onNavigate={vi.fn()}
@@ -47,6 +45,8 @@ describe('SpellCheckDialog', () => {
   const finding = {
     results: [{
       translation_id: 100,
+      text: 'Guten Morgan',
+      source_text: 'Good morning',
       matches: [{
         message: 'Possible spelling mistake', offset: 6, length: 6, replacements: [{ value: 'Morgen' }],
         rule: { id: 'SPELL', description: '', category: { id: 'TYPOS', name: 'Typos' } },
@@ -73,7 +73,7 @@ describe('SpellCheckDialog', () => {
   // (includes locked)". Segment 20 is locked.
   describe('locked segments', () => {
     const actions = (canWriteLocked: boolean) => ({
-      canWriteLocked, counts: () => ({ all: 0, nonlocked: 0, locked: 0 }), applyScope: vi.fn(), ignoreInProject: vi.fn(),
+      canWriteLocked, counts: async () => ({ all: 0, nonlocked: 0, locked: 0 }), applyScope: vi.fn(), ignoreInProject: vi.fn(),
     })
     const withLocked = {
       segmentIds: [10, 20],

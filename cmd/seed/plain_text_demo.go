@@ -87,11 +87,19 @@ func healPlainTextTemplate(ctx context.Context, q *db.Queries, pool *pgxpool.Poo
 			return t, nil
 		}
 	}
+	// The template follows the org's Default workflow.
+	if err := auth.EnsureDefaultWorkflow(ctx, q, tenantID); err != nil {
+		return db.Template{}, fmt.Errorf("default workflow: %w", err)
+	}
+	wf, err := q.GetWorkflowByName(ctx, db.GetWorkflowByNameParams{TenantID: tenantID, Name: "Default"})
+	if err != nil {
+		return db.Template{}, fmt.Errorf("get default workflow: %w", err)
+	}
 	off := false
 	source := "en"
 	t, _, err := tmpl.Create(ctx, q, pool, tenantID, tmpl.CreateInput{
 		Name: plainTextTemplateName, SourceLanguage: &source, TargetLanguages: []string{"es"},
-		Setup: settings.Setup{InlineHTML: &off},
+		Setup: settings.Setup{InlineHTML: &off, WorkflowID: &wf.ID},
 	})
 	if err != nil {
 		return db.Template{}, fmt.Errorf("create template: %w", err)
@@ -123,6 +131,9 @@ func createPlainTextProject(ctx context.Context, q *db.Queries, tx pgx.Tx, tenan
 	})
 	if err != nil {
 		return 0, fmt.Errorf("create project: %w", err)
+	}
+	if err := settings.SetSegmentationProfile(ctx, q, tenantID, profile.ID, nil, source); err != nil {
+		return 0, fmt.Errorf("segmentation profile: %w", err)
 	}
 	if _, err := q.SetProjectTemplate(ctx, db.SetProjectTemplateParams{
 		ID: project.ID, TemplateID: &template.ID, TenantID: tenantID,

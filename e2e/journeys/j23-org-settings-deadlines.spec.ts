@@ -268,10 +268,15 @@ test.describe.serial("J23 — Org Settings + Notifications + Deadlines", () => {
     expect(engRes.ok(), `F1: create MT engine: ${engRes.status()}`).toBe(true);
     mtEngineId = (await engRes.json()).data.id;
 
-    // Create project
+    const wfRes = await page.request.get(`${API}/api/workflows`, { headers });
+    expect(wfRes.ok(), `F1: list workflows: ${wfRes.status()}`).toBe(true);
+    // Create the project on the org's workflow: a freshly provisioned org has
+    // one library workflow, Default.
+    const defaultWorkflow = ((await wfRes.json()).data as { id: number; name: string }[]).find((w) => w.name === "Default");
+    expect(defaultWorkflow, "a provisioned org has the Default library workflow").toBeTruthy();
     const projRes = await page.request.post(`${API}/api/projects`, {
       headers, data: {
-        name: `J23 Project ${RUN_ID}`, source_language: "en", target_languages: ["ko-KR"],
+        name: `J23 Project ${RUN_ID}`, source_language: "en", target_languages: ["ko-KR"], workflow_id: defaultWorkflow!.id,
       },
     });
     expect(projRes.ok(), `F1: create project: ${projRes.status()}`).toBe(true);

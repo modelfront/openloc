@@ -166,6 +166,7 @@ func TestIntegrationProjectEventEmission(t *testing.T) {
 		"name":             "Audit Me",
 		"source_language":  "en",
 		"target_languages": []string{"de", "fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var createResp struct {

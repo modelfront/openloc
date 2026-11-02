@@ -5,6 +5,7 @@ import { applyJobMT, runJobAIStep, applyJobTM, rerunJob, skipJobAIStep, stopJob 
 import { mergeApplyResponses, type ApplyPhaseResponse } from '../api/analytics'
 import { useMutationWithToast } from './use-mutation-with-toast'
 import { invalidateJobContext } from '../lib/query-invalidation'
+import { queryKeys } from '../lib/query-keys'
 import { mapChunks, warnHeldSkipped } from '../lib/segment-bulk'
 import { handleTaskReopened, taskLockFailure } from '../lib/task-edit'
 
@@ -51,24 +52,31 @@ export function useJobPipelineActions(jobId: number, projectId: number) {
     },
   }
 
+  // A run happens inside its request, so the editor polls the job while one is
+  // open (useJobDetail).
+  const runRequest = queryKeys.job.runRequest(jobId)
+
   // The variable is the segment selection (translation ids); none = the whole job.
   const onSelection = (apply: typeof applyJobTM) => async (ids: number[] | void): Promise<ApplyPhaseResponse> => {
     if (!ids) return apply(jobId)
     return mergeApplyResponses(await mapChunks(ids, part => apply(jobId, part)))
   }
   const applyTM = useMutationWithToast<ApplyPhaseResponse, number[] | void>({
+    mutationKey: runRequest,
     mutationFn: onSelection(applyJobTM),
     successMessage: (data, ids) => applied(data, ids ? 'TM lookup complete on the selection' : 'TM lookup complete'),
     onSuccess: (data, ids) => afterApply(data, ids ? 'Nothing in the selection to TM-match' : 'No segments to TM-match'),
     ...applyFailure,
   })
   const applyMT = useMutationWithToast<ApplyPhaseResponse, number[] | void>({
+    mutationKey: runRequest,
     mutationFn: onSelection(applyJobMT),
     successMessage: (data, ids) => applied(data, ids ? 'MT applied to the selection' : 'MT applied'),
     onSuccess: (data, ids) => afterApply(data, ids ? 'Nothing in the selection to translate' : 'No segments to translate'),
     ...applyFailure,
   })
   const runAIStep = useMutationWithToast({
+    mutationKey: runRequest,
     mutationFn: () => runJobAIStep(jobId),
     successMessage: data => applied(data, 'QE+APE step complete'),
     onSuccess: data => afterApply(data, 'No segments to score'),

@@ -54,6 +54,10 @@ const (
 	// surfaces as an empty feed rather than a hanging request.
 	listTimeout = 10 * time.Second
 	getTimeout  = 15 * time.Second
+
+	// snapshotTimeout bounds one search's storage work, list and loads together:
+	// a tool call waits at most this long for a cold cache.
+	snapshotTimeout = 20 * time.Second
 )
 
 // Reader implements Source over the objects Store wrote.
@@ -90,12 +94,14 @@ func (r *Reader) Since(after uint64) ([]Entry, uint64) {
 			logging.Label("prefix", r.prefix))
 		return r.since(after)
 	}
-	r.refresh(keys)
+	r.refresh(context.Background(), keys)
 	return r.since(after)
 }
 
-// refresh loads keys not yet cached and forgets keys that no longer exist.
-func (r *Reader) refresh(keys []string) {
+// refresh loads keys not yet cached and forgets keys that no longer exist. It
+// stops when ctx is done and reports whether it loaded every key; a key it
+// did not reach stays uncached, so the next refresh tries it again.
+func (r *Reader) refresh(ctx context.Context, keys []string) bool {
 	// Newest first, so a truncated load keeps the most recent objects. Keys
 	// embed a unix-ms component, and lexical order matches time order for a
 	// fixed-width millisecond field within the same date prefix.
@@ -128,8 +134,17 @@ func (r *Reader) refresh(keys []string) {
 	}
 	r.mu.Unlock()
 
+	complete := true
 	for _, k := range toFetch {
-		entries, err := r.load(k)
+		if ctx.Err() != nil {
+			complete = false
+			break
+		}
+		entries, err := r.load(ctx, k)
+		if err != nil && ctx.Err() != nil {
+			complete = false // the caller gave up, not the object: not cached
+			break
+		}
 		if err != nil {
 			// A single unreadable object must not blank the whole feed. Cache the
 			// empty result so a poll loop doesn't retry it forever.
@@ -146,11 +161,12 @@ func (r *Reader) refresh(keys []string) {
 	if changed {
 		r.remerge()
 	}
+	return complete
 }
 
 // load downloads one object and parses its NDJSON lines.
-func (r *Reader) load(key string) ([]Entry, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), getTimeout)
+func (r *Reader) load(ctx context.Context, key string) ([]Entry, error) {
+	ctx, cancel := context.WithTimeout(ctx, getTimeout)
 	defer cancel()
 
 	rc, err := r.store.Download(ctx, key)
@@ -213,4 +229,34 @@ func (r *Reader) since(after uint64) ([]Entry, uint64) {
 	out := make([]Entry, len(fresh))
 	copy(out, fresh)
 	return out, last
+}
+
+// Snapshot returns every cached entry, newest first, after the same list and
+// load as Since. Unlike Since it is not capped at maxPerPoll: a search over a
+// job or file needs the whole retained window. Implements Snapshotter.
+//
+// The read stops at the caller's deadline, and at snapshotTimeout in any case,
+// so a cold cache over a slow store answers with what it has (complete false)
+// instead of holding a tool call for minutes.
+func (r *Reader) Snapshot(ctx context.Context) ([]Entry, bool) {
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	lctx, lcancel := context.WithTimeout(ctx, listTimeout)
+	defer lcancel()
+	complete := false
+	keys, err := r.store.ListKeys(lctx, r.prefix+"/")
+	if err != nil {
+		logging.Warn(ctx, err, "list llm debug objects", "llm-debug-list-failed",
+			logging.Label("prefix", r.prefix))
+	} else {
+		complete = r.refresh(ctx, keys)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Entry, len(r.merged))
+	for i, e := range r.merged {
+		out[len(r.merged)-1-i] = e
+	}
+	return out, complete
 }

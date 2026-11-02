@@ -17,6 +17,8 @@ function err(over: Partial<SpellError> & { translationId: number; offset: number
     message: 'typo',
     suggestions: ['Adresse'],
     ruleCategory: 'TYPOS',
+    targetText: '',
+    sourceText: '',
   }
 }
 

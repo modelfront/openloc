@@ -24,6 +24,7 @@ func TestIntegration_RunQASelection_OnlySelectedJobRows(t *testing.T) {
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "QA Selection", "source_language": "en", "target_languages": []string{"es", "fr"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant),
 	}, user, tenant)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var idResp struct {

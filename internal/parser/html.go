@@ -7,6 +7,8 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+
+	"openloc/internal/segmentation"
 )
 
 // HTML parses HTML files. Segmentation is described in html_segment.go.
@@ -24,10 +26,11 @@ type StoredSource struct {
 }
 
 // HTMLWithStoredSource is the HTML parser for exporting translations whose
-// segments store the given source, by segment key. It splits sentences as
-// GetParser does, so a file stored by sentence exports through it too.
-func HTMLWithStoredSource(stored map[string]StoredSource) Parser {
-	return sentenceSegmenter{inner: HTML{stored: &stored}, richExport: true}
+// segments store the given source, by segment key. It splits sentences with
+// seg (nil: the conservative built-in set), as the file was imported, so a file
+// stored by sentence exports through it too.
+func HTMLWithStoredSource(stored map[string]StoredSource, seg *segmentation.Segmenter) Parser {
+	return sentenceSegmenter{inner: HTML{stored: &stored}, richExport: true, seg: seg}
 }
 
 func (HTML) Parse(content []byte) ([]Segment, error) {

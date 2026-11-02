@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"openloc/internal/segmentation"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,10 @@ func TestXMLNodeKeysMatchDirectComputation(t *testing.T) {
 			}
 		}
 		walk(doc.root)
-		specs := collectXMLSegments(doc)
+		specs, err := collectXMLSegments(doc, segmentation.Conservative())
+		if err != nil {
+			t.Fatal(err)
+		}
 		if nodes < 20 || len(specs) < 10 {
 			t.Fatalf("%s: fixture too small: %d nodes, %d segments", name, nodes, len(specs))
 		}

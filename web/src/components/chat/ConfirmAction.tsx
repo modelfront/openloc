@@ -102,24 +102,26 @@ export function ConfirmAction({
   }
 
   return (
-    <ChatCard className="flex flex-wrap items-center gap-2" data-testid="chat-confirm" data-state={state}>
-      <Chip color={STATE_COLOR[state]} icon={<ShieldAlert />}>{STATE_LABEL[state]}</Chip>
-      <ChatCardText className="min-w-0 flex-1">{request.summary}</ChatCardText>
-      {state === 'pending' && (
-        <>
-          <Button size="xs" variant="ghost" onClick={() => onStateChange('cancelled')}>
-            Cancel
-          </Button>
-          <Button
-            size="xs"
-            variant={isDelete(request.tool) ? 'destructive' : 'default'}
-            onClick={() => (isReport ? setReviewing(true) : setOpen(true))}
-            data-testid="chat-confirm-review"
-          >
-            {isReport ? 'Review and send' : 'Review'}
-          </Button>
-        </>
-      )}
+    <ChatCard className="flex flex-col gap-2" data-testid="chat-confirm" data-state={state}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Chip color={STATE_COLOR[state]} icon={<ShieldAlert />}>{STATE_LABEL[state]}</Chip>
+        {state === 'pending' && (
+          <div className="flex items-center gap-2">
+            <Button size="xs" variant="ghost" onClick={() => onStateChange('cancelled')}>
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              variant={isDelete(request.tool) ? 'destructive' : 'default'}
+              onClick={() => (isReport ? setReviewing(true) : setOpen(true))}
+              data-testid="chat-confirm-review"
+            >
+              {isReport ? 'Review and send' : 'Review'}
+            </Button>
+          </div>
+        )}
+      </div>
+      <ChatCardText>{request.summary}</ChatCardText>
       {isReport && (
         <ReportIssueDialog
           open={reviewing}

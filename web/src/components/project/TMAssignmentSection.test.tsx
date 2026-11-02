@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ReactNode, ReactElement } from 'react'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import { waitForSave } from '@/test/debounced-save'
 import { DRAFT_SAVE_DELAY_MS } from '@/hooks/useProjectDraft'
 import { TMAssignmentSection, reorderRows, type TMAssignmentItem, type TMResource } from './TMAssignmentSection'
 
@@ -38,7 +40,7 @@ function renderSection(overrides: Partial<Parameters<typeof TMAssignmentSection>
     onSave: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
-  return { ...render(<TMAssignmentSection {...defaults} />), onSave: defaults.onSave as ReturnType<typeof vi.fn> }
+  return { ...render(<MemoryRouter><TMAssignmentSection {...defaults} /></MemoryRouter>), onSave: defaults.onSave as ReturnType<typeof vi.fn> }
 }
 
 beforeEach(() => { vi.clearAllMocks() })
@@ -57,10 +59,43 @@ describe('TMAssignmentSection', () => {
   it('renders an assigned TM with its declared languages read-only (no lang pickers)', () => {
     renderSection({ items: [{ id: 1, tmId: 1, mode: 'read_write', priority: 0 }] })
     expect(screen.getByText('EN→ES/FR TM')).toBeInTheDocument()
-    expect(screen.getByText(/en → es, fr/i)).toBeInTheDocument()
+    expect(screen.getByTestId('tm-assignment-langs-1')).toHaveTextContent(/en → es, fr/i)
     // No source/target language inputs anywhere.
     expect(screen.queryByPlaceholderText(/source/i)).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText(/target/i)).not.toBeInTheDocument()
+  })
+
+  it("links an assigned TM's name to its page, in a new tab, with no icon", () => {
+    renderSection({ items: [{ id: 1, tmId: 1, mode: 'read_write', priority: 0 }] })
+    const link = screen.getByTestId('tm-assignment-link-1')
+    expect(link).toHaveAttribute('href', '/memories/1')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveTextContent('EN→ES/FR TM')
+    // Just the name: no external-link icon in the row.
+    expect(link.querySelector('svg')).toBeNull()
+  })
+
+  it('leaves a TM missing from the list as plain text', () => {
+    renderSection({ items: [{ id: 1, tmId: 42, mode: 'read_write', priority: 0 }] })
+    expect(screen.getByText('TM #42')).toBeInTheDocument()
+    expect(screen.queryByTestId('tm-assignment-link-42')).toBeNull()
+  })
+
+  it('shows each TM\'s entry count on its picker option and its row', () => {
+    renderSection({
+      tmCollections: [{ ...tmCollections[0], entry_count: 1234 }, { ...tmCollections[1], entry_count: 1 }],
+      items: [{ id: 1, tmId: 1, mode: 'read_write', priority: 0 }],
+    })
+    const option = within(screen.getByTestId('add-tm-select')).getByRole('option', { name: 'EN→DE only TM' })
+    expect(option).toHaveAttribute('data-chip', '1 entry')
+    expect(screen.getByTestId('tm-assignment-size-1')).toHaveTextContent(/^1,234 entries$/)
+  })
+
+  it('shows no size for a TM that came without a count', () => {
+    renderSection({ items: [{ id: 1, tmId: 1, mode: 'read_write', priority: 0 }] })
+    expect(screen.queryByTestId('tm-assignment-size-1')).not.toBeInTheDocument()
+    const option = within(screen.getByTestId('add-tm-select')).getByRole('option', { name: 'EN→DE only TM' })
+    expect(option).not.toHaveAttribute('data-chip')
   })
 
   it('warns when the assigned TM shares no target with the project', () => {
@@ -78,7 +113,7 @@ describe('TMAssignmentSection', () => {
     const user = userEvent.setup()
     const { onSave } = renderSection()
     await user.selectOptions(screen.getByTestId('add-tm-select'), '1')
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     const saved = onSave.mock.calls.at(-1)![0]
     expect(saved).toEqual([{ id: 0, tmId: 1, mode: 'read_write', priority: 0, penaltyPct: 0 }])
   })
@@ -93,7 +128,7 @@ describe('TMAssignmentSection', () => {
     const user = userEvent.setup()
     const { onSave } = renderSection({ items: [{ id: 1, tmId: 1, mode: 'read_write', priority: 0 }] })
     await user.click(screen.getByTestId('tm-assignment-remove-1'))
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith([]))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledWith([]))
     expect(await screen.findByText('Saved ✓')).toBeInTheDocument()
   })
 
@@ -103,7 +138,7 @@ describe('TMAssignmentSection', () => {
     expect(screen.getByTestId('tm-assignment-read-1')).toBeChecked()
     expect(screen.getByTestId('tm-assignment-write-1')).toBeChecked()
     await user.click(screen.getByTestId('tm-assignment-write-1'))
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0]).toEqual([{ id: 1, tmId: 1, mode: 'read', priority: 0 }])
   })
 
@@ -121,14 +156,16 @@ describe('TMAssignmentSection', () => {
     const user = userEvent.setup()
     const onDraftChange = vi.fn()
     render(
-      <TMAssignmentSection
-        items={[]}
-        tmCollections={tmCollections}
-        projectSourceLanguage="en"
-        projectTargetLanguages={['es']}
-        initialEditing
-        onDraftChange={onDraftChange}
-      />,
+      <MemoryRouter>
+        <TMAssignmentSection
+          items={[]}
+          tmCollections={tmCollections}
+          projectSourceLanguage="en"
+          projectTargetLanguages={['es']}
+          initialEditing
+          onDraftChange={onDraftChange}
+        />
+      </MemoryRouter>,
     )
     await user.selectOptions(screen.getByTestId('add-tm-select'), '1')
     expect(onDraftChange).toHaveBeenCalledWith([{ id: 0, tmId: 1, mode: 'read_write', priority: 0, penaltyPct: 0 }])
@@ -172,7 +209,7 @@ describe('TMAssignmentSection', () => {
     fireEvent.change(penalty, { target: { value: '5' } })
     fireEvent.blur(penalty, { target: { value: '5' } })
 
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0]).toEqual([
       { id: 1, tmId: 1, mode: 'read_write', priority: 0, penaltyPct: 5 },
     ])
@@ -186,7 +223,7 @@ describe('TMAssignmentSection', () => {
     const penalty = screen.getByRole('spinbutton', { name: /penalty for/i })
     fireEvent.change(penalty, { target: { value: '150' } })
     fireEvent.blur(penalty, { target: { value: '150' } })
-    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await waitForSave(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls.at(-1)![0][0].penaltyPct).toBe(100)
   })
 
@@ -217,12 +254,12 @@ describe('TMAssignmentSection refused penalty save', () => {
 
     fireEvent.change(penalty, { target: { value: '25' } })
     fireEvent.blur(penalty)
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(penalty).toHaveValue(3))
 
     fireEvent.change(penalty, { target: { value: '25' } })
     fireEvent.blur(penalty)
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(2))
     expect(onSave.mock.calls[1][0][0].penaltyPct).toBe(25)
   })
 
@@ -236,7 +273,7 @@ describe('TMAssignmentSection refused penalty save', () => {
 
     fireEvent.change(penalty, { target: { value: '5' } })
     fireEvent.blur(penalty)
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     // A mode change while the penalty save is still on its way: a full replace
     // of the rows, so it must not overtake the first one.
     fireEvent.click(screen.getByRole('checkbox', { name: 'Write' }))
@@ -244,7 +281,7 @@ describe('TMAssignmentSection refused penalty save', () => {
     expect(onSave).toHaveBeenCalledTimes(1)
 
     await act(async () => { finish() })
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(2))
     expect(onSave.mock.calls[1][0][0]).toMatchObject({ mode: 'read', penaltyPct: 5 })
   })
 })
@@ -260,7 +297,7 @@ describe('TMAssignmentSection refused save with another queued behind it', () =>
 
     fireEvent.change(penalty, { target: { value: '25' } })
     fireEvent.blur(penalty)
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitForSave(() => expect(onSave).toHaveBeenCalledTimes(1))
     // A mode change while the penalty save is on its way: queued behind it.
     fireEvent.click(screen.getByRole('checkbox', { name: 'Write' }))
     await new Promise(r => setTimeout(r, 500))

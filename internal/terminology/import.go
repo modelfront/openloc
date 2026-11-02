@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/errtrack"
 	"openloc/internal/langcode"
 	"openloc/internal/logging"
 	"openloc/internal/tbx"
@@ -195,21 +194,15 @@ func (s *Service) ImportTBX(ctx context.Context, base db.TermBasis, userID int64
 	concepts, report, err := tbx.ParseConcepts(r)
 	if err != nil {
 		// A recognizable-but-unsupported file gets an actionable message and a
-		// notice recording which type was tried (demand signal — the
-		// type/root/style are structural, not customer data).
+		// log line recording which type was tried: a demand signal, not a
+		// fault (the type/root/style are structural, not customer data).
 		var unsup *tbx.UnsupportedError
 		if errors.As(err, &unsup) {
-			errtrack.Capture(ctx, err, errtrack.CaptureOptions{
-				Class:     errtrack.ClassUnsupportedImport,
-				Message:   "unsupported TBX file rejected on import",
-				Subsystem: "terminology",
-				Event:     "import-tbx-unsupported",
-				Extra: map[string]any{
-					"tbx_root":  unsup.Root,
-					"tbx_type":  unsup.Type,
-					"tbx_style": unsup.Style,
-				},
-			})
+			logging.Info(ctx, "unsupported TBX file rejected on import", "termbase-import-tbx-unsupported",
+				logging.TermbaseID(base.ID),
+				logging.Label("tbx_root", unsup.Root),
+				logging.Label("tbx_type", unsup.Type),
+				logging.Label("tbx_style", unsup.Style))
 			return ImportResult{}, ImportError{Msg: unsup.Msg}
 		}
 		logging.Warn(ctx, err, "TBX parse failed", "termbase-import-tbx-parse-failed", logging.TermbaseID(base.ID))

@@ -1,6 +1,7 @@
 import type { IssueAttachment, IssueScope } from '@/api'
 import { IssueAttachments, IssueImage } from './IssueAttachments'
 import { ATTACHMENT_REF } from './attachments'
+import { LinkedText } from '@/components/ui/linked-text'
 
 type Part = { text: string } | { image: IssueAttachment }
 
@@ -29,8 +30,8 @@ export function splitIssueText(text: string, files: IssueAttachment[]): Part[] {
 
 /**
  * The text of an issue or a comment with its files: each image the text
- * places shows where it is placed, and the files it does not place follow
- * below. Images load with the viewer's own session (`scope`).
+ * places shows where it is placed, web addresses are links, and the files
+ * it does not place follow below. Images load with the viewer's own session (`scope`).
  */
 export function IssueText({ text, files, scope, issueId, testId }: {
   text: string | null | undefined
@@ -45,10 +46,10 @@ export function IssueText({ text, files, scope, issueId, testId }: {
   return (
     <>
       {parts.length > 0 && (
-        <div className="whitespace-pre-wrap text-sm" data-testid={testId}>
+        <div className="whitespace-pre-wrap break-words text-sm" data-testid={testId}>
           {parts.map((p, i) => ('image' in p
             ? <span key={i} className="my-1 block"><IssueImage scope={scope} issueId={issueId} file={p.image} /></span>
-            : <span key={i}>{p.text}</span>))}
+            : <span key={i}><LinkedText text={p.text} /></span>))}
         </div>
       )}
       {rest.length > 0 && <IssueAttachments scope={scope} issueId={issueId} files={rest} />}

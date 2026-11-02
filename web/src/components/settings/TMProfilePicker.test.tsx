@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ComponentProps, ReactNode } from 'react'
+import type { ComponentProps, ReactElement, ReactNode } from 'react'
 import type { ComboboxProps } from '@/components/ui/combobox'
 import type ConfirmDialog from '../ConfirmDialog'
 import type { TMProfileNameDialog } from '../tm/TMProfileNameDialog'
@@ -22,12 +22,15 @@ vi.mock('@/components/ui/combobox', () => ({
     </>
   ),
 }))
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: { children?: ReactNode }) => children,
-  TooltipTrigger: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
-  TooltipContent: ({ children }: { children?: ReactNode }) => children,
-  TooltipProvider: ({ children }: { children?: ReactNode }) => children,
-}))
+vi.mock('@/components/ui/tooltip', async () => {
+  const { cloneElement } = await import('react')
+  return {
+    Tooltip: ({ children }: { children?: ReactNode }) => children,
+    TooltipTrigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => render ? cloneElement(render, {}, children) : <span>{children}</span>,
+    TooltipContent: ({ children }: { children?: ReactNode }) => children,
+    TooltipProvider: ({ children }: { children?: ReactNode }) => children,
+  }
+})
 // ConfirmDialog → visible buttons so the detach confirmation can be driven.
 vi.mock('../ConfirmDialog', () => ({
   default: ({ open, onConfirm, onOpenChange, title, description }: ComponentProps<typeof ConfirmDialog>) => open ? (
@@ -119,11 +122,14 @@ describe('TMProfilePicker', () => {
     expect(p.onLink).toHaveBeenCalledWith(9)
   })
 
-  it('while linked: the dropdown shows the profile, the status line names it with a link, and Detach is offered', () => {
+  it('while linked: the dropdown shows the profile, an icon after it opens the profile, and Detach is offered', () => {
     renderPicker({ value: 7 })
     expect(select().value).toBe('7')
-    expect(screen.getByTestId('tm-profile-linked')).toHaveTextContent('Acme legal')
-    expect(screen.getByRole('link', { name: /Acme legal/ })).toHaveAttribute('href', '/memories/profiles/7')
+    const open = screen.getByRole('link', { name: 'Open TM profile (opens in a new tab)' })
+    expect(open).toHaveAttribute('href', '/memories/profiles/7')
+    expect(open).toHaveAttribute('target', '_blank')
+    // The icon ends the picker's line, not the status line under it.
+    expect(screen.getByTestId('tm-profile-linked')).not.toContainElement(open)
     expect(screen.getByTestId('tm-profile-detach')).toBeInTheDocument()
     expect(screen.queryByTestId('tm-profile-save-as')).toBeNull()
   })

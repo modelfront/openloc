@@ -86,6 +86,7 @@ export function notify(err: unknown, opts: NotifyOptions = {}): void {
   if (!enabled) return
   try {
     const error = toError(err)
+    if (isCrawlerChunkError(error)) return
     // Throttle BEFORE handing to the SDK: a notice the SDK drops in
     // beforeNotify still counts against its maxErrors page budget (the
     // built-in counter increments first), so dropped notices must never
@@ -99,52 +100,6 @@ export function notify(err: unknown, opts: NotifyOptions = {}): void {
     })
   } catch {
     // Reporting must never break the app.
-  } finally {
-    throttlePrepaid = false
-  }
-}
-
-/**
- * Report an error, then run `action` once delivery finished — or after
- * `timeoutMs` if it didn't. For report-before-reload paths where a
- * window.location.reload() would cancel the in-flight notice.
- */
-export function notifyThen(err: unknown, opts: NotifyOptions, action: () => void, timeoutMs = 1500): void {
-  // 1500ms, not something snappier: the SDK's transport is a plain fetch
-  // without keepalive, so the action (typically a reload) cancels an
-  // in-flight POST — and a cold-connection POST routinely needs >300ms.
-  // The delay is paid once, in an already-broken moment.
-  if (!enabled) {
-    action()
-    return
-  }
-  let done = false
-  const run = () => {
-    if (done) return
-    done = true
-    action()
-  }
-  const timer = setTimeout(run, timeoutMs)
-  try {
-    const error = toError(err)
-    if (!throttleNotice({ name: opts.name ?? error.name, message: error.message })) {
-      clearTimeout(timer)
-      run()
-      return
-    }
-    throttlePrepaid = true
-    Honeybadger.notify(error, {
-      ...(opts.name ? { name: opts.name } : {}),
-      ...(opts.context ? { context: sanitizeContext(opts.context) } : {}),
-      ...(opts.fingerprint ? { fingerprint: opts.fingerprint } : {}),
-      afterNotify: () => {
-        clearTimeout(timer)
-        run()
-      },
-    })
-  } catch {
-    clearTimeout(timer)
-    run()
   } finally {
     throttlePrepaid = false
   }
@@ -175,34 +130,36 @@ export function shouldReport(err: unknown): boolean {
   const name = typeof e.name === 'string' ? e.name : ''
   // User navigation / manual cancel (chat abort, unmounted queries).
   if (name === 'AbortError' || name === 'CanceledError') return false
-  // Stale-chunk failures have their own report-then-reload path (lazy-reload).
+  // Stale-chunk failures have their own reload path (lazy-reload).
   if (isChunkErrorMessage(e.message)) return false
   // Expected "Claude key not configured" state (HTTP 412 in api/chat.ts).
   if (name === 'NoClaudeKeyError') return false
   // request.ts throws a plain Error for the 401 → logout path.
   if (e.message === 'Session expired') return false
+  // A notice means our code is broken. An API answer is one only on a 405: the
+  // frontend called a route with the wrong method. Every other 4xx carries a
+  // message for the user ("No TM configured…", a validation error, a file too
+  // large) and the backend logs it; the backend reports its own 5xx; status 0
+  // (no HTTP response) is the user's connection dropping.
   if (name === 'ApiError' && typeof e.status === 'number') {
-    const s = e.status
-    // Status 0 is the XHR sentinel for "no HTTP response at all" — a real
-    // connectivity failure, exactly what the backend can't see.
-    if (s === 0) return true
-    // The backend already reported its own 5xx to the same Honeybadger
-    // project — a second, less-informative notice from here is pure noise.
-    if (s >= 500) return false
-    // Expected client statuses: session expiry, RBAC, stale links,
-    // optimistic-locking conflicts (handled UI), missing Claude key, and a
-    // rate limit, whose message tells the user to wait.
-    if (s === 401 || s === 403 || s === 404 || s === 409 || s === 412 || s === 429) return false
-    // Unexpected 4xx (400, 405, 413, 422…) = client/server contract bug.
-    return true
+    return e.status === 405
   }
+  // fetch() rejecting with no response is the connection dropping too.
+  if (name === 'TypeError' && typeof e.message === 'string' && FETCH_NETWORK_ERRORS.has(e.message)) return false
   return true
 }
 
-// Mirrors the signature list in lazy-reload.ts's isChunkLoadError without
-// importing it — lazy-reload imports this module, so importing back would be
-// a cycle. Keep the two lists in sync. Only the message check is needed
-// here — name-based ChunkLoadError never reaches query/mutation caches.
+// What fetch() rejects with when no response came back, per browser:
+// Chrome, Firefox, Safari.
+const FETCH_NETWORK_ERRORS = new Set([
+  'Failed to fetch',
+  'NetworkError when attempting to fetch resource.',
+  'Load failed',
+])
+
+// The signature list of lazy-reload.ts's isChunkLoadError, by message only:
+// a name-based ChunkLoadError never reaches the query/mutation caches. Keep
+// the two lists in sync.
 function isChunkErrorMessage(message: unknown): boolean {
   if (typeof message !== 'string') return false
   const lower = message.toLowerCase()
@@ -214,6 +171,22 @@ function isChunkErrorMessage(message: unknown): boolean {
     lower.includes('loading chunk') ||
     lower.includes('loading css chunk')
   )
+}
+
+// Search engine and AI crawlers. They run pages from copies saved before a
+// deploy, so they ask for bundles the deploy removed, and a reload does not
+// help them. Crawlers name themselves with a "+http" contact link or a
+// "<name>bot/<version>" token; a bare "bot" would also match phone brands.
+const CRAWLER_RE = /\+https?:|bot\/|crawler|spider|google-inspectiontool|googleother/i
+
+export function isCrawler(userAgent: string): boolean {
+  return CRAWLER_RE.test(userAgent)
+}
+
+// Only chunk-load failures are dropped for crawlers: any other error they hit
+// is a real bug, often on the pages search engines show.
+function isCrawlerChunkError(error: Error): boolean {
+  return isChunkErrorMessage(error.message) && typeof navigator !== 'undefined' && isCrawler(navigator.userAgent)
 }
 
 // ─── Scrubbing (client-side twin of internal/errtrack/scrub.go) ─────────────
@@ -390,7 +363,7 @@ let buckets = new Map<string, { tokens: number; last: number }>()
  * returning false drops the notice. An error loop (render crash → retry →
  * crash) must not burn the shared Honeybadger quota.
  *
- * Notices from our own notify()/notifyThen() already consumed a token before
+ * Notices from our own notify() already consumed a token before
  * reaching the SDK (throttlePrepaid) — this handler throttles only the SDK's
  * auto-caught path (window.onerror / unhandledrejection).
  */

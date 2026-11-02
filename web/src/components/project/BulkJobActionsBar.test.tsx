@@ -32,7 +32,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BulkJobActionsBar, type StepTarget } from './BulkJobActionsBar'
 import type { Job } from '../../api'
 import type { TaskState } from '../../lib/task-matrix'
-import { makeJob } from '@/test/fixtures/job'
+import { makeJob, makeJobCounts } from '@/test/fixtures/job'
 import { menuItem } from '@/test/menu'
 import { toast } from 'sonner'
 
@@ -41,6 +41,7 @@ const mockRerunJob = vi.fn()
 const mockSkipJobAIStep = vi.fn()
 const mockClearJob = vi.fn()
 const mockApplyMT = vi.fn()
+const mockPretranslate = vi.fn()
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
@@ -48,6 +49,7 @@ vi.mock('../../api', async (importOriginal) => {
     ...actual,
     clearJobTranslations: (...args: unknown[]) => mockClearJob(...args),
     applyJobMT: (...args: unknown[]) => mockApplyMT(...args),
+    pretranslateProject: (...args: unknown[]) => mockPretranslate(...args),
     stopJob: (...args: unknown[]) => mockStopJob(...args),
     rerunJob: (...args: unknown[]) => mockRerunJob(...args),
     skipJobAIStep: (...args: unknown[]) => mockSkipJobAIStep(...args),
@@ -238,7 +240,8 @@ describe('BulkJobActionsBar — Clear', () => {
     mockClearJob
       .mockResolvedValueOnce({ cleared: 4, held: 1 })
       .mockResolvedValueOnce({ cleared: 2, held: 2 })
-    renderBar([makeJob({ id: 1 }), makeJob({ id: 2 })], undefined, true)
+    const counts = makeJobCounts({ clearable_non_confirmed: 6, clearable_all: 6 })
+    renderBar([makeJob({ id: 1, counts }), makeJob({ id: 2, counts })], undefined, true)
 
     const user = userEvent.setup()
     await user.click(screen.getByTestId('bulk-clear-btn'))
@@ -249,18 +252,32 @@ describe('BulkJobActionsBar — Clear', () => {
   })
 })
 
+// Apply TM / Apply MT queue one worker task per job with ONE request, so the
+// browser holds no long request per job open.
 describe('BulkJobActionsBar — Pre-translate', () => {
-  it('says how many segments Apply MT skipped, across the jobs, because someone else has them open', async () => {
-    mockApplyMT
-      .mockResolvedValueOnce({ message: 'ok', job_id: 1, held: 1 })
-      .mockResolvedValueOnce({ message: 'ok', job_id: 2 })
-    renderBar([makeJob({ id: 1 }), makeJob({ id: 2 })], undefined, true)
+  it('Apply MT queues the eligible jobs in one request, not one per job', async () => {
+    mockPretranslate.mockReset().mockResolvedValue({ queued: 2, skipped: 0, total: 2 })
+    renderBar([makeJob({ id: 1 }), makeJob({ id: 2 }), running(3)], undefined, true)
 
     const user = userEvent.setup()
     await user.click(screen.getByTestId('bulk-pretranslate-btn'))
     await user.click(await menuItem('bulk-apply-mt-btn'))
 
-    await waitFor(() => expect(mockApplyMT).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 segment was skipped because someone else is editing it.'))
+    await waitFor(() => expect(mockPretranslate).toHaveBeenCalledTimes(1))
+    expect(mockPretranslate).toHaveBeenCalledWith(42, { jobIds: [1, 2], phase: 'mt' })
+    expect(mockApplyMT).not.toHaveBeenCalled()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Apply MT: 2 job(s) queued — 1 skipped (not in first step / still running).'))
+  })
+
+  it('Apply TM adds the jobs the server skipped to the summary', async () => {
+    mockPretranslate.mockReset().mockResolvedValue({ queued: 1, skipped: 1, total: 2 })
+    renderBar([makeJob({ id: 1 }), makeJob({ id: 2 })], undefined, true)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('bulk-pretranslate-btn'))
+    await user.click(await menuItem('bulk-apply-tm-btn'))
+
+    await waitFor(() => expect(mockPretranslate).toHaveBeenCalledWith(42, { jobIds: [1, 2], phase: 'tm' }))
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('Apply TM: 1 job(s) queued — 1 skipped (running or not in first step).'))
   })
 })

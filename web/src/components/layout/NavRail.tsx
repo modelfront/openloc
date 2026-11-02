@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import {
   FolderKanban, Database, BookMarked, Tags, LayoutTemplate, Cpu, Sparkles,
-  ShieldCheck, ListChecks, ClipboardCheck, LayoutDashboard, Plug, Workflow,
+  ShieldCheck, FileCog, ListChecks, ClipboardCheck, LayoutDashboard, Plug, Workflow,
   PanelLeftClose, PanelLeftOpen,
   type LucideIcon,
 } from 'lucide-react'
@@ -50,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/ai', label: 'AI', icon: Sparkles, guide: 'nav.ai' },
   { to: '/integrations', label: 'Integrations', icon: Plug, guide: 'nav.integrations' },
   { to: '/quality', label: 'QA profiles', icon: ShieldCheck, guide: 'nav.quality' },
+  { to: '/file-configurations', label: 'File configurations', icon: FileCog, guide: 'nav.file_configurations' },
   { to: '/dashboards', label: 'Dashboards', icon: LayoutDashboard, guide: 'nav.dashboards' },
 ]
 

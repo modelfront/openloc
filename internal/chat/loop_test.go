@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -302,6 +304,174 @@ func TestRunIterationCap(t *testing.T) {
 	}
 	if !strings.Contains(res.Text, "stopped: too many tool calls") {
 		t.Fatalf("missing honest truncation marker: %q", res.Text)
+	}
+}
+
+// streamed collects what the panel shows live: the text deltas joined, and
+// the reply buttons offered.
+type streamed struct {
+	text    strings.Builder
+	replies [][]string
+}
+
+func (s *streamed) on(ev Event) {
+	switch {
+	case ev.Type == "text":
+		s.text.WriteString(ev.Text)
+	case ev.Type == "client_action" && ev.Action == "suggest_replies":
+		s.replies = append(s.replies, ev.Replies)
+	}
+}
+
+func TestRunSeparatesTextOfEachStep(t *testing.T) {
+	session := newFakeSession()
+	session.results["openloc_list_jobs"] = textResult("[]")
+	llm := &fakeLLM{
+		deltas: []string{"I'll check first.", "Done."},
+		turns: []*Turn{
+			{Text: "I'll check first.", StopReason: StopToolUse, ToolCalls: []ToolCall{{ID: "a", Name: "openloc_list_jobs", Args: json.RawMessage(`{}`)}}},
+			{Text: "Done.", StopReason: "end_turn"},
+		},
+	}
+	var live streamed
+	res, err := Run(context.Background(), llm, session, SystemPrompt{Stable: "sys"}, nil, RunOptions{}, live.on)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	const want = "I'll check first.\n\nDone."
+	if res.Text != want {
+		t.Fatalf("saved text = %q, want %q", res.Text, want)
+	}
+	if got := live.text.String(); got != want {
+		t.Fatalf("streamed text = %q, want %q", got, want)
+	}
+}
+
+func TestRunCapNoticeIsStreamedWithContinue(t *testing.T) {
+	turns := make([]*Turn, maxIterations+1)
+	for i := range turns {
+		turns[i] = &Turn{
+			StopReason: StopToolUse,
+			ToolCalls:  []ToolCall{{ID: "x", Name: "openloc_list_jobs", Args: json.RawMessage(`{}`)}},
+		}
+	}
+	var live streamed
+	res, err := Run(context.Background(), &fakeLLM{turns: turns}, newFakeSession(), SystemPrompt{Stable: "sys"}, nil, RunOptions{}, live.on)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(live.text.String(), "stopped: too many tool calls") {
+		t.Fatalf("cap notice not streamed: %q", live.text.String())
+	}
+	if live.text.String() != res.Text {
+		t.Fatalf("streamed %q differs from saved %q", live.text.String(), res.Text)
+	}
+	if len(live.replies) != 1 || len(live.replies[0]) != 1 || live.replies[0][0] != continueReply {
+		t.Fatalf("want one Continue reply button, got %v", live.replies)
+	}
+}
+
+func TestRunTokenLimitNoticeIsStreamedWithContinue(t *testing.T) {
+	// Each provider names the token limit differently.
+	for _, reason := range []string{"max_tokens", "length", "max_output_tokens"} {
+		t.Run(reason, func(t *testing.T) {
+			llm := &fakeLLM{
+				deltas: []string{"Here is the first half"},
+				turns:  []*Turn{{Text: "Here is the first half", StopReason: reason}},
+			}
+			var live streamed
+			res, err := Run(context.Background(), llm, newFakeSession(), SystemPrompt{Stable: "sys"}, nil, RunOptions{}, live.on)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if !strings.Contains(res.Text, "stopped: the answer got too long") {
+				t.Fatalf("missing notice in saved text: %q", res.Text)
+			}
+			if live.text.String() != res.Text {
+				t.Fatalf("streamed %q differs from saved %q", live.text.String(), res.Text)
+			}
+			if len(live.replies) != 1 || live.replies[0][0] != continueReply {
+				t.Fatalf("want one Continue reply button, got %v", live.replies)
+			}
+		})
+	}
+}
+
+// stallingLLM answers the first call from its script, then streams
+// stallDelta (if any) on every later call and blocks until the turn's context
+// ends.
+type stallingLLM struct {
+	fakeLLM
+	stallDelta string
+}
+
+func (s *stallingLLM) Stream(ctx context.Context, req Request, onDelta func(string)) (*Turn, error) {
+	if len(s.requests) == 0 {
+		return s.fakeLLM.Stream(ctx, req, onDelta)
+	}
+	s.requests = append(s.requests, req)
+	if s.stallDelta != "" {
+		onDelta(s.stallDelta)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRunTimeLimitKeepsWorkDoneAndOffersContinue(t *testing.T) {
+	session := newFakeSession()
+	session.results["openloc_list_jobs"] = textResult("[]")
+	llm := &stallingLLM{fakeLLM: fakeLLM{
+		deltas: []string{"Creating the engine."},
+		turns: []*Turn{{Text: "Creating the engine.", StopReason: StopToolUse,
+			ToolCalls: []ToolCall{{ID: "a", Name: "openloc_list_jobs", Args: json.RawMessage(`{}`)}}}},
+	}, stallDelta: "Now the router"}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var live streamed
+	res, err := Run(ctx, llm, session, SystemPrompt{Stable: "sys"}, nil, RunOptions{}, live.on)
+	if err != nil {
+		t.Fatalf("a turn that runs out of time must keep its work, got error %v", err)
+	}
+	if !strings.Contains(res.Text, "stopped: this took too long") {
+		t.Fatalf("missing time-limit notice: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "Creating the engine.\n\nNow the router\n\n") {
+		t.Fatalf("text streamed before the time limit must be saved: %q", res.Text)
+	}
+	if live.text.String() != res.Text {
+		t.Fatalf("streamed %q differs from saved %q", live.text.String(), res.Text)
+	}
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].Name != "openloc_list_jobs" {
+		t.Fatalf("tool calls already run must be kept: %+v", res.ToolCalls)
+	}
+	if len(live.replies) != 1 || live.replies[0][0] != continueReply {
+		t.Fatalf("want one Continue reply button, got %v", live.replies)
+	}
+}
+
+func TestRunCancelledTurnStillFails(t *testing.T) {
+	// A closed tab or a draining server cancels the turn: nobody is there
+	// to press Continue, so it stays an error.
+	llm := &stallingLLM{fakeLLM: fakeLLM{
+		turns: []*Turn{{StopReason: StopToolUse,
+			ToolCalls: []ToolCall{{ID: "a", Name: "openloc_list_jobs", Args: json.RawMessage(`{}`)}}}},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	if _, err := Run(ctx, llm, newFakeSession(), SystemPrompt{Stable: "sys"}, nil, RunOptions{}, func(Event) {}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunNormalEndHasNoNotice(t *testing.T) {
+	llm := &fakeLLM{deltas: []string{"Hi."}, turns: []*Turn{{Text: "Hi.", StopReason: "end_turn"}}}
+	var live streamed
+	res, err := Run(context.Background(), llm, newFakeSession(), SystemPrompt{Stable: "sys"}, nil, RunOptions{}, live.on)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "Hi." || len(live.replies) != 0 {
+		t.Fatalf("plain answer changed: text %q, replies %v", res.Text, live.replies)
 	}
 }
 

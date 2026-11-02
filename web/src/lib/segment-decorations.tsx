@@ -9,6 +9,9 @@ import { mergeRanges, withGhosts, type DecoratedRange } from './text-ranges'
 import { tmDiffRanges } from './tm-diff'
 import { trackChangeRanges } from './track-changes'
 import { searchRanges } from './text-search'
+import { placeableRanges, type Placeable } from './placeables'
+import { HIGHLIGHT_CLASS } from './text-highlight'
+import { escapeRegExp } from './regex'
 
 /**
  * Where a window of the text sits among the windows it is drawn in. Text
@@ -60,8 +63,8 @@ export function renderRanges(
       if (at > pos) out.push(<span key={`${keyPrefix}p${i}`}>{leaf(slice.slice(pos, at))}</span>)
       out.push(
         r.className
-          ? <span key={`${keyPrefix}g${i}`} className={r.className} title={r.title}>{leaf(r.ghost)}</span>
-          : <span key={`${keyPrefix}g${i}`}>{leaf(r.ghost)}</span>,
+          ? <span key={`${keyPrefix}g${i}`} className={r.className} title={r.title} data-ghost="">{leaf(r.ghost)}</span>
+          : <span key={`${keyPrefix}g${i}`} data-ghost="">{leaf(r.ghost)}</span>,
       )
       pos = at
       continue
@@ -72,7 +75,7 @@ export function renderRanges(
     if (s > pos) out.push(<span key={`${keyPrefix}p${i}`}>{leaf(slice.slice(pos, s))}</span>)
     out.push(
       r.className
-        ? <span key={`${keyPrefix}m${i}`} className={r.className} title={r.title}>{leaf(slice.slice(s, e))}</span>
+        ? <span key={`${keyPrefix}m${i}`} className={r.className} title={r.title} data-placeable={r.insertText}>{leaf(slice.slice(s, e))}</span>
         : <span key={`${keyPrefix}m${i}`}>{leaf(slice.slice(s, e))}</span>,
     )
     pos = e
@@ -94,11 +97,17 @@ export interface Decorations {
   changesFrom?: string | null
   /** Search hits to tint (lib/text-search.ts `searchHighlightRegex`). */
   search?: RegExp | null
+  /** Source placeables to underline (lib/placeables.ts). */
+  placeables?: readonly Placeable[]
+  /** The Find term, marked as `highlightText` marks it. It rides along when
+   *  another decoration sends the text down the range path; on its own it
+   *  does not (see `hasDecorations`). */
+  highlightTerm?: string | null
 }
 
 /** Whether `decorationRanges` has anything to compute for these options. */
-export function hasDecorations({ terms, diffAgainst, changesFrom, search }: Decorations): boolean {
-  return (terms != null && terms.length > 0) || !!diffAgainst || !!changesFrom || !!search
+export function hasDecorations({ terms, diffAgainst, changesFrom, search, placeables }: Decorations): boolean {
+  return (terms != null && terms.length > 0) || !!diffAgainst || !!changesFrom || !!search || (placeables != null && placeables.length > 0)
 }
 
 /**
@@ -106,12 +115,18 @@ export function hasDecorations({ terms, diffAgainst, changesFrom, search }: Deco
  * them identically. Term underlines and the diffs paint different CSS axes and
  * can cover the same characters, so overlaps merge rather than one winning.
  */
-export function decorationRanges(flat: string, { terms, target, diffAgainst, changesFrom, search }: Decorations): DecoratedRange[] {
+export function decorationRanges(flat: string, { terms, target, diffAgainst, changesFrom, search, placeables, highlightTerm }: Decorations): DecoratedRange[] {
   const term = terms && terms.length > 0 ? termRanges(flat, terms, target) : []
   const diff = diffAgainst ? tmDiffRanges(flat, diffAgainst) : []
   const changes = changesFrom ? trackChangeRanges(flat, changesFrom) : []
   const added = changes.filter(r => r.ghost === undefined)
   const hits = search ? searchRanges(flat, search) : []
-  const painted = diff.length === 0 && added.length === 0 && hits.length === 0 ? term : mergeRanges(term, diff, added, hits)
+  const marked = placeables && placeables.length > 0 ? placeableRanges(flat, placeables) : []
+  const found = highlightTerm?.trim()
+    ? searchRanges(flat, new RegExp(escapeRegExp(highlightTerm), 'gi')).map(r => ({ ...r, className: HIGHLIGHT_CLASS }))
+    : []
+  const painted = diff.length === 0 && added.length === 0 && hits.length === 0 && marked.length === 0 && found.length === 0
+    ? term
+    : mergeRanges(term, diff, added, hits, marked, found)
   return withGhosts(painted, changes.filter(r => r.ghost !== undefined))
 }

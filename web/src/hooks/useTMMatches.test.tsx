@@ -23,6 +23,10 @@ const hit = (source: string): TMMatch => ({
   source_rich_text: null,
   target_rich_text: null,
   tm_name: 'Demo TM',
+  created_at: '2026-09-03T09:10:00Z',
+  updated_at: '2026-10-12T14:32:00Z',
+  created_by: 'Daniel Weber <daniel@test.com>',
+  updated_by: 'Anna Miller <anna@test.com>',
   tm_id: 1,
 })
 

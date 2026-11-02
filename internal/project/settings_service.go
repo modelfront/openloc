@@ -2,13 +2,17 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
 	"openloc/internal/mtrouter"
 	"openloc/internal/projectevents"
+	"openloc/internal/segmentationapi"
 	"openloc/internal/settings"
 )
 
@@ -28,6 +32,7 @@ type SettingsPatch struct {
 	NearExactPenaltyPct   *int32
 	AutoComplete          *bool
 	InlineHTML            *bool
+	LinguistTerms         *string
 	TMLookupOrder         *string
 	// QAProfileID, MTRouterID: 0 clears, a positive id sets.
 	QAProfileID *int64
@@ -35,6 +40,9 @@ type SettingsPatch struct {
 	// TMProfileID links the project to a TM profile. Leaving one is
 	// DetachTMProfile's job, so there is no clear.
 	TMProfileID *int64
+	// SegmentationProfileID picks the profile new uploads are split with; it
+	// must fit the project's source language. There is no clear.
+	SegmentationProfileID *int64
 }
 
 // SettingsDetail is a project's settings with every assignment list — what
@@ -66,7 +74,7 @@ func (h *Handler) Settings(ctx context.Context, tenantID, id int64) (SettingsDet
 	if err != nil {
 		return SettingsDetail{}, fmt.Errorf("list terminology assignments: %w", err)
 	}
-	steps, err := settings.ListStepsWithDeadlines(ctx, h.queries, project.SettingsProfileID)
+	steps, err := settings.ListStepsWithDeadlines(ctx, h.queries, tenantID, project.SettingsProfileID)
 	if err != nil {
 		return SettingsDetail{}, err
 	}
@@ -116,6 +124,14 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 	if err := settings.ValidateTMLookupOrder(p.TMLookupOrder); err != nil {
 		return ProjectSettings{}, err
 	}
+	if err := settings.ValidateLinguistTerms(p.LinguistTerms); err != nil {
+		return ProjectSettings{}, err
+	}
+	if p.SegmentationProfileID != nil {
+		if err := segmentationapi.Check(ctx, h.queries, tenantID, *p.SegmentationProfileID, project.SourceLanguage); err != nil {
+			return ProjectSettings{}, err
+		}
+	}
 	linking := p.TMProfileID != nil
 	// Match scoring belongs to the profile while linked.
 	if err := settings.GuardTMScoringEdit(profile.TmProfileID != nil || linking, p.FuzzyThreshold, p.SublanguagePenaltyPct, p.NearExactPenaltyPct, p.TMLookupOrder); err != nil {
@@ -140,6 +156,7 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 		NearExactPenaltyPct:   settings.ClampPctPtr(p.NearExactPenaltyPct),
 		AutoComplete:          p.AutoComplete,
 		InlineHtml:            p.InlineHTML,
+		LinguistTerms:         p.LinguistTerms,
 		TmLookupOrder:         p.TMLookupOrder,
 	})
 	if err != nil {
@@ -157,12 +174,29 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 			return ProjectSettings{}, err
 		}
 	}
+	if p.SegmentationProfileID != nil {
+		updated, err = h.queries.SetSettingsProfileSegmentationProfile(ctx, db.SetSettingsProfileSegmentationProfileParams{
+			ID: project.SettingsProfileID, SegmentationProfileID: p.SegmentationProfileID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectSettings{}, segmentationapi.ErrProfileNotFound
+		}
+		if err != nil {
+			return ProjectSettings{}, fmt.Errorf("set segmentation profile: %w", err)
+		}
+	}
 
 	if changes := projectevents.Diff(settingsMap(profile), settingsMap(updated)); changes != nil {
 		if ch, ok := changes["qa_profile_id"]; ok {
 			changes["qa_profile_name"] = projectevents.Change{
 				From: qaProfileName(ctx, h.queries, tenantID, idFromChange(ch.From)),
 				To:   qaProfileName(ctx, h.queries, tenantID, idFromChange(ch.To)),
+			}
+		}
+		if ch, ok := changes["segmentation_profile_id"]; ok {
+			changes["segmentation_profile_name"] = projectevents.Change{
+				From: segmentationProfileName(ctx, h.queries, tenantID, idFromChange(ch.From)),
+				To:   segmentationProfileName(ctx, h.queries, tenantID, idFromChange(ch.To)),
 			}
 		}
 		if ch, ok := changes["mt_router_id"]; ok {

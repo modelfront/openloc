@@ -58,6 +58,13 @@ func (d Decision) InFirstStep() bool {
 	return !d.found || d.state.inFirstStep()
 }
 
+// InClearWindow reports whether the edit's current task is at or before the
+// workflow's first human or hybrid step. True when the edit has no job or the
+// job has no workflow.
+func (d Decision) InClearWindow() bool {
+	return !d.found || d.state.inClearWindow()
+}
+
 // Result is what an allowed edit sees. ActiveID is the job's in-progress task
 // after Apply (0 when the job has none); Reopened is true when this call put a
 // completed task back in progress.

@@ -159,6 +159,14 @@ func resolveSteps(ctx context.Context, q db.Querier, tenantID int64, existing []
 type ReplaceResult struct {
 	Before, After []db.WorkflowStep
 	StartedSteps  []StartedStep
+	// Changed counts the positions kept from Before that now hold another step.
+	Changed int
+}
+
+// StepsEdited reports whether the replace changed which steps the workflow
+// has or their order; an assignee or deadline edit does not count.
+func (r ReplaceResult) StepsEdited() bool {
+	return r.Changed > 0 || len(r.Before) != len(r.After)
 }
 
 // StartedStep is a job whose appended step went straight to in_progress.
@@ -188,10 +196,10 @@ func sameIdentity(e db.WorkflowStep, r resolvedStep) bool {
 // hanging off them — survive an edit that reorders, renames or appends; only
 // trailing rows the edit dropped are deleted.
 //
-// Jobs already running on the profile constrain the edit:
-// a position some job has REACHED (its assignment is no longer pending) keeps
-// its identity — swapping it for another step or removing it is refused with
-// a conflict error. Positions nobody reached may change freely, and appended
+// Jobs already running on the profile constrain the edit: every position up
+// to the furthest one a job has reached (see StepLocks) keeps its identity —
+// swapping it for another step or removing it is refused with a conflict
+// error. The positions after it may change freely, and appended
 // steps are materialised as pending assignments on every non-completed job;
 // a job whose workflow had already finished starts the first appended step at
 // once so it really does get "another step at the end".
@@ -227,26 +235,28 @@ func ReplaceWorkflowSteps(ctx context.Context, q db.Querier, tenantID, profileID
 		}
 	}
 
-	// Safety rule: every existing position a job has reached must keep its
-	// identity, and must not be dropped.
+	// Safety rule: every locked position (up to the furthest step a job has
+	// reached) must keep its identity, and must not be dropped.
+	locks, err := LoadStepLocks(ctx, q, tenantID, profileID, existing)
+	if err != nil {
+		return ReplaceResult{}, err
+	}
 	for i, e := range existing {
-		changed := i >= len(resolved) || !sameIdentity(e, resolved[i])
-		if !changed {
+		if !locks.Locked(i) || (i < len(resolved) && sameIdentity(e, resolved[i])) {
 			continue
 		}
-		n, err := q.CountStartedAssignmentsForStep(ctx, e.ID)
-		if err != nil {
-			return ReplaceResult{}, fmt.Errorf("count started assignments: %w", err)
+		verb := "changed"
+		if i >= len(resolved) {
+			verb = "removed"
 		}
-		if n > 0 {
-			verb := "changed"
-			if i >= len(resolved) {
-				verb = "removed"
-			}
+		if n := locks.ReachedJobs[e.ID]; n > 0 {
 			return ReplaceResult{}, httputil.NewConflictError(fmt.Sprintf(
-				"step %d (%q) has already been reached by %d job(s) and cannot be %s — steps may only be added at the end or changed where no job has got to them yet",
-				i+1, e.Name, n, verb))
+				"step %d (%q) has already been reached by %d job(s) and cannot be %s — only the steps after step %d can change",
+				i+1, e.Name, n, verb, locks.LockedThrough+1))
 		}
+		return ReplaceResult{}, httputil.NewConflictError(fmt.Sprintf(
+			"step %d (%q) comes before a step a job has reached and cannot be %s — only the steps after step %d can change",
+			i+1, e.Name, verb, locks.LockedThrough+1))
 	}
 
 	// Read before the loop rewrites them: the per-language rows each step had.
@@ -256,6 +266,7 @@ func ReplaceWorkflowSteps(ctx context.Context, q db.Querier, tenantID, profileID
 	}
 
 	var appended []db.WorkflowStep
+	changed := 0
 	for i, r := range resolved {
 		if i < len(existing) {
 			if err := q.UpdateSettingsWorkflowStep(ctx, db.UpdateSettingsWorkflowStepParams{
@@ -265,6 +276,20 @@ func ReplaceWorkflowSteps(ctx context.Context, q db.Querier, tenantID, profileID
 				StepType: r.stepType, StepDefinitionID: r.definitionID,
 			}); err != nil {
 				return ReplaceResult{}, fmt.Errorf("update workflow step: %w", err)
+			}
+			if !sameIdentity(existing[i], r) {
+				// Another step now sits here (only past the locked prefix): its
+				// waiting tasks are that step's, with its assignee and dates.
+				changed++
+				if err := q.ReseedWaitingStepAssignments(ctx, db.ReseedWaitingStepAssignmentsParams{
+					AssignedTo: r.assignee, WorkflowStepID: existing[i].ID, TenantID: tenantID,
+				}); err != nil {
+					return ReplaceResult{}, fmt.Errorf("reseed step assignments: %w", err)
+				}
+				if err := writeLanguageDeadlines(ctx, q, tenantID, existing[i].ID, r.langDeadlines); err != nil {
+					return ReplaceResult{}, err
+				}
+				continue
 			}
 			if r.assignee != nil && !ptr.Equal(existing[i].DefaultAssignee, r.assignee) {
 				if err := q.ReassignInFlightStepAssignments(ctx, db.ReassignInFlightStepAssignmentsParams{
@@ -315,7 +340,13 @@ func ReplaceWorkflowSteps(ctx context.Context, q db.Querier, tenantID, profileID
 	if err != nil {
 		return ReplaceResult{}, fmt.Errorf("list workflow steps: %w", err)
 	}
-	return ReplaceResult{Before: existing, After: after, StartedSteps: started}, nil
+	res := ReplaceResult{Before: existing, After: after, StartedSteps: started, Changed: changed}
+	if res.StepsEdited() {
+		if err := q.MarkSettingsProfileWorkflowEdited(ctx, profileID); err != nil {
+			return ReplaceResult{}, fmt.Errorf("mark workflow edited: %w", err)
+		}
+	}
+	return res, nil
 }
 
 // materializeAppendedSteps gives every non-completed job on the profile a
@@ -390,71 +421,14 @@ func ReplaceWorkflowStepsTx(ctx context.Context, pool database.TxBeginner, tenan
 	return res, nil
 }
 
-// ApplyWorkflow copies a library workflow's steps onto a profile and stamps
-// the provenance pointer. The copy is a snapshot: later edits to the library
-// workflow or its definitions do not reach the profile. Jobs already running
-// on the profile constrain it exactly like a step edit does (see
-// ReplaceWorkflowSteps): reached positions must keep their identity. Call
-// inside a transaction.
-func ApplyWorkflow(ctx context.Context, q db.Querier, tenantID, workflowID, profileID int64) (ReplaceResult, error) {
-	if _, err := q.GetApplicableWorkflow(ctx, db.GetApplicableWorkflowParams{ID: workflowID, TenantID: tenantID}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ReplaceResult{}, httputil.NewClientError("workflow not found in this tenant")
-		}
-		return ReplaceResult{}, fmt.Errorf("get workflow: %w", err)
+// ClearWorkflow removes a profile's steps and its library workflow link: a
+// draft whose form has no workflow.
+func ClearWorkflow(ctx context.Context, q db.Querier, profileID int64) error {
+	if err := q.DeleteSettingsWorkflowSteps(ctx, profileID); err != nil {
+		return fmt.Errorf("clear workflow steps: %w", err)
 	}
-	defSteps, err := q.ListWorkflowDefinitionSteps(ctx, db.ListWorkflowDefinitionStepsParams{WorkflowID: workflowID, TenantID: tenantID})
-	if err != nil {
-		return ReplaceResult{}, fmt.Errorf("list workflow steps: %w", err)
-	}
-	inputs := make([]StepInput, 0, len(defSteps))
-	for _, s := range defSteps {
-		id := s.StepDefinitionID
-		inputs = append(inputs, StepInput{StepDefinitionID: &id, DefaultAssignee: s.DefaultAssignee})
-	}
-	res, err := ReplaceWorkflowSteps(ctx, q, tenantID, profileID, inputs)
-	if err != nil {
-		return ReplaceResult{}, err
-	}
-	if err := q.SetSettingsProfileWorkflow(ctx, db.SetSettingsProfileWorkflowParams{ID: profileID, WorkflowID: &workflowID}); err != nil {
-		return ReplaceResult{}, fmt.Errorf("stamp profile workflow: %w", err)
-	}
-	return res, nil
-}
-
-// CreateDefaultWorkflowSteps gives a fresh profile the default workflow:
-// Translation → Review, both human, linked to the tenant's default step
-// definitions (created here when missing). Workflow steps are mandatory, so
-// every profile creation path calls this.
-func CreateDefaultWorkflowSteps(ctx context.Context, q db.Querier, tenantID, profileID int64) error {
-	if err := stepdef.EnsureDefaults(ctx, q, tenantID); err != nil {
-		return err
-	}
-	for i, name := range stepdef.DefaultNames {
-		def, err := q.GetStepDefinitionByName(ctx, db.GetStepDefinitionByNameParams{TenantID: tenantID, Name: name})
-		if err != nil {
-			return fmt.Errorf("get default step definition %q: %w", name, err)
-		}
-		if _, err := q.CreateSettingsWorkflowStep(ctx, db.CreateSettingsWorkflowStepParams{
-			SettingsProfileID: profileID, Name: def.Name, StepOrder: int32(i), RoleRequired: def.RoleRequired,
-			AiRouterID: def.AiRouterID, StepType: def.StepType, StepDefinitionID: &def.ID,
-		}); err != nil {
-			return fmt.Errorf("create default workflow step %q: %w", name, err)
-		}
+	if err := q.SetSettingsProfileWorkflow(ctx, db.SetSettingsProfileWorkflowParams{ID: profileID, WorkflowID: nil}); err != nil {
+		return fmt.Errorf("clear profile workflow: %w", err)
 	}
 	return nil
-}
-
-// WorkflowName resolves a profile's provenance pointer to a display name,
-// including retired library rows. nil when the profile has no pointer or the
-// row cannot be read.
-func WorkflowName(ctx context.Context, q db.Querier, tenantID int64, workflowID *int64) *string {
-	if workflowID == nil {
-		return nil
-	}
-	wf, err := q.GetWorkflowAny(ctx, db.GetWorkflowAnyParams{ID: *workflowID, TenantID: tenantID})
-	if err != nil {
-		return nil
-	}
-	return &wf.Name
 }

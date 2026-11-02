@@ -6,16 +6,16 @@ import { mapWithConcurrency } from '../lib/concurrency'
 import { queryKeys } from '../lib/query-keys'
 import { invalidateProjectStatus } from '../lib/query-invalidation'
 
-// Client-side fan-out for bulk job actions. The per-job apply/assign/deadline
-// endpoints are all single-job POSTs that enqueue async work; there is no
-// batch endpoint, so the bulk bar loops
-// over the selected jobs here, with a bounded concurrency cap, then does ONE
-// round of cache invalidation at the end rather than a storm of per-job
-// invalidations (each single-job hook invalidates job context; firing that N
-// times would trigger N refetches of the same project lists).
+// Bulk job actions. Apply TM / Apply MT go out as one request that queues a
+// worker task per job (runQueued). The other actions are single-job
+// endpoints, so the bulk bar loops over the selected jobs here, with a bounded
+// concurrency cap, then does ONE round of cache invalidation at the end
+// rather than a storm of per-job invalidations (each single-job hook
+// invalidates job context; firing that N times would trigger N refetches of
+// the same project lists).
 
-// Cap concurrent in-flight requests. Each request only enqueues an async
-// pipeline task, so this is about not hammering the server, not throughput.
+// Cap concurrent in-flight requests, so a large selection does not hammer
+// the server.
 const CONCURRENCY = 5
 
 export interface BulkRunArgs<T> {
@@ -97,5 +97,42 @@ export function useBulkJobActions(projectId: number) {
     }
   }
 
-  return { run, runningAction }
+  /**
+   * One request that queues work for every item (`call`); the answer says how
+   * many were queued and how many the server skipped.
+   */
+  async function runQueued<T>({ actionKey, label, items, call, skipped, serverSkipReason }: {
+    actionKey: string
+    label: string
+    items: T[]
+    call: (items: T[]) => Promise<{ queued: number; skipped: number }>
+    skipped: { count: number; reason: string }
+    serverSkipReason: string
+  }): Promise<void> {
+    if (items.length === 0) {
+      toast.info(skipped.count > 0
+        ? `${label}: nothing to do — ${skipped.count} selected job(s) ${skipped.reason}.`
+        : `${label}: no eligible jobs selected.`)
+      return
+    }
+    setRunningAction(actionKey)
+    try {
+      const res = await call(items)
+      const parts: string[] = []
+      if (skipped.count > 0) parts.push(`${skipped.count} skipped (${skipped.reason})`)
+      if (res.skipped > 0) parts.push(`${res.skipped} skipped (${serverSkipReason})`)
+      const suffix = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
+      const msg = `${label}: ${res.queued} job(s) queued${suffix}.`
+      if (res.queued === 0) toast.error(msg)
+      else if (res.skipped > 0) toast.warning(msg)
+      else toast.success(msg)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `${label} failed.`)
+    } finally {
+      invalidate()
+      setRunningAction(null)
+    }
+  }
+
+  return { run, runQueued, runningAction }
 }

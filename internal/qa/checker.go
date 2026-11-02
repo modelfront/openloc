@@ -49,6 +49,9 @@ type CheckAllParams struct {
 	Rules          map[string]string
 	RuleConfigs    map[string][]byte // check_type → JSON config
 	Concepts       []ConceptForQA
+	SourceLanguage string // how the Numbers checks read numbers, dates and times
+	TargetLanguage string
+	NumberFormat   NumberFormatConfig // the number_format rule's config; used only while the rule is on
 }
 
 // CheckAll runs all enabled checks against a source/target pair.
@@ -107,8 +110,10 @@ func CheckAllWithParams(ctx context.Context, p CheckAllParams) []Issue {
 		issues = append(issues, CheckTagsDetailed(tagSource, tagTarget, sev, cfg)...)
 	}
 
-	if sev, ok := p.Rules["number_consistency"]; ok {
-		issues = append(issues, CheckNumbers(p.Source, p.Target, sev)...)
+	issues = append(issues, checkNumberGroup(p)...)
+
+	if sev, ok := p.Rules[PlaceablesCheckType]; ok {
+		issues = append(issues, checkPlaceables(ctx, p, sev)...)
 	}
 
 	if sev, ok := p.Rules["terminology"]; ok {
@@ -663,71 +668,6 @@ func CheckTargetIdenticalToSource(source, target, severity string) *Issue {
 		}
 	}
 	return nil
-}
-
-var numberPattern = regexp.MustCompile(`-?\d[\d,.]*`)
-
-// CheckNumbers verifies numbers are consistent between source and target — in
-// BOTH directions — and returns up to two issues at DIFFERENT
-// severities:
-//
-//   - number_consistency (configured severity): numbers present in the source
-//     but missing from the target. Dropping a source number is a real defect;
-//     at error severity it blocks confirm.
-//   - number_added (WARNING, non-blocking): numbers present in the target but
-//     absent from the source. Often legitimate (spelled-out → digit, footnote
-//     markers), so it is surfaced but never walls the translator (product
-//     decision 2026-08-12). Hardcoded warning, independent of the rule's
-//     configured severity.
-func CheckNumbers(source, target, severity string) []Issue {
-	srcNums := numberPattern.FindAllString(source, -1)
-	tgtNums := numberPattern.FindAllString(target, -1)
-	if len(srcNums) == 0 && len(tgtNums) == 0 {
-		return nil
-	}
-
-	normalize := func(s string) string {
-		return strings.ReplaceAll(strings.ReplaceAll(s, ",", ""), ".", "")
-	}
-
-	srcSet := make(map[string]bool, len(srcNums))
-	for _, n := range srcNums {
-		srcSet[normalize(n)] = true
-	}
-	tgtSet := make(map[string]bool, len(tgtNums))
-	for _, n := range tgtNums {
-		tgtSet[normalize(n)] = true
-	}
-
-	collectUnmatched := func(nums []string, other map[string]bool) []string {
-		var out []string
-		seen := make(map[string]bool)
-		for _, n := range nums {
-			norm := normalize(n)
-			if !other[norm] && !seen[norm] {
-				out = append(out, n)
-				seen[norm] = true
-			}
-		}
-		return out
-	}
-
-	var issues []Issue
-	if missing := collectUnmatched(srcNums, tgtSet); len(missing) > 0 {
-		issues = append(issues, Issue{
-			CheckType: "number_consistency",
-			Severity:  severity,
-			Message:   fmt.Sprintf("Missing number(s) in target: %s", strings.Join(missing, ", ")),
-		})
-	}
-	if extra := collectUnmatched(tgtNums, srcSet); len(extra) > 0 {
-		issues = append(issues, Issue{
-			CheckType: "number_added",
-			Severity:  "warning",
-			Message:   fmt.Sprintf("Number(s) in target but not source: %s", strings.Join(extra, ", ")),
-		})
-	}
-	return issues
 }
 
 // CheckTerminology checks that each triggered concept's approved translation is

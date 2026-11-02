@@ -13,12 +13,13 @@ import { createCustomer, type Customer } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 const customerSchema = z.object({
-  name: z.string().min(1, 'Customer name is required').max(200, 'Name too long (max 200)'),
+  name: z.string().trim().min(1, 'Customer name is required').max(200, 'Name too long (max 200)'),
 })
 type CustomerFormValues = z.infer<typeof customerSchema>
 
@@ -35,9 +36,10 @@ export function CreateCustomerDialog({ open, onClose, onCreated }: Props) {
     register,
     handleSubmit,
     reset,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
+    mode: 'onTouched',
     defaultValues: { name: '' },
   })
 
@@ -79,13 +81,7 @@ export function CreateCustomerDialog({ open, onClose, onCreated }: Props) {
           <DialogTitle>Create customer</DialogTitle>
         </DialogHeader>
         <div
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              e.stopPropagation()
-              submit()
-            }
-          }}
+          onKeyDown={submitOnEnter(submit)}
         >
           <FormField label="Name" error={errors.name?.message} required>
             <Input
@@ -101,7 +97,8 @@ export function CreateCustomerDialog({ open, onClose, onCreated }: Props) {
             <Button
               type="button"
               onClick={() => submit()}
-              disabled={createMut.isPending}
+              disabled={createMut.isPending || !isValid}
+              disabledReason={isValid ? undefined : MISSING_REQUIRED_REASON}
             >
               {createMut.isPending ? 'Creating...' : 'Create'}
             </Button>

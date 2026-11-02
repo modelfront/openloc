@@ -143,3 +143,120 @@ describe('DataTable phone min width', () => {
     expect(minWidth()).toBe('520px')
   })
 })
+
+describe('DataTable sortable columns', () => {
+  const onToggle = vi.fn()
+  function Multi() {
+    const columns: ColumnDef<Row>[] = [
+      { id: 'name', header: 'Name', cell: ({ row }) => row.original.name, meta: { sort: { direction: null, onToggle: (s: boolean) => onToggle('name', s) } } },
+      { id: 'first', header: 'First', size: 100, cell: () => 'x', meta: { sort: { direction: 'asc', rank: 1, onToggle: (s: boolean) => onToggle('first', s) } } },
+      { id: 'second', header: 'Second', size: 100, cell: () => 'y', meta: { sort: { direction: 'desc', rank: 2, onToggle: (s: boolean) => onToggle('second', s) } } },
+    ]
+    return <DataTable columns={columns} data={[{ name: 'a' }]} />
+  }
+
+  it('offers a sort on a column the list is not sorted by, without aria-sort', () => {
+    render(<Multi />)
+    expect(screen.getByRole('columnheader', { name: /Name/ })).not.toHaveAttribute('aria-sort')
+    expect(screen.getByTestId('sort-name')).toBeInTheDocument()
+    expect(screen.queryByTestId('sort-rank-name')).not.toBeInTheDocument()
+  })
+
+  it('numbers the levels and puts aria-sort on the first level only', () => {
+    render(<Multi />)
+    expect(screen.getByRole('columnheader', { name: /First/ })).toHaveAttribute('aria-sort', 'ascending')
+    expect(screen.getByRole('columnheader', { name: /Second/ })).not.toHaveAttribute('aria-sort')
+    expect(screen.getByTestId('sort-rank-first')).toHaveTextContent(/^1sorted 1st, ascending$/)
+    expect(screen.getByTestId('sort-rank-second')).toHaveTextContent(/^2sorted 2nd, descending$/)
+  })
+
+  it('tells the caller whether Shift was held', () => {
+    render(<Multi />)
+    fireEvent.click(screen.getByTestId('sort-name'))
+    fireEvent.click(screen.getByTestId('sort-second'), { shiftKey: true })
+    expect(onToggle.mock.calls).toEqual([['name', false], ['second', true]])
+  })
+
+  it("draws the arrow the caller names over the one the direction implies", () => {
+    const columns: ColumnDef<Row>[] = [
+      { id: 'plain', header: 'Plain', cell: () => 'a', meta: { sort: { direction: 'asc', onToggle } } },
+      { id: 'natural', header: 'Natural', cell: () => 'b', meta: { sort: { direction: 'asc', arrow: 'down', onToggle } } },
+    ]
+    render(<DataTable columns={columns} data={[{ name: 'a' }]} />)
+    expect(screen.getByTestId('sort-plain').querySelector('.lucide-arrow-up')).not.toBeNull()
+    expect(screen.getByTestId('sort-natural').querySelector('.lucide-arrow-down')).not.toBeNull()
+    // aria-sort still tells the values' order.
+    expect(screen.getByRole('columnheader', { name: /Natural/ })).toHaveAttribute('aria-sort', 'ascending')
+  })
+})
+
+describe('DataTable row clicks', () => {
+  const columns: ColumnDef<Row>[] = [
+    { id: 'name', header: 'Name', cell: ({ row }) => row.original.name },
+    { id: 'open', header: 'Open', cell: () => <a href="/elsewhere" data-testid="cell-link">Open</a> },
+  ]
+
+  it('passes the click event to onRowClick', () => {
+    const onRowClick = vi.fn()
+    render(<DataTable columns={columns} data={[{ name: 'a' }]} onRowClick={onRowClick} rowTestId={r => `row-${r.name}`} />)
+    fireEvent.click(screen.getByTestId('row-a'), { metaKey: true })
+    expect(onRowClick).toHaveBeenCalledTimes(1)
+    expect(onRowClick.mock.calls[0][0]).toEqual({ name: 'a' })
+    expect(onRowClick.mock.calls[0][1].metaKey).toBe(true)
+  })
+
+  it('leaves a middle click alone unless the table takes it', () => {
+    const onRowClick = vi.fn()
+    render(<DataTable columns={columns} data={[{ name: 'a' }]} onRowClick={onRowClick} rowTestId={r => `row-${r.name}`} />)
+    fireEvent(screen.getByTestId('row-a'), new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(onRowClick).not.toHaveBeenCalled()
+  })
+
+  it('takes a middle click on the row when asked, but not a right click nor one on a link in a cell', () => {
+    const onRowAuxClick = vi.fn()
+    render(<DataTable columns={columns} data={[{ name: 'a' }]} onRowClick={() => {}} onRowAuxClick={onRowAuxClick} rowTestId={r => `row-${r.name}`} />)
+    const row = screen.getByTestId('row-a')
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, button: 2 }))
+    fireEvent(screen.getByTestId('cell-link'), new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(onRowAuxClick).not.toHaveBeenCalled()
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(onRowAuxClick).toHaveBeenCalledTimes(1)
+    expect(onRowAuxClick.mock.calls[0][0]).toEqual({ name: 'a' })
+  })
+})
+
+// virtualRows: a long table mounts only the rows near the screen and still
+// grows the page — its scroll container is the nearest scrolling ancestor.
+describe('DataTable virtual rows', () => {
+  const many = Array.from({ length: 1000 }, (_, i) => ({ name: `row ${i}` }))
+  const nameColumn: ColumnDef<{ name: string }>[] = [{ id: 'name', header: 'Name', cell: ({ row }) => row.original.name }]
+
+  function renderInScroller(props: Partial<Parameters<typeof DataTable<{ name: string }, unknown>>[0]>) {
+    // jsdom has no layout: give the scroller a 400px viewport.
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { top: 0, left: 0, right: 800, bottom: 400, width: 800, height: 400, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+    })
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(400)
+    render(
+      <div style={{ overflowY: 'auto', height: 400 }} data-testid="scroller">
+        <DataTable columns={nameColumn} data={many} {...props} />
+      </div>,
+    )
+    return () => { rect.mockRestore(); height.mockRestore() }
+  }
+
+  it('mounts only a window of rows', () => {
+    const restore = renderInScroller({ virtualRows: { rowHeight: 40 } })
+    const rows = screen.getAllByRole('row').filter(r => r.textContent?.startsWith('row '))
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.length).toBeLessThan(60)
+    expect(rows[0].textContent).toBe('row 0')
+    restore()
+  })
+
+  it('mounts every row without it', () => {
+    const restore = renderInScroller({})
+    expect(screen.getAllByRole('row').filter(r => r.textContent?.startsWith('row '))).toHaveLength(1000)
+    restore()
+  })
+})

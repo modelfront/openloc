@@ -114,9 +114,18 @@ function HistoryRow({ row }: { row: HistoryRowModel }) {
     status.kind === 'approved'
     || (!fromHandoff && (status.kind === 'human' || status.kind === 'propagation')))
 
+  // A join moves the removed row's history here and labels each event with
+  // that row's number; a split labels the row it cut. The join itself lists
+  // the rows it put together.
+  const fromSegment = typeof shown.details?.from_segment === 'string' ? shown.details.from_segment : null
+  const joined = Array.isArray(shown.details?.joined_segments)
+    ? `Segments ${(shown.details.joined_segments as unknown[]).join(' + ')}`
+    : null
+
   const meta = [
     confirmed ? 'Approved' : null,
     outcomeText,
+    joined,
     shown.step_name,
   ].filter(Boolean)
 
@@ -133,6 +142,11 @@ function HistoryRow({ row }: { row: HistoryRowModel }) {
         {apeApproved && (
           <Chip size="small" color={HISTORY_KIND_CHIP_COLORS.auto_approved} className="shrink-0">
             {HISTORY_KIND_LABELS.auto_approved}
+          </Chip>
+        )}
+        {fromSegment && (
+          <Chip size="small" className="shrink-0" data-testid="history-from-segment">
+            From segment {fromSegment}
           </Chip>
         )}
         {source && <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate">{source}</span>}

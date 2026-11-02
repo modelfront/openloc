@@ -147,6 +147,6 @@ function CompleteStepForm({
 }
 
 /** "Segment <b>4</b>" or "Segments <b>3, 8</b>". */
-function SegmentList({ numbers }: { numbers: number[] }) {
+function SegmentList({ numbers }: { numbers: string[] }) {
   return <>{numbers.length === 1 ? 'Segment' : 'Segments'} <strong>{numbers.join(', ')}</strong></>
 }

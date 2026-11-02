@@ -182,8 +182,8 @@ func TestSetTermAssignments_DefaultMode(t *testing.T) {
 		t.Fatalf("expected 1 term assignment, got %d", len(mq.createdTerm))
 	}
 	a := mq.createdTerm[0]
-	if a.Mode != "read" {
-		t.Errorf("expected default mode 'read', got %q", a.Mode)
+	if a.Mode != "read_write" {
+		t.Errorf("expected default mode 'read_write', got %q", a.Mode)
 	}
 	if a.SourceLanguage != "en-us" || a.TargetLanguage != "fr-fr" {
 		t.Errorf("expected normalized langs, got %s/%s", a.SourceLanguage, a.TargetLanguage)
@@ -284,5 +284,24 @@ func TestApplyTermAssignments_RejectsCrossTenantTermBase(t *testing.T) {
 		if len(mq.createdTerm) != 0 {
 			t.Fatalf("term base %d: no assignment must be written, got %d", id, len(mq.createdTerm))
 		}
+	}
+}
+
+// A term-base mode other than read, write or read_write is refused: Write
+// decides which bases the editor's quick-add adds terms to, so a misspelled
+// mode would silently take a base out of it.
+func TestSetTermAssignments_RejectsUnknownMode(t *testing.T) {
+	mq := &mockQuerier{}
+	req := makeRequest(map[string]any{
+		"assignments": []map[string]any{
+			{"term_base_id": 5, "source_language": "en", "target_language": "fr", "mode": "readwrite", "priority": 1},
+		},
+	})
+	_, err := SetTermAssignments(context.Background(), mq, 1, 10, req)
+	if msg, ok := httputil.AsClientError(err); !ok || !strings.Contains(msg, "mode") {
+		t.Fatalf("err = %v, want a client error about the mode", err)
+	}
+	if len(mq.createdTerm) != 0 {
+		t.Errorf("%d assignments created for a refused request, want 0", len(mq.createdTerm))
 	}
 }

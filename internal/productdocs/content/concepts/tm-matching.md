@@ -3,7 +3,7 @@ title: "How TM matching works"
 summary: "Context matches, exact matches, fuzzy bands, penalties and the lookup order of several memories."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-16
+updated_at: 2026-10-29
 sources:
   - internal/settings/tm_lookup_order.go
   - internal/translationmemory/**
@@ -13,6 +13,8 @@ sources:
   - internal/pipeline/tm_write.go
   - web/src/components/settings/TMScoringFields.tsx
   - web/src/lib/tm-diff.ts
+  - web/src/lib/tm-penalties.ts
+  - web/src/components/EditorSidebarTMMatchCard.tsx
   - web/src/components/project/TMAssignmentSection.tsx
 limitations:
   - android-tm-generations
@@ -32,7 +34,7 @@ A translation memory (TM) is a store of sentences that humans already translated
 
 **Context match (101%).** An exact match where the surrounding text also matches. When a human confirms a segment, the memory remembers the sentence before it and the sentence after it. If a later document has the same sentence with the same neighbours, the match is shown as 101%. This matters for short sentences such as "Open" where the right translation depends on where the sentence sits. A 101% match behaves like a 100% match: filled in and approved.
 
-Both neighbours have to match — one is not enough. For the first and last segment of a document, the missing neighbour counts as a match, so they can reach 101% too.
+Both neighbours have to match — one is not enough. For the first and last segment of a document, the missing neighbour counts as a match, so they can reach 101% too. The neighbours are the rows of the job as they are now: when a segment is split or joined in the editor, the pieces of a split are each other's neighbours.
 
 Entries imported from a TMX file carry no context, so they can only reach 100%. A memory remembers only the most recent context for each sentence.
 
@@ -63,6 +65,8 @@ Setting a penalty to 0% tells the system that the difference does not matter —
 - **Language-variant mismatch at 0%.** A Brazilian entry on a European project counts as a true exact match again and is approved automatically. Use this on purpose, not by accident.
 - **Near-exact at 0%.** The match reads 100%, but the segment is still filled in for review. Only text that is identical, character for character, is ever approved without a person — "Hello." and "Hello" are not the same text, whatever the penalty says.
 
+In the editor, a match card that lost points shows its text match crossed out before its percentage and lists each deduction when you point at it — see [Use the sidebar](/docs/guides/cat-editor#use-the-sidebar).
+
 ## Several memories
 
 Each project has a numbered list of memories; the top row is the **Master**. The lookup goes down the list in order. A memory is used when its languages share a base language with the project's, so an `en` memory serves an `en-US` project and the other way round.
@@ -74,7 +78,7 @@ When more than one memory has a match, **TM lookup order** decides which one fil
 
 Inside one memory, the best percentage wins. A penalty lowers the percentage, so a clean entry outranks an equally similar penalised one.
 
-Each row has two checkboxes: **Read** means the memory is used for matches, **Write** means confirmed translations are saved into it.
+A memory's name opens that memory in a new tab. Each row has two checkboxes: **Read** means the memory is used for matches, **Write** means confirmed translations are saved into it.
 
 ![By match percentage: exact matches let every memory fill what the ones above it missed. For fuzzy matches the search stops at the first memory above the threshold, so a better percentage further down the list is never reached.](assets/tm-lookup-order.svg)
 
@@ -88,7 +92,7 @@ Every **Approved** segment is saved to the write memories: when a linguist confi
 
 One case follows from the status rather than from the rule: an exact match that pre-translation confirmed for you is **Approved**, so completing the step copies it into the write memories like any other approved segment. That does no harm — the text came out of a memory to begin with — but it does mean a write memory can gain entries nobody typed.
 
-Each memory keeps one entry per source sentence **per language pair**. Confirming the same sentence again replaces the stored translation; the old one is kept in the entry's history. Entries are stored with the project's own language codes. Imported entries are the exception: a TMX file may bring several translations of the same sentence, and all of them are kept.
+Each memory keeps one entry per source sentence **per language pair**. Confirming the same sentence again replaces the stored translation; the old one is kept in the entry's history. Entries are stored with the project's own language codes. Each piece of a split segment, and each joined row, is looked up and saved as its own entry, because it has its own source text. Imported entries are the exception: a TMX file may bring several translations of the same sentence, and all of them are kept.
 
 ## TM profiles
 

@@ -12,7 +12,7 @@ import { useEngineCreateActions } from '../../hooks/useEngineCreateActions'
 import { useScrollToError } from '../../hooks/useScrollToError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Alert } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { RouterEngineChip } from '../ai/ai-engine-chips'
 import { FormField } from '@/components/ui/form-field'
@@ -57,8 +57,8 @@ export function StepDefinitionDialog({ open, onClose, initial, onSubmit }: Props
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting, isDirty },
-  } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: defaultsFrom(initial) })
+    formState: { errors, isSubmitting, isDirty, isValid },
+  } = useForm<FormValues>({ resolver: zodResolver(schema), mode: 'onTouched', defaultValues: defaultsFrom(initial) })
   useScrollToError(errors)
   const [serverError, setServerError] = useState<string | null>(null)
 
@@ -176,8 +176,13 @@ export function StepDefinitionDialog({ open, onClose, initial, onSubmit }: Props
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
-            {/* Update stays disabled until something changed; Create is always live. */}
-            <Button type="submit" disabled={isSubmitting || (!!initial && !isDirty)} data-testid="step-definition-submit">
+            {/* Disabled until the required fields are filled in; Update also until something changed. */}
+            <Button
+              type="submit"
+              disabled={isSubmitting || !isValid || (!!initial && !isDirty)}
+              disabledReason={!isValid ? MISSING_REQUIRED_REASON : initial && !isDirty ? NOTHING_CHANGED_REASON : undefined}
+              data-testid="step-definition-submit"
+            >
               {isSubmitting ? 'Saving…' : initial ? 'Update' : 'Create step'}
             </Button>
           </DialogFooter>

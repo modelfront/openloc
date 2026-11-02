@@ -10,7 +10,7 @@ import { uploadChatFile } from '../../api'
 import { capturePage } from '../../lib/screenshot'
 import { errorText } from '../../lib/error-text'
 import type { ChatSend } from './chat-ask'
-import { ChatAskCard, WAIT_FOR_ANSWER } from './ChatCard'
+import { ChatAskCard } from './ChatCard'
 
 /** The messages the panel sends for the user's answer. */
 const SCREENSHOT_SENT = 'Here is the screenshot.'
@@ -20,7 +20,7 @@ type State = 'idle' | 'capturing' | 'review' | 'sending' | 'sent' | 'skipped'
 
 const STATUS: Partial<Record<State, string>> = { sent: 'Screenshot sent.', skipped: 'Skipped.' }
 
-export function ChatScreenshotRequest({ reason, disabled, onSend }: { reason: string; disabled?: boolean; onSend: ChatSend }) {
+export function ChatScreenshotRequest({ reason, disabledReason: waitReason, onSend }: { reason: string; disabledReason?: string; onSend: ChatSend }) {
   const [state, setState] = useState<State>('idle')
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
@@ -62,7 +62,7 @@ export function ChatScreenshotRequest({ reason, disabled, onSend }: { reason: st
     void onSend(SCREENSHOT_SKIPPED)
     setState('skipped')
   }
-  const waitReason = disabled ? WAIT_FOR_ANSWER : undefined
+  const disabled = waitReason !== undefined
 
   return (
     <ChatAskCard reason={reason} state={state} status={STATUS[state]} testId="chat-ask-screenshot">

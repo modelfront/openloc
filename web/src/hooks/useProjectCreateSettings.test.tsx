@@ -4,9 +4,8 @@
 // Workflow card owns it), while the settings editor emits whole SettingsValues
 // objects that still carry the workflowSteps it mounted with — so a scalar or
 // TM change arriving after a workflow pick must not clobber the steps, and a
-// workflow pick must not clobber a TM added before it. And the seed-once
-// effect must pick the first library workflow exactly once, never over a deep
-// link.
+// workflow pick must not clobber a TM added before it. And nothing picks a
+// workflow or fills in steps for the user.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
@@ -60,7 +59,9 @@ describe('useProjectCreateSettings — draft ownership', () => {
     api.listWorkflows.mockResolvedValue([{ id: 7, name: 'Standard' }])
     api.getWorkflow.mockResolvedValue({ id: 7, name: 'Standard', steps: [libraryStep(11, 'QE')] })
     const { result } = setup()
-    await waitFor(() => expect(result.current.currentSettings().workflowSteps.map(x => x.name)).toEqual(['QE']))
+    await waitFor(() => expect(result.current.workflows).toHaveLength(1))
+    await act(async () => { await result.current.handleWorkflowChange('7') })
+    expect(result.current.currentSettings().workflowSteps.map(x => x.name)).toEqual(['QE'])
 
     // The editor's payload still carries the steps it mounted with (empty).
     act(() => result.current.handleSettingsChange({ ...DEFAULT_SETTINGS, mtOnUpload: false, workflowSteps: [] }))
@@ -73,7 +74,7 @@ describe('useProjectCreateSettings — draft ownership', () => {
   it('a workflow pick after adding a TM keeps the TM assignment', async () => {
     api.getWorkflow.mockResolvedValue({ id: 7, name: 'Standard', steps: [libraryStep(11, 'QE')] })
     const { result } = setup()
-    await waitFor(() => expect(result.current.currentSettings().workflowSteps).toHaveLength(2))
+    await waitFor(() => expect(result.current.workflows).toEqual([]))
 
     act(() => result.current.handleSettingsChange({
       ...DEFAULT_SETTINGS,
@@ -88,33 +89,33 @@ describe('useProjectCreateSettings — draft ownership', () => {
 })
 
 describe('useProjectCreateSettings — seeding', () => {
-  it('pre-selects the first library workflow once', async () => {
+  it('leaves the workflow unpicked when the org has library workflows', async () => {
     api.listWorkflows.mockResolvedValue([{ id: 7, name: 'Standard' }, { id: 8, name: 'Other' }])
-    api.getWorkflow.mockImplementation((id: number) => Promise.resolve(
-      id === 7
-        ? { id: 7, name: 'Standard', steps: [libraryStep(11, 'Translation'), libraryStep(12, 'Review')] }
-        : { id: 8, name: 'Other', steps: [libraryStep(12, 'Review')] },
-    ))
+    api.getWorkflow.mockResolvedValue({ id: 8, name: 'Other', steps: [libraryStep(12, 'Review')] })
     const { result, rerender } = setup()
 
-    await waitFor(() => expect(result.current.workflowId).toBe('7'))
-    await waitFor(() => expect(result.current.settings.workflowSteps.map(s => s.name)).toEqual(['Translation', 'Review']))
-    expect(api.getWorkflow).toHaveBeenCalledTimes(1)
-    expect(api.getWorkflow).toHaveBeenCalledWith(7)
+    await waitFor(() => expect(result.current.workflows).toHaveLength(2))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.workflowId).toBe('')
+    expect(result.current.settings.workflowSteps).toEqual([])
+    expect(workflowStepsError(result.current.settings.workflowSteps, result.current.workflowId)).toBe('Pick a workflow, or create one')
+    expect(api.getWorkflow).not.toHaveBeenCalled()
 
-    // A refetch / re-render after the user picked another one must not re-seed.
+    // The user's pick stands across a re-render.
     await act(async () => { await result.current.handleWorkflowChange('8') })
     rerender()
     expect(result.current.workflowId).toBe('8')
     expect(result.current.settings.workflowSteps.map(s => s.name)).toEqual(['Review'])
-    expect(api.getWorkflow).toHaveBeenCalledTimes(2)
+    expect(api.getWorkflow).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to the library Translation → Review steps when the org has no workflows', async () => {
+  it('adds no steps of its own when the org has no library workflows', async () => {
     const { result } = setup()
-    await waitFor(() => expect(result.current.settings.workflowSteps.map(s => s.step_definition_id)).toEqual([11, 12]))
+    await waitFor(() => expect(result.current.workflows).toEqual([]))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.settings.workflowSteps).toEqual([])
     expect(result.current.workflowId).toBe('')
-    expect(api.getWorkflow).not.toHaveBeenCalled()
+    expect(workflowStepsError(result.current.settings.workflowSteps, result.current.workflowId)).toBe('Pick a workflow, or create one')
   })
 
   it('leaves a Duplicate deep link alone', async () => {
@@ -140,12 +141,14 @@ describe('useProjectCreateSettings — start from', () => {
     tm_assignments: [], mt_assignments: [], term_assignments: [], workflow_steps: [],
   }
 
-  it('From scratch after a template prefill restores the defaults and re-seeds the workflow', async () => {
+  it('From scratch after a template prefill restores the defaults and leaves the workflow unpicked', async () => {
     api.listWorkflows.mockResolvedValue([{ id: 7, name: 'Standard' }])
     api.getWorkflow.mockResolvedValue({ id: 7, name: 'Standard', steps: [libraryStep(11, 'Translation')] })
     api.getTemplate.mockResolvedValue(templateDetail)
     const { result } = setup()
-    await waitFor(() => expect(result.current.workflowId).toBe('7'))
+    await waitFor(() => expect(result.current.workflows).toHaveLength(1))
+    await act(async () => { await result.current.handleWorkflowChange('7') })
+    expect(result.current.workflowId).toBe('7')
 
     await act(async () => { await result.current.handleTemplateChange('5') })
     expect(result.current.templateId).toBe('5')
@@ -157,10 +160,10 @@ describe('useProjectCreateSettings — start from', () => {
     expect(result.current.templateId).toBe('')
     expect(result.current.hasStartFromDeepLink).toBe(false)
     expect(result.current.currentSettings().fuzzyThreshold).toBe(DEFAULT_SETTINGS.fuzzyThreshold)
-    // …and From scratch brings back the same first workflow a fresh page gets.
-    expect(result.current.workflowId).toBe('7')
-    expect(result.current.currentSettings().workflowSteps.map(s => s.name)).toEqual(['Translation'])
-    expect(api.getWorkflow).toHaveBeenCalledTimes(2)
+    // …and From scratch leaves it unpicked, like a fresh page.
+    expect(result.current.workflowId).toBe('')
+    expect(result.current.currentSettings().workflowSteps).toEqual([])
+    expect(api.getWorkflow).toHaveBeenCalledTimes(1)
   })
 
   it('a ?fromProject deep link names the source project; a template pick replaces it', async () => {
@@ -248,5 +251,22 @@ describe('pretranslateRouterError', () => {
   it('passes with a router, or with any other workflow', () => {
     expect(pretranslateRouterError({ ...DEFAULT_SETTINGS, workflowSteps: [pre], mtRouterId: 3 })).toBeNull()
     expect(pretranslateRouterError({ ...DEFAULT_SETTINGS, workflowSteps: [draft('Translation')], mtRouterId: null })).toBeNull()
+  })
+})
+
+describe('useProjectCreateSettings — requireWorkflow', () => {
+  it('optional: no workflow and no steps pass; a half-filled step row is still refused', async () => {
+    const { result } = setup()
+    await waitFor(() => expect(result.current.workflows).toEqual([]))
+
+    let ok = false
+    act(() => { ok = result.current.requireWorkflow({ optional: true }) })
+    expect(ok).toBe(true)
+    act(() => { ok = result.current.requireWorkflow() })
+    expect(ok).toBe(false)
+
+    act(() => result.current.setWorkflowSteps([{ step_definition_id: null, name: '', step_type: 'human' } as unknown as WorkflowStep]))
+    act(() => { ok = result.current.requireWorkflow({ optional: true }) })
+    expect(ok).toBe(false)
   })
 })

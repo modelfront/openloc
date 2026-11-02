@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"openloc/internal/segmentation"
 )
 
 // A DrawingML paragraph (a:p) holds paragraph properties, a list of pieces —
@@ -93,8 +95,8 @@ type pptxSentence struct {
 }
 
 // newPPTXParagraph builds the model of p. It returns nil when the paragraph
-// has no text to translate.
-func newPPTXParagraph(src string, p *xmlNode) *pptxParagraph {
+// has no text to translate; the error is the segmenter's.
+func newPPTXParagraph(src string, p *xmlNode, seg *segmentation.Segmenter) (*pptxParagraph, error) {
 	para := &pptxParagraph{node: p, src: src, prefix: elementPrefix(p.startTag(src)), basePiece: -1}
 	var raw []pptxPiece
 	for _, c := range p.children {
@@ -126,14 +128,16 @@ func newPPTXParagraph(src string, p *xmlNode) *pptxParagraph {
 	para.pieces = mergeRuns(raw)
 	para.layout()
 	if !hasWords(para.plain) {
-		return nil
+		return nil, nil
 	}
 	para.pickBase()
-	para.split()
-	if len(para.sentences) == 0 {
-		return nil
+	if err := para.split(seg); err != nil {
+		return nil, err
 	}
-	return para
+	if len(para.sentences) == 0 {
+		return nil, nil
+	}
+	return para, nil
 }
 
 // hasWords reports whether text holds a letter or a digit. Text without
@@ -240,7 +244,7 @@ func (p *pptxParagraph) isChipText(i int) bool {
 
 // split cuts the paragraph into sentences. A break may only follow base
 // text, so a sentence never ends inside a chip.
-func (p *pptxParagraph) split() {
+func (p *pptxParagraph) split(seg *segmentation.Segmenter) error {
 	breakable := make([]bool, len(p.plain))
 	for _, s := range p.spans {
 		if p.pieces[s.piece].kind == pptxText && !p.isChipText(s.piece) {
@@ -249,9 +253,14 @@ func (p *pptxParagraph) split() {
 			}
 		}
 	}
-	for _, rng := range SplitSentences(p.plain, breakVeto(breakable)) {
+	ranges, err := seg.Split(p.plain, breakVeto(breakable))
+	if err != nil {
+		return err
+	}
+	for _, rng := range ranges {
 		p.sentences = append(p.sentences, p.sentence(rng))
 	}
+	return nil
 }
 
 // inSentence reports whether span s belongs to the sentence covering rng. A

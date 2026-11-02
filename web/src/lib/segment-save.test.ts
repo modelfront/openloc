@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
-import { applyAcquiredRow, applySegmentSaveSuccess, optimisticAdjustLeverage, patchPropagatedSiblings } from './segment-save'
+import { applyAcquiredRow, applySegmentSaveSuccess, leverageFacts, optimisticAdjustLeverage, patchPropagatedSiblings } from './segment-save'
 import { queryKeys } from './query-keys'
 import type { Translation } from '../api/projects'
+import type { EditorRow } from '../api/editor'
+import { indexLookup, type EditorIndexData, type IndexRow } from './editor-index'
 import type { JobLeverage, LeverageBand } from '../api/analyses'
 
 /**
@@ -12,6 +14,18 @@ import type { JobLeverage, LeverageBand } from '../api/analyses'
  * These tests pin all four invariants in one place so a refactor that drops a
  * step trips here.
  */
+
+/** Seed one loaded page of editor rows holding these translations. */
+function seedPage(qc: QueryClient, jobId: number, trs: Translation[]) {
+  qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 0, String(trs[0]?.segment_id ?? 0)),
+    trs.map(t => ({ segment: { id: t.segment_id } as EditorRow['segment'], translation: t, previous_step_text: null, placeables: [] })))
+}
+
+/** The translations of every loaded page. */
+function pageTranslations(qc: QueryClient, jobId: number): Translation[] {
+  return qc.getQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(jobId) })
+    .flatMap(([, rows]) => rows ?? []).flatMap(r => (r.translation ? [r.translation] : []))
+}
 
 function makeTr(id: number, overrides: Partial<Translation> = {}): Translation {
   // Minimal Translation shape; only fields the helper reads. Cast away the
@@ -49,6 +63,7 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: baselineRef,
       dirtyRef,
       setOriginalText,
+      prior: undefined, wordCount: 1, charCount: 1,
     })
 
     expect(baselineRef.current,
@@ -59,7 +74,7 @@ describe('applySegmentSaveSuccess', () => {
   it('patches the React Query translations cache so the next render reads the fresh updated_at', () => {
     const qc = new QueryClient()
     const jobId = 42
-    qc.setQueryData(queryKeys.job.translations(jobId), [
+    seedPage(qc, jobId, [
       makeTr(1, { updated_at: '2026-04-30T11:00:00Z', active_text: 'old' }),
       makeTr(2, { updated_at: '2026-04-30T11:00:00Z' }),
     ])
@@ -70,9 +85,10 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: { current: null },
       dirtyRef: { current: true },
       setOriginalText: vi.fn(),
+      prior: undefined, wordCount: 1, charCount: 1,
     })
 
-    const cached = qc.getQueryData<Translation[]>(queryKeys.job.translations(jobId))
+    const cached = pageTranslations(qc, jobId)
     expect(cached?.find(r => r.id === 1)?.updated_at).toBe('2026-04-30T12:00:00Z')
     expect(cached?.find(r => r.id === 1)?.active_text).toBe('new')
     // Other rows untouched.
@@ -88,6 +104,7 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: { current: null },
       dirtyRef: { current: true },
       setOriginalText,
+      prior: undefined, wordCount: 1, charCount: 1,
     })
     expect(setOriginalText).toHaveBeenCalledWith('just-saved')
   })
@@ -101,6 +118,7 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: { current: null },
       dirtyRef,
       setOriginalText: vi.fn(),
+      prior: undefined, wordCount: 1, charCount: 1,
     })
     expect(
       dirtyRef.current,
@@ -120,6 +138,7 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: baselineRef,
       dirtyRef,
       setOriginalText,
+      prior: undefined, wordCount: 1, charCount: 1,
     })).not.toThrow()
 
     // dirty still cleared (the optimistic-lock invariant holds regardless),
@@ -141,6 +160,7 @@ describe('applySegmentSaveSuccess', () => {
       baselineUpdatedAtRef: { current: null },
       dirtyRef: { current: true },
       setOriginalText,
+      prior: undefined, wordCount: 1, charCount: 1,
     })
     expect(setOriginalText).not.toHaveBeenCalled()
   })
@@ -154,10 +174,41 @@ describe('applySegmentSaveSuccess', () => {
  * `applySegmentSaveSuccess` uses for the active row, but for N siblings.
  */
 describe('patchPropagatedSiblings', () => {
+  // A repetition-heavy file propagates to hundreds of rows at once; the index
+  // of a large file holds tens of thousands. All siblings land in one write of
+  // the index, not one copy of it per sibling.
+  it('moves every sibling in the index with one write', () => {
+    const qc = new QueryClient()
+    const jobId = 42
+    const row = (id: number): IndexRow => ({
+      segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 1, status: 'needs_review',
+      hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null, locked: false,
+      inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2,
+    })
+    const rows = [row(1), row(2), row(3)]
+    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), {
+      rows, repetitionStats: { segments: 2, words: 2, characters: 2 }, lookup: indexLookup(rows),
+    })
+    let writes = 0
+    const unsubscribe = qc.getQueryCache().subscribe(e => {
+      if (e.type === 'updated' && e.action.type === 'success' && e.query.queryKey[2] === 'index') writes++
+    })
+
+    patchPropagatedSiblings({ queryClient: qc, jobId, wordCount: 1, charCount: 1, siblings: [
+      makeTr(2, { active_text: 'propagated', status: 'approved' }),
+      makeTr(3, { active_text: 'propagated', status: 'approved' }),
+    ] })
+    unsubscribe()
+
+    const idx = qc.getQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId))!.rows
+    expect(idx.map(r => r.status)).toEqual(['needs_review', 'approved', 'approved'])
+    expect(writes).toBe(1)
+  })
+
   it('patches every sibling row in the cache with its post-propagation updated_at', () => {
     const qc = new QueryClient()
     const jobId = 42
-    qc.setQueryData(queryKeys.job.translations(jobId), [
+    seedPage(qc, jobId, [
       makeTr(1, { updated_at: '2026-04-30T10:00:00Z', active_text: 'orig-1' }),
       makeTr(2, { updated_at: '2026-04-30T10:00:00Z', active_text: 'orig-2' }),
       makeTr(3, { updated_at: '2026-04-30T10:00:00Z', active_text: 'orig-3' }),
@@ -172,9 +223,9 @@ describe('patchPropagatedSiblings', () => {
       makeTr(2, { updated_at: '2026-04-30T11:00:00Z', active_text: 'propagated' }),
       makeTr(3, { updated_at: '2026-04-30T11:00:00Z', active_text: 'propagated' }),
     ]
-    patchPropagatedSiblings({ queryClient: qc, jobId, siblings })
+    patchPropagatedSiblings({ queryClient: qc, jobId, siblings, wordCount: 1, charCount: 1 })
 
-    const cached = qc.getQueryData<Translation[]>(queryKeys.job.translations(jobId))
+    const cached = pageTranslations(qc, jobId)
     expect(cached?.find(r => r.id === 2)?.updated_at).toBe('2026-04-30T11:00:00Z')
     expect(cached?.find(r => r.id === 2)?.active_text).toBe('propagated')
     expect(cached?.find(r => r.id === 3)?.updated_at).toBe('2026-04-30T11:00:00Z')
@@ -189,12 +240,94 @@ describe('patchPropagatedSiblings', () => {
   it('is a no-op when siblings is empty', () => {
     const qc = new QueryClient()
     const jobId = 42
-    qc.setQueryData(queryKeys.job.translations(jobId), [
+    seedPage(qc, jobId, [
       makeTr(1, { updated_at: 'unchanged' }),
     ])
-    expect(() => patchPropagatedSiblings({ queryClient: qc, jobId, siblings: [] })).not.toThrow()
-    const cached = qc.getQueryData<Translation[]>(queryKeys.job.translations(jobId))
+    expect(() => patchPropagatedSiblings({ queryClient: qc, jobId, siblings: [], wordCount: 1, charCount: 1 })).not.toThrow()
+    const cached = pageTranslations(qc, jobId)
     expect(cached?.[0]?.updated_at).toBe('unchanged')
+  })
+})
+
+// A save moves its row in the leverage bar, and a propagation moves the
+// repetitions, which share the confirmed segment's word and character counts.
+// The index says which band and status each row was counted in, so the bar
+// moves without a full-job refetch.
+describe('leverage bar after a save', () => {
+  const zero: LeverageBand = {
+    segments: 0, words: 0, characters: 0,
+    segments_auto_approved: 0, words_auto_approved: 0, characters_auto_approved: 0,
+    segments_needs_review: 0, words_needs_review: 0, characters_needs_review: 0,
+  }
+  const jobId = 42
+  const row = (id: number): IndexRow => ({
+    segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 2, status: 'needs_review',
+    hasText: true, stepEdited: false, predicted: false, origin: 'tm', tmMatch: 100, locked: false,
+    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2,
+  })
+  function seed(indexed: number[]): QueryClient {
+    const qc = new QueryClient()
+    const rows = indexed.map(row)
+    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), {
+      rows, repetitionStats: { segments: 2, words: 4, characters: 22 }, lookup: indexLookup(rows),
+    })
+    qc.setQueryData<JobLeverage>(queryKeys.job.leverage(jobId), {
+      job_id: jobId, target_language: 'es',
+      tm_101: zero, tm_100: { ...zero, segments: 2, words: 4, characters: 22, segments_needs_review: 2, words_needs_review: 4, characters_needs_review: 22 },
+      tm_85_99: zero, tm_65_84: zero, new: zero, repetitions: zero,
+    })
+    return qc
+  }
+  const approved = (id: number) => makeTr(id, { status: 'approved', origin: { translation_origin: 'tm', valid: true }, tm_match_percent: 100 } as Partial<Translation>)
+
+  it('moves each sibling from the status the index holds into approved, with no refetch', () => {
+    const qc = seed([2, 3])
+    patchPropagatedSiblings({ queryClient: qc, jobId, siblings: [approved(2), approved(3)], wordCount: 2, charCount: 11 })
+
+    expect(qc.getQueryData<JobLeverage>(queryKeys.job.leverage(jobId))!.tm_100).toEqual({ ...zero, segments: 2, words: 4, characters: 22 })
+    expect(qc.getQueryState(queryKeys.job.leverage(jobId))?.isInvalidated).toBe(false)
+  })
+
+  const save = (qc: QueryClient, saved: Translation, prior: Translation) => applySegmentSaveSuccess({
+    queryClient: qc, jobId, saved, prior, wordCount: 2, charCount: 11,
+    baselineUpdatedAtRef: { current: null }, dirtyRef: { current: true }, setOriginalText: vi.fn(),
+  })
+  const stalePrior = (id: number) => makeTr(id, { status: 'needs_review', origin: { translation_origin: 'tm', valid: true }, tm_match_percent: 100 } as Partial<Translation>)
+
+  it("moves a saved row from the status the index holds, not the caller's copy", () => {
+    const qc = seed([2])
+    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), old => ({ ...old!, rows: [{ ...old!.rows[0], status: 'auto_approved' }] }))
+    qc.setQueryData<JobLeverage>(queryKeys.job.leverage(jobId), old => ({
+      ...old!, tm_100: { ...zero, segments: 1, words: 2, characters: 11, segments_auto_approved: 1, words_auto_approved: 2, characters_auto_approved: 11 },
+    }))
+    save(qc, approved(2), stalePrior(2))
+
+    expect(qc.getQueryData<JobLeverage>(queryKeys.job.leverage(jobId))!.tm_100).toEqual({ ...zero, segments: 1, words: 2, characters: 11 })
+  })
+
+  it("moves a saved row from the caller's copy when the index does not hold it", () => {
+    const qc = seed([])
+    save(qc, approved(2), stalePrior(2))
+
+    expect(qc.getQueryData<JobLeverage>(queryKeys.job.leverage(jobId))!.tm_100.segments_needs_review).toBe(1)
+  })
+
+  // A repetition confirmed while its source's propagation is running: the
+  // propagation moves it first, and the confirm, holding the row as it was
+  // when the key was pressed, must not move it a second time.
+  it('counts a row a propagation already moved only once', () => {
+    const qc = seed([2])
+    patchPropagatedSiblings({ queryClient: qc, jobId, siblings: [approved(2)], wordCount: 2, charCount: 11 })
+    save(qc, approved(2), stalePrior(2))
+
+    expect(qc.getQueryData<JobLeverage>(queryKeys.job.leverage(jobId))!.tm_100.segments_needs_review).toBe(1)
+  })
+
+  it('refetches the bar when a sibling is not in the index', () => {
+    const qc = seed([2])
+    patchPropagatedSiblings({ queryClient: qc, jobId, siblings: [approved(2), approved(3)], wordCount: 2, charCount: 11 })
+
+    expect(qc.getQueryState(queryKeys.job.leverage(jobId))?.isInvalidated).toBe(true)
   })
 })
 
@@ -203,11 +336,11 @@ describe('patchPropagatedSiblings', () => {
 describe('applyAcquiredRow', () => {
   const seed = (rows: Translation[]) => {
     const qc = new QueryClient()
-    qc.setQueryData(queryKeys.job.translations(7), rows)
+    seedPage(qc, 7, rows)
     return qc
   }
   const cached = (qc: QueryClient, id: number) =>
-    qc.getQueryData<Translation[]>(queryKeys.job.translations(7))?.find(r => r.id === id)
+    pageTranslations(qc, 7)?.find(r => r.id === id)
 
   it('patches a newer row', () => {
     const qc = seed([makeTr(1, { active_text: 'mine', updated_at: '2026-10-15T10:00:00.100Z' })])
@@ -255,7 +388,7 @@ describe('optimisticAdjustLeverage', () => {
     const prior = makeTr(1, { status: 'needs_review', origin: mtOrigin })
     const saved = makeTr(1, { status: 'needs_review', origin: tmOrigin, tm_match_percent: 100 })
 
-    optimisticAdjustLeverage(qc, 7, prior, saved, 2, 11)
+    optimisticAdjustLeverage(qc, 7, leverageFacts(prior), leverageFacts(saved), 2, 11)
 
     expect(read(qc).new).toEqual(zero)
     expect(read(qc).tm_100).toEqual(band({ segments: 1, words: 2, characters: 11, segments_needs_review: 1, words_needs_review: 2, characters_needs_review: 11 }))
@@ -266,7 +399,7 @@ describe('optimisticAdjustLeverage', () => {
     const prior = makeTr(1, { status: 'auto_approved', origin: mtOrigin })
     const saved = makeTr(1, { status: 'needs_review', origin: tmOrigin, tm_match_percent: 87 })
 
-    optimisticAdjustLeverage(qc, 7, prior, saved, 2, 11)
+    optimisticAdjustLeverage(qc, 7, leverageFacts(prior), leverageFacts(saved), 2, 11)
 
     expect(read(qc).new).toEqual(zero)
     expect(read(qc).tm_85_99).toEqual(band({ segments: 1, words: 2, characters: 11, segments_needs_review: 1, words_needs_review: 2, characters_needs_review: 11 }))
@@ -277,7 +410,7 @@ describe('optimisticAdjustLeverage', () => {
     const prior = makeTr(1, { status: 'auto_approved', origin: tmOrigin, tm_match_percent: 100 })
     const saved = makeTr(1, { status: 'needs_review', origin: tmOrigin, tm_match_percent: 100 })
 
-    optimisticAdjustLeverage(qc, 7, prior, saved, 2, 11)
+    optimisticAdjustLeverage(qc, 7, leverageFacts(prior), leverageFacts(saved), 2, 11)
 
     expect(read(qc).tm_100).toEqual(band({ segments: 1, words: 2, characters: 11, segments_needs_review: 1, words_needs_review: 2, characters_needs_review: 11 }))
   })

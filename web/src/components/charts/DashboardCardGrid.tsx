@@ -2,9 +2,10 @@
 // dashboards and My dashboards all use it.
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable'
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useSortableSensors } from '@/hooks/useSortableSensors'
 import type { DashboardPreviewChart } from '@/api'
 import { DragHandle } from '@/components/ui/drag-handle'
 import { EditableTitle } from '@/components/list/EditableTitle'
@@ -54,10 +55,7 @@ export function DashboardCardGrid<T extends { id: number }>({ items, onReorder, 
 }) {
   // Pointer AND keyboard: dragging is the only way to reorder dashboards, so it
   // cannot be mouse-only.
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
+  const sensors = useSortableSensors()
   const [order, setOrder] = useState<number[] | null>(null)
   const byId = new Map(items.map(d => [d.id, d]))
   const shown = order

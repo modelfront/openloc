@@ -20,7 +20,7 @@ func TestIntegrationPropagate_SkipsLockedSiblings(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "propagate-locked")
-	projectID := createProject(t, router, "Propagate Locked Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Propagate Locked Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "propagate-locked.txt", db.FileFormatTxt)
 
 	seed := func(pos int32) db.Translation {

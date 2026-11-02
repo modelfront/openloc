@@ -31,6 +31,7 @@ import { EmptyState } from '@/components/layout/EmptyState'
 import { listRowClass } from '@/components/list/list-row'
 import { rowButtonProps } from '@/components/list/row-button'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -104,9 +105,9 @@ export function MTProviderEnginesSection({ canWrite }: { canWrite: boolean }) {
         // Same slot and same button as the LLM section below, so the two lists
         // on this page are created the same way.
         action={canWrite && (
-          <Button size="sm" onClick={() => { setEditingId(null); setShowCreate(true) }} disabled={isLoading || !!failure} data-testid="mt-engine-add">
+          <CreateButton onClick={() => { setEditingId(null); setShowCreate(true) }} disabled={isLoading || !!failure} data-testid="mt-engine-add">
             New MT engine
-          </Button>
+          </CreateButton>
         )}
       />
       {/* Keys live on the other page, so say where — the Provider field here

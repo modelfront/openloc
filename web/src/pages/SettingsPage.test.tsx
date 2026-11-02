@@ -15,8 +15,6 @@ vi.mock('../api', () => ({
   getNotificationPreferences: () =>
     Promise.resolve({ email_assignment: true, email_rejection: true, email_completion: true, email_deadline: true, email_issue_updates: true }),
   updateNotificationPreferences: vi.fn(),
-  listOAuthConnections: () => Promise.resolve([]),
-  revokeOAuthConnection: vi.fn(),
 }))
 // The appearance hook imports this module directly, not through '../api'.
 vi.mock('../api/appearance', async () => {
@@ -37,6 +35,9 @@ const profile: UserProfile = {
   needs_org_selection: false,
   role: 'owner',
 }
+
+// Re-query each time: the button is remounted when its disabled reason comes or goes.
+const saveButton = () => screen.getByRole('button', { name: 'Save changes' })
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -90,14 +91,32 @@ describe('SettingsPage profile', () => {
     renderPage()
     const name = await screen.findByPlaceholderText('Your name')
     expect(name).not.toHaveAttribute('readonly')
-    const save = screen.getByRole('button', { name: 'Save changes' })
-    expect(save).toBeEnabled()
-    expect(save).not.toHaveAttribute('aria-disabled')
+    // Connected apps live on AI settings, next to where they are connected.
+    expect(screen.queryByTestId('connected-apps')).not.toBeInTheDocument()
 
     await user.clear(name)
     await user.type(name, 'New Name')
-    await user.click(save)
+    expect(saveButton()).toBeEnabled()
+    expect(saveButton()).not.toHaveAttribute('aria-disabled')
+    await user.click(saveButton())
     await waitFor(() => expect(updateMe).toHaveBeenCalledWith({ name: 'New Name' }))
+  })
+
+  it('Save is disabled until the name changes, and again once it is saved', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const name = await screen.findByPlaceholderText('Your name')
+    expect(saveButton()).toHaveAttribute('aria-disabled', 'true')
+    await user.hover(saveButton())
+    expect(await screen.findByText('Nothing has changed yet.')).toBeInTheDocument()
+    await user.click(saveButton())
+    expect(updateMe).not.toHaveBeenCalled()
+
+    await user.type(name, ' Jr')
+    expect(saveButton()).not.toHaveAttribute('aria-disabled')
+    await user.click(saveButton())
+    await waitFor(() => expect(updateMe).toHaveBeenCalledWith({ name: 'Org Owner Jr' }))
+    await waitFor(() => expect(saveButton()).toHaveAttribute('aria-disabled', 'true'))
   })
 
   it('the name stops at 200 characters, the same limit as the server', async () => {
@@ -113,9 +132,12 @@ describe('SettingsPage profile', () => {
     updateMe.mockReturnValue(new Promise(() => {}))
     const user = userEvent.setup()
     renderPage()
-    await user.click(await screen.findByRole('button', { name: 'Save changes' }))
+    await user.type(await screen.findByPlaceholderText('Your name'), ' Jr')
+    await user.click(saveButton())
     const saving = await screen.findByRole('button', { name: 'Saving...' })
     await user.hover(saving)
     expect(screen.queryByText(REASON)).not.toBeInTheDocument()
+    expect(screen.queryByText('Nothing has changed yet.')).not.toBeInTheDocument()
+    expect(saving).not.toHaveAttribute('aria-disabled')
   })
 })

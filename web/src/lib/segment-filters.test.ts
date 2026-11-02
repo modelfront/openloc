@@ -1,24 +1,25 @@
 import { describe, it, expect } from 'vitest'
-import { countByDisplayStatus, filterSegments, isFilterActive, DEFAULT_FILTERS, type SegmentFilters } from './segment-filters'
+import { countByDisplayStatus, filterSegments, isFilterActive, DEFAULT_FILTERS, type QAFilter, type SegmentFilters } from './segment-filters'
 import { getRegexError } from './text-search'
-import type { Segment, Translation } from '../api'
+import type { IndexRow } from './editor-index'
 
-const segments: Segment[] = [
-  { id: 1, file_id: 1, source_text: 'Hello world',    position: 0, segment_key: '1', word_count: 2 },
-  { id: 2, file_id: 1, source_text: 'Reset password', position: 1, segment_key: '2', word_count: 2 },
-  { id: 3, file_id: 1, source_text: 'Thank you',      position: 2, segment_key: '3', word_count: 2 },
+function row(segmentId: number, translationId: number | null, over: Partial<IndexRow> = {}): IndexRow {
+  return {
+    segmentId, translationId, position: segmentId - 1, subPosition: 0, joinsNext: false, wordCount: 2,
+    status: 'needs_review', hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null,
+    locked: false, inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, ...over,
+  }
+}
+
+// translation IDs: seg 1 → 10, seg 2 → 11, seg 3 → 12
+const segments: IndexRow[] = [
+  // Origin is the sticky automation lineage: tm|mt|ape|file_import.
+  row(1, 10, { status: 'approved', hasText: true, origin: 'mt' }),
+  // stepEdited → derives as needs_review (edited in this step), not
+  // pre_translated. origin='tm' still drives the origin filter.
+  row(2, 11, { hasText: true, stepEdited: true, origin: 'tm', tmMatch: 80 }),
+  row(3, 12),
 ]
-
-const translations = new Map<number, Translation>([
-  // Origin is the sticky automation-lineage object
-  // {translation_origin, valid} with values tm|mt|ape|file_import.
-  [1, { id: 10, segment_id: 1, target_language: 'es', status: 'approved', active_text: 'Hola mundo', tm_match_percent: null, origin: { translation_origin: 'mt', valid: true }, predict_outcome: { predict_outcome: '', valid: false } } as unknown as Translation],
-  // step_edited → derives as needs_review (edited in this step), not
-  // pre_translated (deriveDisplayStatus). origin='tm' still drives the origin
-  // filter.
-  [2, { id: 11, segment_id: 2, target_language: 'es', status: 'needs_review', active_text: 'Restablecer contraseña', edited_by: 1, step_edited: true, tm_match_percent: 80, origin: { translation_origin: 'tm', valid: true }, predict_outcome: { predict_outcome: '', valid: false } } as unknown as Translation],
-  [3, { id: 12, segment_id: 3, target_language: 'es', status: 'untranslated', active_text: null, tm_match_percent: null, predict_outcome: { predict_outcome: '', valid: false } } as unknown as Translation],
-])
 
 const emptyQA = new Map()
 
@@ -32,122 +33,58 @@ describe('isFilterActive', () => {
   it('returns true when search text set', () => {
     expect(isFilterActive({ ...DEFAULT_FILTERS, searchText: 'hello' })).toBe(true)
   })
+  it('advanced flags alone do not activate filtering', () => {
+    expect(isFilterActive({ ...DEFAULT_FILTERS, caseSensitive: true, useRegex: true, searchTarget: false })).toBe(false)
+  })
 })
 
 describe('filterSegments', () => {
+  const run = (overrides: Partial<SegmentFilters>, textMatches: ReadonlySet<number> | null = null, counts?: Map<number, number>) =>
+    filterSegments(segments, emptyQA, { ...DEFAULT_FILTERS, ...overrides }, textMatches, counts)
+
   it('returns all indices when no filter active', () => {
-    expect(filterSegments(segments, translations, emptyQA, DEFAULT_FILTERS)).toEqual([0, 1, 2])
+    expect(run({})).toEqual([0, 1, 2])
   })
 
   it('filters by status', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, statuses: ['approved'] }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([0])
+    expect(run({ statuses: ['approved'] })).toEqual([0])
   })
 
   it('filters by multiple statuses', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, statuses: ['approved', 'untranslated'] }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([0, 2])
-  })
-
-  it('filters by text search (source)', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, searchText: 'password' }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([1])
-  })
-
-  it('filters by text search (target)', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, searchText: 'contraseña' }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([1])
+    expect(run({ statuses: ['approved', 'untranslated'] })).toEqual([0, 2])
   })
 
   it('filters by origin', () => {
     // seg2 has origin 'tm'; seg1 has 'mt'; seg3 has none — filtering 'tm' selects only [1].
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, origins: ['tm'] }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([1])
+    expect(run({ origins: ['tm'] })).toEqual([1])
   })
 
-  it('combines status + search', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, statuses: ['needs_review'], searchText: 'password' }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([1])
+  // The text search itself runs on the server; the segments it found arrive
+  // as a set of segment ids.
+  it('keeps the segments the server search found', () => {
+    expect(run({ searchText: 'password' }, new Set([2]))).toEqual([1])
   })
 
-  it('returns empty for no matches', () => {
-    const f: SegmentFilters = { ...DEFAULT_FILTERS, searchText: 'xyz123' }
-    expect(filterSegments(segments, translations, emptyQA, f)).toEqual([])
-  })
-})
-
-describe('countByDisplayStatus', () => {
-  it('counts an earlier step\'s AI verdict as pretranslated, a verdict from this step as draft', () => {
-    const scored = new Map(translations)
-    scored.set(1, { ...translations.get(1)!, status: 'needs_review', predict_outcome: { predict_outcome: 'rejected', valid: true } })
-    expect(countByDisplayStatus(segments, scored).needs_review).toBe(2)
-    const before = countByDisplayStatus(segments, scored, new Set([10]))
-    expect(before.needs_review).toBe(1)
-    expect(before.pre_translated).toBe(1)
-    expect(filterSegments(segments, scored, emptyQA, { ...DEFAULT_FILTERS, statuses: ['pre_translated'] }, undefined, new Set([10]))).toEqual([0])
+  it('applies no text filter without search matches', () => {
+    expect(run({ searchText: 'password' }, null)).toEqual([0, 1, 2])
   })
 
-  it('counts each segment once, by the status the status filter matches on', () => {
-    // Segment 4 has no translation row at all: still untranslated.
-    const all = [...segments, { id: 4, file_id: 1, source_text: 'Bye', position: 3, segment_key: '4', word_count: 1 }]
-    const counts = countByDisplayStatus(all, translations)
-    expect(counts).toEqual({ untranslated: 2, pre_translated: 0, needs_review: 1, approved: 1, auto_approved: 0 })
-    // Each count is exactly what that one-status filter keeps.
-    for (const [status, n] of Object.entries(counts)) {
-      expect(filterSegments(all, translations, emptyQA, { ...DEFAULT_FILTERS, statuses: [status] })).toHaveLength(n)
-    }
-  })
-})
-
-describe('advanced search', () => {
-  const run = (overrides: Partial<SegmentFilters>) =>
-    filterSegments(segments, translations, emptyQA, { ...DEFAULT_FILTERS, ...overrides })
-
-  it('case sensitive: exact case matches, wrong case does not', () => {
-    expect(run({ searchText: 'hello', caseSensitive: true })).toEqual([])
-    expect(run({ searchText: 'Hello', caseSensitive: true })).toEqual([0])
+  it('shows nothing when the search found nothing', () => {
+    expect(run({ searchText: 'xyz123' }, new Set())).toEqual([])
   })
 
-  it('scope source-only ignores target text', () => {
-    // 'contraseña' exists only in seg2's target — source-only must miss it.
-    expect(run({ searchText: 'contraseña', searchTarget: false })).toEqual([])
-    expect(run({ searchText: 'password', searchTarget: false })).toEqual([1])
+  it('combines status + search (AND)', () => {
+    expect(run({ statuses: ['needs_review'], searchText: 'o' }, new Set([1, 2]))).toEqual([1])
   })
 
-  it('scope target-only ignores source text', () => {
-    expect(run({ searchText: 'password', searchSource: false })).toEqual([])
-    expect(run({ searchText: 'Hola', searchSource: false })).toEqual([0])
+  it('ignores stale matches once the search text is cleared', () => {
+    expect(run({ searchText: '  ' }, new Set([2]))).toEqual([0, 1, 2])
   })
 
-  it('both scopes off matches nothing (defensive — UI prevents this state)', () => {
-    expect(run({ searchText: 'Hello', searchSource: false, searchTarget: false })).toEqual([])
-  })
-
-  it('regex: anchors and classes work', () => {
-    expect(run({ searchText: '^Hello', useRegex: true })).toEqual([0])
-    expect(run({ searchText: 'rese[t]', useRegex: true })).toEqual([1]) // case-insensitive by default
-  })
-
-  it('regex respects case sensitivity', () => {
-    expect(run({ searchText: 'rese[t]', useRegex: true, caseSensitive: true })).toEqual([])
-    expect(run({ searchText: 'Rese[t]', useRegex: true, caseSensitive: true })).toEqual([1])
-  })
-
-  it('invalid regex matches nothing and does not throw', () => {
-    expect(run({ searchText: '(', useRegex: true })).toEqual([])
-  })
-
-  it('regex metacharacters are literal when regex is off', () => {
-    // '(' as plain substring: no segment contains it → empty, but no throw either.
-    expect(run({ searchText: '(' })).toEqual([])
-    expect(run({ searchText: 'Hello world' })).toEqual([0])
-  })
-
-  // translation IDs: seg 1 → 10, seg 2 → 11, seg 3 → 12
   describe('hasComments', () => {
     const counts = new Map<number, number>([[11, 2]])
     const runWithCounts = (overrides: Partial<SegmentFilters>, c = counts) =>
-      filterSegments(segments, translations, emptyQA, { ...DEFAULT_FILTERS, ...overrides }, c)
+      run(overrides, null, c)
 
     it('keeps only segments whose translation has comments', () => {
       expect(runWithCounts({ hasComments: true })).toEqual([1])
@@ -163,7 +100,7 @@ describe('advanced search', () => {
     })
 
     it('matches nothing when no counts map is supplied', () => {
-      expect(filterSegments(segments, translations, emptyQA, { ...DEFAULT_FILTERS, hasComments: true })).toEqual([])
+      expect(run({ hasComments: true })).toEqual([])
     })
 
     it('ignores zero counts (a deleted-to-empty thread is not "commented")', () => {
@@ -178,9 +115,27 @@ describe('advanced search', () => {
     })
   })
 
-  it('advanced flags alone do not activate filtering', () => {
-    expect(isFilterActive({ ...DEFAULT_FILTERS, caseSensitive: true, useRegex: true, searchTarget: false })).toBe(false)
-    expect(run({ caseSensitive: true, useRegex: true, searchTarget: false })).toEqual([0, 1, 2])
+})
+
+describe('countByDisplayStatus', () => {
+  it('counts an earlier step\'s AI verdict as pretranslated, a verdict from this step as draft', () => {
+    const scored = [row(1, 10, { hasText: true, predicted: true }), segments[1], segments[2]]
+    expect(countByDisplayStatus(scored).needs_review).toBe(2)
+    const before = countByDisplayStatus(scored, new Set([10]))
+    expect(before.needs_review).toBe(1)
+    expect(before.pre_translated).toBe(1)
+    expect(filterSegments(scored, emptyQA, { ...DEFAULT_FILTERS, statuses: ['pre_translated'] }, null, undefined, new Set([10]))).toEqual([0])
+  })
+
+  it('counts each segment once, by the status the status filter matches on', () => {
+    // Segment 4 has no translation row at all: still untranslated.
+    const all = [...segments, row(4, null)]
+    const counts = countByDisplayStatus(all)
+    expect(counts).toEqual({ untranslated: 2, pre_translated: 0, needs_review: 1, approved: 1, auto_approved: 0 })
+    // Each count is exactly what that one-status filter keeps.
+    for (const [status, n] of Object.entries(counts)) {
+      expect(filterSegments(all, emptyQA, { ...DEFAULT_FILTERS, statuses: [status] }, null)).toHaveLength(n)
+    }
   })
 })
 
@@ -193,26 +148,47 @@ describe('getRegexError', () => {
   })
 })
 
-describe('QA filter with ignored findings', () => {
+describe('QA filters', () => {
   const qa = (over: Record<string, unknown>) => ({
     id: 1, translation_id: 10, check_type: 'punctuation', severity: 'error',
     message: 'm', created_at: '', ignored: false, ...over,
   })
-  // seg 1 (tr 10): one active error. seg 2 (tr 11): one IGNORED error only.
+  // seg 1 (tr 10, approved): one active error. seg 2 (tr 11): one IGNORED
+  // error only. seg 3 (tr 12): one active warning. seg 4 (tr 13, approved):
+  // no findings. seg 5: no translation yet.
+  const qaSegments: IndexRow[] = [
+    ...segments,
+    row(4, 13, { status: 'approved', hasText: true }),
+    row(5, null),
+  ]
   const qaMap = new Map([
     [10, [qa({ id: 1, translation_id: 10 })]],
     [11, [qa({ id: 2, translation_id: 11, ignored: true })]],
+    [12, [qa({ id: 3, translation_id: 12, severity: 'warning' })]],
   ])
-  const run = (qaFilter: SegmentFilters['qaFilter']) =>
-    filterSegments(segments, translations, qaMap as never, { ...DEFAULT_FILTERS, qaFilter })
+  const run = (qaFilters: QAFilter[], extra: Partial<SegmentFilters> = {}) =>
+    filterSegments(qaSegments, qaMap as never, { ...DEFAULT_FILTERS, qaFilters, ...extra }, null)
 
   it('has_errors excludes a segment whose only error is ignored', () => {
-    expect(run('has_errors')).toEqual([0])
+    expect(run(['has_errors'])).toEqual([0])
   })
-  it('no_issues includes a segment whose only finding is ignored', () => {
-    expect(run('no_issues')).toEqual([1, 2])
+  it('has_warnings selects warnings only, not segments with just an error', () => {
+    expect(run(['has_warnings'])).toEqual([2])
+  })
+  it('no_issues includes a segment whose only finding is ignored, and segments with no findings', () => {
+    expect(run(['no_issues'])).toEqual([1, 3, 4])
   })
   it('ignored selects only segments with an ignored finding', () => {
-    expect(run('ignored')).toEqual([1])
+    expect(run(['ignored'])).toEqual([1])
+  })
+  it('several picked filters show segments matching any of them', () => {
+    expect(run(['has_errors', 'has_warnings'])).toEqual([0, 2])
+    expect(run(['has_errors', 'ignored'])).toEqual([0, 1])
+  })
+  it('the picked QA filters still narrow the status filter', () => {
+    expect(run(['has_errors', 'has_warnings'], { statuses: ['approved'] })).toEqual([0])
+  })
+  it('a picked QA filter turns filtering on', () => {
+    expect(isFilterActive({ ...DEFAULT_FILTERS, qaFilters: ['ignored'] })).toBe(true)
   })
 })

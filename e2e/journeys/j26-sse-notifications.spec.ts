@@ -2,7 +2,7 @@ import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import {
   inviteMember,
   login,
-  sessionAs,
+  openSessionAs,
   uploadFileViaAPI,
   createProjectViaAPI,
   deleteProjectViaAPI,
@@ -130,7 +130,7 @@ test.describe.serial("J26 — SSE notifications cross-user", () => {
     // A browser session of the member's own: their token for REST calls and
     // their auth cookie for the SSE channel (EventSource only does cookie
     // auth). Sharing the owner's context would clobber the owner's session.
-    ({ page: memberPage, context: memberContext } = await sessionAs(browser, MEMBER_EMAIL));
+    ({ page: memberPage, context: memberContext } = await openSessionAs(browser, MEMBER_EMAIL));
 
     // Register the SSE response listener BEFORE the navigation. The
     // EventSource opens during the page mount; if we awaited

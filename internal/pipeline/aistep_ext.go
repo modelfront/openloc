@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"openloc/internal/ai"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/enginehealth"
 	"openloc/internal/extension"
@@ -77,16 +78,38 @@ func (s *Service) extensionPredictRunner(pred extension.BatchPredictor, file db.
 			}
 			var ce *extension.CallError
 			if errors.As(err, &ce) {
-				// The extension's own message, with the token already removed.
-				cerr := httputil.NewClientError(fmt.Sprintf("The AI step could not complete: %s: %s. Check the %s key in AI settings and try again.", name, ce.Msg, name))
-				// The vendor refused the request itself; a retry sends the same
-				// request. 429 asks to come back later, so it is retried.
-				if ce.VendorStatus >= 400 && ce.VendorStatus < 500 && ce.VendorStatus != http.StatusTooManyRequests {
-					return nil, Permanent(cerr)
+				// The latest vendor request got no answer, the vendor failed, or
+				// it answered and the extension still failed: an outage, which
+				// may be our integration. Checked first: an earlier 4xx in the
+				// same call does not make an unanswered retry the user's.
+				if ce.VendorUnreachable || ce.VendorStatus >= 500 || (ce.VendorStatus != 0 && ce.VendorStatus < 400) {
+					kind := ai.ProviderErrProvider
+					if ce.VendorUnreachable {
+						kind = ai.ProviderErrUnreachable
+					}
+					return nil, &VendorOutageError{
+						Message: fmt.Sprintf("The AI step could not complete: %s: %s. Try again in a few minutes.", name, ce.Msg),
+						Err:     &ai.ProviderError{Provider: pred.Provider(), Status: ce.VendorStatus, Kind: kind},
+					}
 				}
-				return nil, cerr
+				// A vendor 4xx is the user's key, plan or rate: theirs to fix.
+				// The extension's own message, with the token already removed.
+				if ce.VendorStatus >= 400 {
+					cerr := httputil.NewClientError(fmt.Sprintf("The AI step could not complete: %s: %s. Check the %s key in AI settings and try again.", name, ce.Msg, name))
+					// The vendor refused the request itself; a retry sends the
+					// same request. 429 asks to come back later, so it is retried.
+					if ce.VendorStatus != http.StatusTooManyRequests {
+						return nil, Permanent(cerr)
+					}
+					return nil, cerr
+				}
+				// No vendor answer behind it: the extension refused on its
+				// own, crashed or returned bad output. It may be its own
+				// fault, so it is reported.
+				return nil, &ExtensionFailure{Message: fmt.Sprintf("The AI step could not complete: %s: %s.", name, ce.Msg), Provider: pred.Provider()}
 			}
-			return nil, httputil.NewClientError(fmt.Sprintf("The AI step could not complete: %s did not respond. Try again.", name))
+			// The host failed to run the extension (a timeout, a missing export).
+			return nil, &ExtensionFailure{Message: fmt.Sprintf("The AI step could not complete: %s did not respond. Try again.", name), Provider: pred.Provider(), Err: err}
 		}
 		out := make([]aiPredictResult, 0, len(resp.Rows))
 		for _, r := range resp.Rows {
