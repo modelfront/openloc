@@ -2,8 +2,9 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { login, getSeedProjectId, createIsolatedCATJob, openBulkPretranslate, openTaskSteps, setProjectWorkflowStepsViaAPI } from "./helpers";
 
 // Bulk actions on the project page's Tasks tab: selecting task cells reveals
-// the bar above the matrix; its buttons fan each action out across the
-// selection (see BulkJobActionsBar + useBulkJobActions). These run on the
+// the bar above the matrix; Apply TM / Apply MT queue the selection in one
+// request, the other buttons fan out across it (see BulkJobActionsBar +
+// useBulkJobActions). These run on the
 // page's step sections: each job once, holding its current task.
 test.describe("Bulk job actions", () => {
   test.beforeEach(async ({ page }) => {
@@ -40,30 +41,27 @@ test.describe("Bulk job actions", () => {
     await expect(cells(page).nth(2)).not.toBeChecked();
   });
 
-  test("bulk Apply MT fans out to exactly the selected tasks' jobs", async ({ page }) => {
+  test("bulk Apply MT queues exactly the selected tasks' jobs in one request", async ({ page }) => {
     test.setTimeout(60_000);
     const projectId = await getSeedProjectId(page, "Demo Project");
     await page.goto(`/projects/${projectId}`);
     await openTaskSteps(page);
     await expect(cells(page).first()).toBeVisible();
 
-    // Collect the job id of every successful mt-apply POST, so the fan-out is
-    // proven to hit the selected jobs — not none (silent no-op) and not others.
-    const applied = new Set<string>();
-    page.on("response", (r) => {
-      const match = /\/api\/jobs\/(\d+)\/mt-apply$/.exec(r.url());
-      if (match && r.request().method() === "POST" && r.ok()) applied.add(match[1]);
-    });
-
     const selectedJobIds = [await jobIdOf(cells(page).nth(0)), await jobIdOf(cells(page).nth(2))];
     await cells(page).nth(0).click();
     await cells(page).nth(2).click();
     await expect(page.getByTestId("bulk-selected-count")).toHaveText("2 tasks selected");
 
-    await (await openBulkPretranslate(page, "mt")).click();
-
-    await expect(page.getByText(/Apply MT: 2 job\(s\) done/)).toBeVisible({ timeout: 30_000 });
-    await expect.poll(() => [...applied].sort()).toEqual([...selectedJobIds].sort());
+    const [res] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith(`/api/projects/${projectId}/pretranslate`) && r.request().method() === "POST"),
+      (await openBulkPretranslate(page, "mt")).click(),
+    ]);
+    expect(res.ok(), await res.text()).toBe(true);
+    const body = res.request().postDataJSON() as { job_ids: number[]; phase: string };
+    expect(body.phase).toBe("mt");
+    expect(body.job_ids.map(String).sort()).toEqual([...selectedJobIds].sort());
+    await expect(page.getByText(/Apply MT: 2 job\(s\) queued/)).toBeVisible({ timeout: 30_000 });
   });
 
   test("a step header selects every task of that step", async ({ page }) => {
@@ -149,7 +147,7 @@ test.describe("Bulk job actions", () => {
       targetLanguages: ["es"],
     });
     try {
-      // A new project starts on Translation → Review; the auto-complete under
+      // The helper's project runs Translation → Review; the auto-complete under
       // test fires when the job's FINAL step completes, so pin a one-step
       // workflow (dropping the unreached Review is allowed while the job runs).
       await setProjectWorkflowStepsViaAPI(page, job.projectId, [{ name: "Translation" }]);
@@ -196,7 +194,7 @@ test.describe("Bulk job actions", () => {
     });
     try {
       // One-step workflow so /complete below finds the job on its final step
-      // (a new project starts on Translation → Review).
+      // (the helper's project runs Translation → Review).
       await setProjectWorkflowStepsViaAPI(page, job.projectId, [{ name: "Translation" }]);
       const token = await page.evaluate(() => localStorage.getItem("token"));
       const headers = { Authorization: `Bearer ${token}` };

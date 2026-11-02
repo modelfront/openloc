@@ -25,7 +25,8 @@ func (h *Handler) decodeBulkSegments(w http.ResponseWriter, r *http.Request) (db
 }
 
 // HandleClearSegments clears the selected rows. Same gate as the job-wide
-// clear: managers and the job's assigned linguist, first step only.
+// clear: managers and the job's assigned linguist, up to the first human or
+// hybrid step.
 func (h *Handler) HandleClearSegments(w http.ResponseWriter, r *http.Request) {
 	job, ids, ok := h.decodeBulkSegments(w, r)
 	if !ok {

@@ -48,6 +48,11 @@ export function workflowStepsToPayload(steps: WorkflowStep[]): WorkflowStepPaylo
   return steps.map(s => ({
     step_definition_id: s.step_definition_id ?? undefined,
     existing_step_id: s.step_definition_id == null ? s.id : undefined,
+    // A saved row's own router: the server matches rows by position, so a
+    // step moved to another row would otherwise take its definition's router
+    // instead. A row built from the library has no id and takes the
+    // definition's, as on create.
+    ai_router_id: s.id != null && runsAIStep(s.step_type) && s.ai_router_id != null ? s.ai_router_id : undefined,
     default_assignee: s.default_assignee ?? null,
     deadline: s.deadline ?? null,
     // Sent as a set: a language the user cleared is simply not in it. Sorted
@@ -79,6 +84,8 @@ interface ApiWorkflowStep {
   deadline?: string | null
   ai_router_id?: number | null
   language_deadlines?: { target_language: string; deadline: string }[] | null
+  locked?: boolean
+  reached_jobs?: number
 }
 
 /** API step rows → editor drafts. Read-side twin of workflowStepsToPayload. */
@@ -94,7 +101,19 @@ export function workflowStepsFromApi(steps: ApiWorkflowStep[]): WorkflowStep[] {
     language_deadlines: Object.fromEntries(
       (s.language_deadlines ?? []).map(ld => [ld.target_language, ld.deadline]),
     ),
+    locked: s.locked ?? false,
+    reached_jobs: s.reached_jobs ?? 0,
   }))
+}
+
+/** A draft kept across a refetch takes the server's current locks: a row is
+ *  matched by its id, and a row the server no longer has is unlocked. */
+export function withServerLocks(draft: WorkflowStep[], server: WorkflowStep[]): WorkflowStep[] {
+  const byId = new Map(server.filter(s => s.id != null).map(s => [s.id, s]))
+  return draft.map(s => {
+    const fresh = s.id != null ? byId.get(s.id) : undefined
+    return { ...s, locked: fresh?.locked ?? false, reached_jobs: fresh?.reached_jobs ?? 0 }
+  })
 }
 
 /** Library workflow rows → editor drafts (no deadline — library steps carry

@@ -123,8 +123,7 @@ export function ProjectLabelFields({ labels, value, onChange, disabled = false }
 
       {!disabled && available.length > 0 && (
         <div className="sm:col-span-2" data-testid="project-label-fields">
-          <Button type="button" variant="outline" size="sm" onClick={() => setPicking(true)} data-testid="add-project-label">
-            <Plus />
+          <Button type="button" variant="outline" size="sm" onClick={() => setPicking(true)} startIcon={<Plus />} data-testid="add-project-label">
             Add label
           </Button>
         </div>

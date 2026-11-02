@@ -17,6 +17,8 @@ import (
 	"openloc/internal/langcode"
 	"openloc/internal/logging"
 	"openloc/internal/projectevents"
+	"openloc/internal/ptr"
+	"openloc/internal/segmentationapi"
 	"openloc/internal/settings"
 )
 
@@ -47,10 +49,11 @@ type CreateParams struct {
 	LabelValueIDs []int64
 }
 
-// Create validates and creates a project plus its settings profile and the
-// mandatory default workflow step, and records the project.created audit
-// event, in one transaction. Kept for callers with no follow-up setup (MCP
-// create_project); the HTTP handler goes through CreateWithSetup so the
+// Create validates and creates a project plus its settings profile, and
+// records the project.created audit event, in one transaction. It adds no
+// workflow steps, so a live project is refused ("workflow_id is required"):
+// MCP create_project reaches it only with neither a template nor a workflow.
+// The HTTP handler goes through CreateWithSetup so the
 // wizard's settings + assignments fold into ONE audit event instead of a burst.
 //
 // Without a pool (the MCP backend built by NewDirectBackend) the writes run on
@@ -60,6 +63,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tenantID, use
 	write := func(_ pgx.Tx, q db.Querier) error {
 		var err error
 		if project, err = createCore(ctx, q, tenantID, userID, p); err != nil {
+			return err
+		}
+		if err := requireSteps(ctx, q, project); err != nil {
 			return err
 		}
 		return emitCreated(ctx, q, project, tenantID, userID, nil)
@@ -77,7 +83,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tenantID, use
 }
 
 // createCore validates and creates the project row + settings profile + the
-// mandatory default workflow step + the label picks, with NO audit event — callers
+// label picks, with no workflow steps (the caller's template or setup brings
+// them; requireSteps checks) and NO audit event — callers
 // emit exactly one project.created once their whole setup is done. Runs on the
 // caller's transaction.
 func createCore(ctx context.Context, q db.Querier, tenantID, userID int64, p CreateParams) (db.Project, error) {
@@ -104,13 +111,6 @@ func createCore(ctx context.Context, q db.Querier, tenantID, userID int64, p Cre
 		return db.Project{}, fmt.Errorf("create settings profile: %w", err)
 	}
 
-	// Workflow steps are mandatory: every profile starts with the default
-	// Translation → Review workflow, linked to the tenant's default step
-	// definitions.
-	if err := settings.CreateDefaultWorkflowSteps(ctx, q, tenantID, profile.ID); err != nil {
-		return db.Project{}, fmt.Errorf("create default workflow steps: %w", err)
-	}
-
 	project, err := q.CreateProject(ctx, db.CreateProjectParams{
 		Name:              meta.Name,
 		Description:       p.Description,
@@ -127,6 +127,11 @@ func createCore(ctx context.Context, q db.Querier, tenantID, userID int64, p Cre
 	})
 	if err != nil {
 		return db.Project{}, fmt.Errorf("create project: %w", err)
+	}
+	// Every project names a segmentation profile: the suggested one for its
+	// language until a template or the setup picks another.
+	if err := settings.SetSegmentationProfile(ctx, q, tenantID, profile.ID, nil, meta.SourceLanguage); err != nil {
+		return db.Project{}, err
 	}
 	if len(p.LabelValueIDs) > 0 {
 		if err := label.ReplaceProjectPicks(ctx, q, tenantID, project.ID, p.LabelValueIDs); err != nil {
@@ -291,6 +296,9 @@ func CreateWithTemplate(ctx context.Context, pool *pgxpool.Pool, q db.Querier, t
 		if applied, _, err = ApplyTemplate(ctx, tx, q, tenantID, project.ID, templateID); err != nil {
 			return fmt.Errorf("template %d not applied: %w", templateID, err)
 		}
+		if err := requireSteps(ctx, q, applied); err != nil {
+			return err
+		}
 		// Template application is create-time-only, so it is context of the
 		// creation, not a separate change — one event with the template folded in.
 		return emitCreated(ctx, q, applied, tenantID, userID, templateDetails(ctx, q, tenantID, templateID))
@@ -350,16 +358,46 @@ func ApplyTemplate(ctx context.Context, pool database.TxBeginner, q db.Querier, 
 		TmOnUpload:     tmplProfile.TmOnUpload,
 		QaProfileID:    tmplProfile.QaProfileID,
 		// Explicit, not nil-keeps-stored: applying a template must carry ITS
-		// penalties, lookup order, auto-complete and inline-HTML choices, not leave the project's defaults
+		// penalties, lookup order, auto-complete, inline-HTML and term-adding choices, not leave the project's defaults
 		// in place.
 		SublanguagePenaltyPct: &tmplProfile.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   &tmplProfile.NearExactPenaltyPct,
 		AutoComplete:          &tmplProfile.AutoComplete,
 		InlineHtml:            &tmplProfile.InlineHtml,
+		LinguistTerms:         &tmplProfile.LinguistTerms,
 		TmLookupOrder:         &tmplProfile.TmLookupOrder,
 	})
 	if err != nil {
 		return zero, zeroProfile, fmt.Errorf("copy template settings: %w", err)
+	}
+	// The template's segmentation profile, while it suits the project's
+	// language; else the suggested one for that language. A template without a
+	// language that keeps the any-language built-in passes on nothing.
+	inherit := tmplProfile.SegmentationProfileID
+	if inherit != nil && ptr.Deref(tmpl.SourceLanguage) == "" {
+		placeholder, err := segmentationapi.IsAnyLanguageDefault(ctx, txq, tenantID, *inherit)
+		if err != nil {
+			return zero, zeroProfile, fmt.Errorf("read template segmentation profile: %w", err)
+		}
+		if placeholder {
+			inherit = nil
+		}
+	}
+	if inherit != nil {
+		// A profile deleted since the template was read is not copied; the
+		// project then gets the suggested one below.
+		_, err := txq.SetSettingsProfileSegmentationProfile(ctx, db.SetSettingsProfileSegmentationProfileParams{
+			ID: project.SettingsProfileID, SegmentationProfileID: inherit,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return zero, zeroProfile, fmt.Errorf("copy template segmentation profile: %w", err)
+		}
+	}
+	if err := settings.SetSegmentationProfile(ctx, txq, tenantID, project.SettingsProfileID, nil, project.SourceLanguage); err != nil {
+		return zero, zeroProfile, err
+	}
+	if updatedProfile, err = txq.GetSettingsProfile(ctx, project.SettingsProfileID); err != nil {
+		return zero, zeroProfile, fmt.Errorf("get settings profile: %w", err)
 	}
 	if tmplProfile.TmProfileID != nil {
 		updatedProfile, err = txq.SetSettingsProfileTMProfile(ctx, db.SetSettingsProfileTMProfileParams{
@@ -390,4 +428,21 @@ func ApplyTemplate(ctx context.Context, pool database.TxBeginner, q db.Querier, 
 		return zero, zeroProfile, fmt.Errorf("commit: %w", err)
 	}
 	return project, updatedProfile, nil
+}
+
+// requireSteps refuses a live project with no workflow steps. Nothing adds
+// default steps: a create names a library workflow, carries steps, or uses a
+// template that has them. A draft's steps are the form's, checked at publish.
+func requireSteps(ctx context.Context, q db.Querier, project db.Project) error {
+	if project.Status == db.ProjectStatusDraft {
+		return nil
+	}
+	steps, err := q.ListSettingsWorkflowSteps(ctx, project.SettingsProfileID)
+	if err != nil {
+		return fmt.Errorf("list workflow steps: %w", err)
+	}
+	if len(steps) == 0 {
+		return validationf("workflow_id is required")
+	}
+	return nil
 }

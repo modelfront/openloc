@@ -3,7 +3,7 @@ title: "Errors and limits"
 summary: "What an error response looks like, the codes to handle, and the rate limit."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-18
+updated_at: 2026-10-26
 sources:
   - internal/httputil/errors.go
   - internal/httputil/response.go
@@ -14,6 +14,7 @@ sources:
   - internal/api/api.go
   - internal/publicapi/*.go
   - internal/hold/errors.go
+  - internal/segmentedit/errors.go
 related: [getting-started/authentication]
 ---
 ## Error shape
@@ -44,6 +45,28 @@ Every error has the same body:
 | `429` | Too many requests (`rate_limited`). |
 | `500` | Something failed on our side. A create that answers 500 has saved nothing, so you can send it again. |
 | `503` | The key could not be checked right now (`unavailable`, "The service is busy. Try again in a moment."). The key is still valid. Retry shortly; do not discard the key. |
+
+## Split and join errors
+
+`POST /api/v1/jobs/{jobID}/segments/{translationID}/split` and `POST /api/v1/jobs/{jobID}/segments/join` refuse with these codes.
+
+| Status | `code` | When |
+|---|---|---|
+| `400` | `split_position` | `offset` is not a valid cut: it is inside a tag pair or `{…}`, or not between two words. |
+| `400` | `split_unsupported` | The segment cannot be split, for example a PO plural form. |
+| `400` | `split_tags` | The segment's tags cannot be split, for example XLIFF inline codes with escaped markup. |
+| `400` | `join_count` | Fewer than two segments. |
+| `400` | `join_not_adjacent` | The segments do not follow each other. |
+| `400` | `join_other_unit` | The segments are not sentences of one paragraph or pieces of one split segment. |
+| `400` | `join_partial` | The join leaves out a piece of a split sentence. Include every piece. |
+| `400` | `join_unsafe` | The sentences cannot be joined in this file format. |
+| `409` | `segment_locked` | A segment is locked. |
+| `409` | `segment_in_flight` | A segment is being pre-translated. |
+| `409` | `pipeline_running` | Pre-translation is running on the job. |
+| `409` | `conflict` | `expected_updated_at` no longer matches. Read the segment again. |
+| `409` | `segment_held` | Someone has a segment open in the editor. |
+
+Retry the `409` codes when the cause has passed.
 
 ## Rate limits
 

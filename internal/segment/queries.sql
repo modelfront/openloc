@@ -4,18 +4,20 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListSegmentsByFile :many
--- Returns all segments for a file. Not paginated by design: the CATEditor needs
--- all segments in memory for keyboard navigation, search, and jump-to-segment.
--- Virtual scroll handles rendering. Files rarely exceed 5K segments.
-SELECT * FROM segments WHERE file_id = $1 ORDER BY position;
+-- Internal: the file's shared segments, as imported, for server-side work over
+-- the whole file. Rows a split or join made for one language are left out.
+SELECT * FROM segments WHERE file_id = $1 AND target_language IS NULL ORDER BY position;
 
 -- name: ListSegmentsByFileTenant :many
--- Tenant-scoped: returns segments only if file belongs to caller's tenant.
+-- Tenant-scoped: returns the file's shared segments, as imported, only if the
+-- file belongs to caller's tenant, at most @row_limit of them.
 SELECT s.* FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.file_id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
-ORDER BY s.position;
+WHERE s.file_id = @file_id AND s.target_language IS NULL
+  AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
+ORDER BY s.position
+LIMIT @row_limit::int;
 
 -- name: GetSegment :one
 -- Internal: used by pipeline. For user-facing handlers, use GetSegmentTenant.
@@ -31,13 +33,11 @@ WHERE s.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL;
 -- name: GetSegmentInFileTenant :one
 -- File- and tenant-scoped: returns the segment only if it belongs to the file
 -- in the route, so file-level access to one file does not open another's segments.
+-- Shared segments only, like ListSegmentsByFileTenant.
 SELECT s.* FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.id = @id AND s.file_id = @file_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
-
--- name: CountSegmentsByFile :one
-SELECT count(*) FROM segments WHERE file_id = $1;
+WHERE s.id = @id AND s.file_id = @file_id AND s.target_language IS NULL AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
 
 -- name: DeleteSegmentsByFile :exec
 -- Internal: clears a draft file's segments so publish can store a fresh parse.

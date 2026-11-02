@@ -3,8 +3,11 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/jackc/pgx/v5"
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
@@ -191,17 +194,21 @@ func (h *Handler) HandleSetStepDeadline(w http.ResponseWriter, r *http.Request) 
 
 // --- Helpers ---
 
-// JobInFirstStep is true when the job has no workflow OR is on
-// step_order=0 (settings.ReplaceWorkflowSteps assigns step_order positionally starting
-// at 0; matches the FE's `step_order === 0` gating). Lookup failure
-// degrades to true so an orphaned step row doesn't lock out basic ops.
-func JobInFirstStep(ctx context.Context, q db.Querier, job db.Job) bool {
+// JobInClearWindow is true when the job has no current step OR its current
+// step is at or before the workflow's first human or hybrid step
+// (`job_last_clear_step_order`; the FE gates on the same number). A missing
+// step row counts as in the window, so an orphaned row doesn't lock out basic
+// ops; any other lookup error is returned.
+func JobInClearWindow(ctx context.Context, q db.Querier, job db.Job) (bool, error) {
 	if job.CurrentStepID == nil {
-		return true
+		return true, nil
 	}
 	step, err := q.GetCurrentStepForJob(ctx, *job.CurrentStepID)
-	if err != nil {
-		return true
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
 	}
-	return step.StepOrder == 0
+	if err != nil {
+		return false, fmt.Errorf("current step: %w", err)
+	}
+	return step.StepOrder <= step.LastClearStepOrder, nil
 }

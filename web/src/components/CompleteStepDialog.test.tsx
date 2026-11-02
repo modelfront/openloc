@@ -72,7 +72,7 @@ describe('CompleteStepDialog', () => {
   })
 
   it('lists the segments Approve all could not approve', () => {
-    renderDialog({ unapproved: { drafts: 1, untranslated: 0 }, approveBlocked: { toFix: [3, 8], held: [] } })
+    renderDialog({ unapproved: { drafts: 1, untranslated: 0 }, approveBlocked: { toFix: ['3', '8'], held: [] } })
     const alert = screen.getByTestId('complete-approve-blocked')
     expect(alert).toHaveTextContent('The step was not completed.')
     expect(alert).toHaveTextContent('Segments 3, 8 could not be approved because of a QA error or a change made meanwhile. Fix them, then try again.')
@@ -80,7 +80,7 @@ describe('CompleteStepDialog', () => {
   })
 
   it('says which segments someone else is editing, apart from the ones to fix', () => {
-    renderDialog({ unapproved: { drafts: 3, untranslated: 0 }, approveBlocked: { toFix: [2], held: [4] } })
+    renderDialog({ unapproved: { drafts: 3, untranslated: 0 }, approveBlocked: { toFix: ['2'], held: ['4'] } })
     const alert = screen.getByTestId('complete-approve-blocked')
     expect(alert).toHaveTextContent('The step was not completed.')
     expect(alert).toHaveTextContent('Segment 2 could not be approved because of a QA error or a change made meanwhile. Fix it, then try again.')
@@ -88,7 +88,7 @@ describe('CompleteStepDialog', () => {
   })
 
   it('names only the held segments when nothing else blocked', () => {
-    renderDialog({ unapproved: { drafts: 2, untranslated: 0 }, approveBlocked: { toFix: [], held: [4, 6] } })
+    renderDialog({ unapproved: { drafts: 2, untranslated: 0 }, approveBlocked: { toFix: [], held: ['4', '6'] } })
     const alert = screen.getByTestId('complete-approve-blocked')
     expect(alert).toHaveTextContent('The step was not completed. Segments 4, 6 are being edited by someone else. Try again when they are free.')
     expect(alert).not.toHaveTextContent('QA error')

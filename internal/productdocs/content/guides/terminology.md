@@ -3,15 +3,20 @@ title: "Terminology"
 summary: "Build term bases, mark terms as preferred or forbidden, import CSV or TBX, and see terms while translating."
 order: 40
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - web/src/pages/TerminologyList.tsx
+  - web/src/components/list/AssetFilterBar.tsx
+  - web/src/lib/name-filter.ts
   - web/src/pages/TerminologyBrowser.tsx
   - web/src/pages/terminology-browser/**
   - web/src/components/CreateTermBaseDialog.tsx
   - web/src/components/EditorSidebar.tsx
+  - web/src/lib/missing-terms.ts
+  - web/src/components/QuickAddTermDialog.tsx
   - web/src/components/QAFindingsSection.tsx
   - web/src/components/SettingsEditor.tsx
+  - web/src/components/settings/LinguistTermsField.tsx
   - internal/terminology/**
   - internal/tbx/**
 limitations:
@@ -35,7 +40,7 @@ A term base is a glossary: a list of the words and phrases your customer wants t
 3. Enter a **Name** and pick the **Source language**. Target languages are not chosen here; they come from the terms you add or import.
 4. Click **Create**. The new term base opens right away.
 
-The list shows each term base with its languages (source first, then the targets), the number of concepts, and who created it. Use the **Created by** filter to see only one colleague's term bases. The trash icon deletes a term base with all its concepts. Deleting a term base also removes it from the terminology settings of every project and template.
+The list shows each term base with its languages (source first, then the targets), the number of concepts, and who created it. **Search term bases...** narrows the list as you type. It matches any part of the name and ignores case and accents, so "medical" finds "Médical". The **Created by** filter shows only one colleague's term bases, and **Clear filters (N)** resets both. The search and the filter are kept in the page address, so you can share a link to a filtered view. The trash icon deletes a term base with all its concepts. Deleting a term base also removes it from the terminology settings of every project and template.
 
 ## Add a concept and its terms
 
@@ -93,10 +98,11 @@ After an import a message tells you how many terms were imported and how many we
 
 1. Open the project's **Settings** tab (or the template).
 2. Scroll to the **Terminology** card.
-3. Under **Add Term base**, pick a term base, then the source and target languages the assignment applies to. Choose **Create new term base...** to make one without leaving the page.
-4. Save the row.
+3. Pick a term base under **Add term base**. It is saved right away. In a project, it is added for each of the project's target languages it covers. Each term base shows how many concepts it holds, both in the **Add term base** list and under its name once added. Choose **Create new term base...** to make one without leaving the page.
 
-You can assign several term bases to the same language pair. Drag rows to set their order; terms from the first term base are listed first in the editor. A project created from a template inherits the template's terminology assignments. If the project has a domain, concepts with the same domain are preferred when several concepts match.
+Terms added from the editor go only into term bases with **Write** ticked on their row; a new row has it ticked. See [Add a term while translating](#add-a-term-while-translating).
+
+A term base's name in the card is a link that opens the term base in a new tab. You can assign several term bases to the same language pair. Drag rows to set their order; terms from the first term base are listed first in the editor. A project created from a template inherits the template's terminology assignments. If the project has a domain, concepts with the same domain are preferred when several concepts match.
 
 ![The project settings page](assets/project-settings.png)
 
@@ -109,10 +115,19 @@ When a translator opens a segment in the CAT editor:
 - **Terms are underlined in the source text.** Longer terms win over shorter ones, so "email address" is matched as one term, not as "email" and "address". The underline is not limited to whole words, so a short term such as "cat" also appears underlined inside "category". The terminology QA check only counts whole words, so on a short term the underline and the check can disagree. Terms that contain punctuation, such as "R&D", "Node.js", "C++" or "TCP/IP", are found in the sidebar list too.
 - **The Terminology section of the sidebar** lists every matching concept as source term → target term, with notes, a status icon (hover it to see the status) and the domain. The number next to the heading is the count.
 - **Hover a term** to select the matching word in your translation. **Click it** to replace that word with the approved term, or to insert the term at the cursor if there is no match. Terms are never inserted automatically; the translator decides.
+- **Press F8** to insert the next missing term at the cursor, together with missing tags and placeables, in source order. See [Insert placeables](/docs/guides/cat-editor#insert-placeables).
 - **Applied terms turn grey, and the status icon becomes a check mark,** once the target term is in your text. Editing the text back makes the term active again.
 - **Forbidden terms** cannot be clicked. If the forbidden word is present in your translation, a red warning triangle appears with the hint "Forbidden term is used in the translation — replace it".
 
-The concordance dialog (Cmd/Ctrl+K) also has a **Terminology** tab, so you can search the assigned term bases for any phrase. Term lookups are live: a change in the term base shows the next time a segment is opened.
+The concordance dialog (Cmd/Ctrl+K) also has a **Terminology** tab, so you can search the assigned term bases for any phrase. Term lookups are live: a change in the term base shows the next time a segment is opened, and a term you add from the editor shows at once.
+
+### Add a term while translating
+
+1. In the open segment, select the words in the source. Optionally select their translation in your text too. The source words stay tinted while you select in the translation, until the dialog closes, you click elsewhere in the source, or the segment closes.
+2. Press **Alt+Shift+G** (Option+Shift+G on Mac), or click the **+** next to the **Terminology** heading in the sidebar. The **+** is there only when you may add terms on this job; otherwise the shortcut tells you why.
+3. The **Add term** dialog opens with both selections filled in. Check the **Source term** and **Target term**, optionally add a **Definition** and a **Note**, and click **Add term**.
+
+The term goes into a term base the project assigns to the job's language pair with **Write** ticked; when there are several, a **Term base** field lets you pick one. If a concept with the same source term already exists, the target term is added to it. Project managers, admins and owners can always add terms and choose the **Status**. For linguists, **Linguists can add terms**, at the top of the **Terminology** card in the project's [settings](/docs/reference/settings#where-each-project-option-lives), decides. It is disabled until a term base in the card has **Write** ticked. The choices are: **Yes, saved as pending** (the default) saves their term as **Pending** until a project manager approves it, **Yes, saved as approved** saves it as **Approved**, and **No** stops them adding terms. The dialog tells the linguist which status their term gets. The term shows in the **Terminology** section at once. A source term of more than four words is saved, but it is not underlined in segments.
 
 ## Enforce terms with QA
 

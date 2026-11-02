@@ -191,8 +191,8 @@ func TestIntegrationIssue_ReporterChangesKind(t *testing.T) {
 			t.Errorf("a kind change emailed %s: %v", to, s)
 		}
 	}
-	if s := subjects(f.outbox, operatorEmail); len(s) != 1 {
-		t.Errorf("support team emails = %v, want the new-issue email only", s)
+	if s := subjects(f.outbox, operatorEmail); len(s) != 0 {
+		t.Errorf("support team emails = %v, want none for an unassigned issue", s)
 	}
 	assertIssueNotification(t, f, issue.ID, 0)
 }

@@ -35,8 +35,8 @@ describe('OrgPageFrame', () => {
     expect(screen.getByRole('link', { name: 'Vendors' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('a project manager gets the page with no tab row: Vendors is all they may open', async () => {
-    renderFrame('project_manager')
+  it.each(['project_manager', 'linguist'])('%s gets the page with no tab row', async role => {
+    renderFrame(role)
     // Wait for the role to arrive: before it does, no frame shows tabs.
     await waitFor(() => expect(getMe).toHaveBeenCalled())
     await act(async () => { await Promise.resolve() })

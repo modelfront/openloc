@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import TMProfileDetail from './TMProfileDetail'
-import { ApiError, getTMProfile, updateTMProfile } from '../api'
+import { ApiError, getTMProfile, listTMCollections, updateTMProfile } from '../api'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('../api', async importOriginal => ({
@@ -56,6 +56,19 @@ describe('TMProfileDetail scoring fields', () => {
     fireEvent.blur(field)
     await waitFor(() => expect(updateTMProfile).toHaveBeenCalledTimes(2))
     expect(updateTMProfile).toHaveBeenLastCalledWith(7, { near_exact_penalty_pct: 3 })
+  })
+})
+
+describe('TMProfileDetail translation memories', () => {
+  it('shows each assigned TM\'s entry count', async () => {
+    vi.mocked(getTMProfile).mockResolvedValue({
+      ...profile, tm_assignments: [{ id: 1, tm_id: 3, mode: 'read', priority: 0, penalty_pct: 0 }],
+    } as unknown as Awaited<ReturnType<typeof getTMProfile>>)
+    vi.mocked(listTMCollections).mockResolvedValue([
+      { id: 3, name: 'Client TM', source_language: 'en', target_languages: ['de'], entry_count: 1234, created_at: '', updated_at: '' },
+    ])
+    renderPage()
+    expect(await screen.findByTestId('tm-assignment-size-3')).toHaveTextContent(/^1,234 entries$/)
   })
 })
 

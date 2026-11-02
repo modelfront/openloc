@@ -196,7 +196,7 @@ func registerJobOps(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 		title: "Clear a job's translations",
 		description: "Remove the translations of a job so it can be translated again: scope " +
 			"non_confirmed keeps confirmed segments, scope all clears them too. Locked segments " +
-			"are always kept, and so are segments another user has open (counted in held). First workflow step only; refused while a run holds the job. The " +
+			"are always kept, and so are segments another user has open (counted in held). Only up to the first human or hybrid workflow step; refused while a run holds the job. The " +
 			"preview gives the exact number of segments.",
 		destructive: true,
 	}, b.PreviewClearJobTranslations, b.ClearJobTranslations)
@@ -204,8 +204,8 @@ func registerJobOps(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 	addGuardedTool(s, srv, managerTier, toolSpec{
 		name:  toolClearSegment,
 		title: "Clear a segment's translation",
-		description: "Remove one segment's translation so it is untranslated again. First workflow " +
-			"step only; refused for a locked segment.",
+		description: "Remove one segment's translation so it is untranslated again. Only up to the " +
+			"first human or hybrid workflow step; refused for a locked segment.",
 		destructive: true,
 	}, b.PreviewClearSegment, b.ClearSegment)
 

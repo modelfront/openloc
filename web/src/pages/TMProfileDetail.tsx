@@ -16,6 +16,7 @@ import { TMScoringFields, describeScoringSave, SCORING_SAVED_TOAST_ID } from '..
 import { TMLookupOrderField } from '../components/settings/TMLookupOrderField'
 import { toTMLookupOrder } from '../lib/settings-values'
 import { TMAssignmentSection } from '../components/project/TMAssignmentSection'
+import { toLangResources } from '../lib/settings-editor-options'
 import { useInlineCreateResources } from '../components/settings/useInlineCreateResources'
 import { usePageTitle } from '../hooks/usePageTitle'
 
@@ -113,7 +114,7 @@ export default function TMProfileDetail() {
             items={profile.tm_assignments.map(a => ({
               id: a.id, tmId: a.tm_id, mode: a.mode, priority: a.priority, penaltyPct: a.penalty_pct ?? 0,
             }))}
-            tmCollections={tms?.map(t => ({ id: t.id, name: t.name, source_language: t.source_language, target_languages: t.target_languages })) ?? []}
+            tmCollections={toLangResources(tms)}
             onSave={async items => {
               await setTMProfileTMs(id, items.map(i => ({
                 tm_id: i.tmId, mode: i.mode, priority: i.priority, penalty_pct: i.penaltyPct ?? 0,

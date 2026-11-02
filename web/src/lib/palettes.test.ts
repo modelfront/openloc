@@ -31,7 +31,49 @@ describe('buildTokens', () => {
     const bright = { ...trueBlack, anchors: { ...trueBlack.anchors, accent: '#fde047' } } // yellow
     expect(buildTokens(bright)['--primary-foreground']).toBe('#0a0a0a')
   })
+
+  // A disabled filled button: the label must stay legible but read dimmer than
+  // an enabled one, whatever the accent — a light accent gets near-black
+  // on-accent text, which at full strength would look like a working button.
+  it.each([
+    ['light, blue accent', 'paper', '#3b82f6'],
+    ['light, yellow accent', 'paper', '#facc15'],
+    ['light, lime accent', 'paper', '#84cc16'],
+    ['dark, blue accent', 'black-true', '#3b82f6'],
+    ['dark, yellow accent', 'black-true', '#facc15'],
+  ])('fades the disabled-button label for a %s', (_label, base, accent) => {
+    const palette = BUILTIN_PALETTES.find(p => p.id === base)!
+    const t = buildTokens({ ...palette, anchors: { ...palette.anchors, accent } })
+    const ratio = contrast(t['--primary-faded-foreground'], t['--primary-faded'])
+    expect(ratio).toBeGreaterThanOrEqual(1.5)
+    expect(ratio).toBeLessThanOrEqual(3.05)
+  })
+
+  // The default look: the on-accent white, already soft on the faded blue.
+  it('keeps the white label on the faded blue of the default light palette', () => {
+    const paper = BUILTIN_PALETTES.find(p => p.id === 'paper')!
+    expect(buildTokens(paper)['--primary-faded-foreground']).toBe('#ffffff')
+  })
+
+  // A light accent's label is near-black like its enabled button, dimmed.
+  it('starts a light accent\'s disabled label from its near-black on-accent colour', () => {
+    const paper = BUILTIN_PALETTES.find(p => p.id === 'paper')!
+    const t = buildTokens({ ...paper, anchors: { ...paper.anchors, accent: '#facc15' } })
+    expect(red(t['--primary-faded-foreground'])).toBeLessThan(red(t['--primary-faded']))
+  })
 })
+
+function contrast(a: string, b: string): number {
+  const lum = (h: string) => {
+    const [r, g, bl] = [1, 3, 5].map(i => {
+      const s = parseInt(h.slice(i, i + 2), 16) / 255
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+    })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
 
 describe('resolvePalette', () => {
   it('falls back to the mode default for an unknown id', () => {

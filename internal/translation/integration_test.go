@@ -20,13 +20,15 @@ func registerUser(t *testing.T, q db.Querier, prefix string) (int64, int64) {
 	return testutil.RegisterUser(t, q, prefix)
 }
 
-// createProject is a helper that creates a project via API and returns the project ID.
-func createProject(t *testing.T, router http.Handler, name string, userID, tenantID int64) int64 {
+// createProject creates a project on the tenant's library workflow via the
+// API and returns the project ID.
+func createProject(t *testing.T, q db.Querier, router http.Handler, name string, userID, tenantID int64) int64 {
 	t.Helper()
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name":             name,
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -49,7 +51,7 @@ func TestIntegrationPropagate(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "propagate")
-	projectID := createProject(t, router, "Propagate Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Propagate Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "propagate.txt", db.FileFormatTxt)
 
@@ -138,7 +140,7 @@ func TestIntegrationPropagatePreservesXLIFFTags(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "propagate-tags")
-	projectID := createProject(t, router, "Propagate Tags Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Propagate Tags Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "propagate-tags.txt", db.FileFormatTxt)
 
@@ -199,7 +201,7 @@ func TestIntegrationPropagateNoMatches(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "prop-nomatch")
-	projectID := createProject(t, router, "No Match Project", userID, tenantID)
+	projectID := createProject(t, q, router, "No Match Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "nomatch.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Unique text", 1)
@@ -244,7 +246,7 @@ func TestIntegrationPropagateSkipsLockedRows(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "prop-locked")
-	projectID := createProject(t, router, "Propagate Locked Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Propagate Locked Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "locked.txt", db.FileFormatTxt)
 
 	src := testutil.SeedTranslation(t, q, testutil.SeedSegment(t, q, file.ID, "Hello", 1).ID, "es", db.TranslationStatusNeedsReview)
@@ -328,7 +330,7 @@ func TestIntegrationFindReplaceCaseSensitive(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "fr-case")
-	projectID := createProject(t, router, "FR Case Project", userID, tenantID)
+	projectID := createProject(t, q, router, "FR Case Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "findreplace.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -415,7 +417,7 @@ func TestIntegrationFindReplaceCaseInsensitive(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "fr-nocase")
-	projectID := createProject(t, router, "FR NoCase Project", userID, tenantID)
+	projectID := createProject(t, q, router, "FR NoCase Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "nocase.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -496,7 +498,7 @@ func TestIntegrationFindReplaceFindMode(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "fr-find")
-	projectID := createProject(t, router, "FR Find Project", userID, tenantID)
+	projectID := createProject(t, q, router, "FR Find Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "findmode.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -591,7 +593,7 @@ func TestIntegrationFindReturnsTranslationIDs(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "fr-ids")
-	projectID := createProject(t, router, "FR IDs Project", userID, tenantID)
+	projectID := createProject(t, q, router, "FR IDs Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "findids.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -655,7 +657,7 @@ func TestIntegrationReplaceOne(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "fr-one")
-	projectID := createProject(t, router, "FR One Project", userID, tenantID)
+	projectID := createProject(t, q, router, "FR One Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "replaceone.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -734,7 +736,8 @@ func TestIntegrationConcordanceSearch(t *testing.T) {
 
 	// Create template via API
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Concordance Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Concordance Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -851,7 +854,7 @@ func TestIntegrationLockedSegmentRejectsSave(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "locktest")
-	projectID := createProject(t, router, "Lock Test Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Lock Test Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "locktest.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Test segment", 1)
@@ -909,7 +912,7 @@ func TestIntegrationTranslationSave_StaleUpdatedAtReturns409(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "staleput")
-	projectID := createProject(t, router, "Stale Update Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Stale Update Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "stale.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Source segment", 1)
@@ -984,7 +987,7 @@ func TestIntegrationTranslationSave_FreshUpdatedAtSucceeds(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "freshput")
-	projectID := createProject(t, router, "Fresh Update Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Fresh Update Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "fresh.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Source segment", 1)
@@ -1043,7 +1046,7 @@ func TestIntegrationTranslationSave_NoExpectedUpdatedAtStillWorks(t *testing.T) 
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "noexpected")
-	projectID := createProject(t, router, "No Expected Project", userID, tenantID)
+	projectID := createProject(t, q, router, "No Expected Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "noexpected.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Source", 1)
@@ -1074,7 +1077,7 @@ func TestIntegrationSaveDraftDowngradesStatus(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "draft_status_downgrade")
-	projectID := createProject(t, router, "Draft Status Downgrade Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Draft Status Downgrade Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "draft_status.txt", db.FileFormatTxt)
 
 	// Every value of translation_status enum. The test asserts that EVERY
@@ -1180,7 +1183,7 @@ func TestIntegrationConflict409BodyShape(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "conflict-banner")
-	projectID := createProject(t, router, "Conflict Banner Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Conflict Banner Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "conflict.docx", db.FileFormatDocx)
 	seg := testutil.SeedSegment(t, q, file.ID, "Conflict source", 1)
@@ -1278,7 +1281,7 @@ func TestIntegrationConflict409BodyShape_SaveDraftPath(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "conflict-draft")
-	projectID := createProject(t, router, "Conflict Draft Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Conflict Draft Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "draft-conflict.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Draft source", 1)
@@ -1458,7 +1461,7 @@ func TestIntegrationGetTranslationConflictDetailsTenantScope(t *testing.T) {
 func setupQABlockProject(t *testing.T, router http.Handler, q db.Querier, prefix, severity string, addRule bool) (userID, tenantID, fileID, trID int64) {
 	t.Helper()
 	userID, tenantID = registerUser(t, q, prefix)
-	projectID := createProject(t, router, prefix+" Project", userID, tenantID)
+	projectID := createProject(t, q, router, prefix+" Project", userID, tenantID)
 
 	// Create QA profile.
 	rec := testutil.DoRequest(t, router, "POST", "/api/qa-profiles", map[string]string{
@@ -1596,7 +1599,7 @@ func TestIntegration_QABlock_NoProfileGracefullyAllows(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "qablocknoprof")
-	projectID := createProject(t, router, "No-Profile Project", userID, tenantID)
+	projectID := createProject(t, q, router, "No-Profile Project", userID, tenantID)
 
 	// Skip the profile creation/assignment — settings_profile.qa_profile_id is NULL.
 	file := testutil.SeedFile(t, q, projectID, "noprof.txt", db.FileFormatTxt)
@@ -1719,7 +1722,7 @@ func TestIntegration_QABlock_CrossTenantReturns404(t *testing.T) {
 	// Tenant B is a separate registration with its own file. They try to
 	// confirm tenant A's translation by ID through that file — must 404.
 	userB, tenantB := registerUser(t, q, "qaxb")
-	projectB := createProject(t, router, "qaxb Project", userB, tenantB)
+	projectB := createProject(t, q, router, "qaxb Project", userB, tenantB)
 	fileB := testutil.SeedFile(t, q, projectB, "b.txt", db.FileFormatTxt)
 
 	rec := testutil.DoRequest(t, router, "PUT",
@@ -1808,7 +1811,7 @@ func TestIntegrationUpdateHuman_ResponseEchoesUpdatedTMIDs(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "tmwriteback")
-	projectID := createProject(t, router, "TM Writeback Project", userID, tenantID)
+	projectID := createProject(t, q, router, "TM Writeback Project", userID, tenantID)
 
 	// Configure a write TM on the project's settings profile so SaveToTM
 	// has somewhere to write. Without this assignment, updated_tm_ids is
@@ -1879,7 +1882,7 @@ func TestIntegrationUpdateHuman_ResponseHasEmptyArrayWhenNoWriteTMs(t *testing.T
 	router := testutil.NewTestRouter(pool)
 
 	userID, tenantID := registerUser(t, q, "noTMwrite")
-	projectID := createProject(t, router, "No TM Project", userID, tenantID)
+	projectID := createProject(t, q, router, "No TM Project", userID, tenantID)
 	// Deliberately NO CreateSettingsTMAssignment — SaveToTM will return
 	// nil tm IDs, but the handler must still emit `[]` not `null`.
 
@@ -1936,7 +1939,7 @@ func TestIntegrationUnlockAdminAllowed(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "unlockadmin")
-	projectID := createProject(t, router, "Unlock Admin", userID, tenantID)
+	projectID := createProject(t, q, router, "Unlock Admin", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "f.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Hello", 1)
@@ -1973,7 +1976,7 @@ func TestIntegrationLockUnlockCrossTenant404(t *testing.T) {
 
 	// Tenant A owns the translation.
 	userA, tenantA := registerUser(t, q, "tenant-a")
-	projectA := createProject(t, router, "Project A", userA, tenantA)
+	projectA := createProject(t, q, router, "Project A", userA, tenantA)
 	fileA := testutil.SeedFile(t, q, projectA, "a.txt", db.FileFormatTxt)
 	segA := testutil.SeedSegment(t, q, fileA.ID, "Hello A", 1)
 	trA := testutil.SeedTranslation(t, q, segA.ID, "es", db.TranslationStatusNeedsReview)
@@ -1983,7 +1986,7 @@ func TestIntegrationLockUnlockCrossTenant404(t *testing.T) {
 
 	// Tenant B has its own admin and its own file, and aims at trA through it.
 	userB, tenantB := registerUser(t, q, "tenant-b")
-	projectB := createProject(t, router, "Project B", userB, tenantB)
+	projectB := createProject(t, q, router, "Project B", userB, tenantB)
 	fileB := testutil.SeedFile(t, q, projectB, "b.txt", db.FileFormatTxt)
 
 	// Cross-tenant unlock → 404. trA exists, but not in tenant B's scope.
@@ -2036,7 +2039,7 @@ func TestIntegration_HandlePropagate_CrossTenantReturns404(t *testing.T) {
 	// Tenant A — owns the file and a confirmed translation. Two segments
 	// share the same source text so propagation has a real target.
 	userA, tenantA := registerUser(t, q, "propxa")
-	projectA := createProject(t, router, "Prop A", userA, tenantA)
+	projectA := createProject(t, q, router, "Prop A", userA, tenantA)
 	fileA := testutil.SeedFile(t, q, projectA, "a.txt", db.FileFormatTxt)
 	segA1 := testutil.SeedSegment(t, q, fileA.ID, "Hello world", 1)
 	segA2 := testutil.SeedSegment(t, q, fileA.ID, "Hello world", 2)
@@ -2085,7 +2088,7 @@ func TestIntegrationPropagate_DropsSiblingQAFindings(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "propagate-qa")
-	projectID := createProject(t, router, "Propagate QA Project", userID, tenantID)
+	projectID := createProject(t, q, router, "Propagate QA Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "propagate-qa.txt", db.FileFormatTxt)
 
 	seg1 := testutil.SeedSegment(t, q, file.ID, "Hello world", 1)

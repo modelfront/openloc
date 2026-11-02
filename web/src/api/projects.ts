@@ -1,7 +1,7 @@
 import { request, getToken, logout, BASE } from './request';
 import { downloadFrom } from './download';
 import type { CreatorRef } from '../lib/creators';
-import type { TMLookupOrder } from '../lib/settings-values';
+import type { LinguistTerms, TMLookupOrder } from '../lib/settings-values';
 import type { SegmentBulkAction, SegmentBulkResult } from '../lib/segment-bulk';
 import type { ReplaceCounts } from '../lib/find-replace';
 import type { XLSXLayout } from './xlsx-layout';
@@ -36,14 +36,21 @@ export interface Project {
   auto_complete?: boolean;
   // Strings of JSON, PO, TXT and XLSX uploads are HTML; settings payload only.
   inline_html?: boolean;
+  linguist_terms?: LinguistTerms;
   // Library workflow the project's steps were copied from;
   // null for an inline workflow. Only on GET /projects/{id}/settings.
   workflow_id?: number | null;
   workflow_name?: string | null;
+  // The steps were changed after the workflow was applied ("· edited").
+  workflow_edited?: boolean;
   // The MT router the project's settings profile points at (null = no MT).
   mt_router_id?: number | null;
   mt_router_name?: string | null;
   qa_profile_id: number | null;
+  // The segmentation profile new uploads are split with, and its name; both
+  // null once its profile is deleted. Only on GET /projects/{id}/settings.
+  segmentation_profile_id?: number | null;
+  segmentation_profile_name?: string | null;
   created_at: string;
   updated_at: string;
   // Project lifecycle status, customer link, creator.
@@ -135,13 +142,9 @@ export interface Translation {
 
 // Projects
 //
-// listProjects: response shape is {data, cursor, has_more} (cursor pagination). This helper extracts only `data` for callers that don't care
-// about pagination (ProjectDetail, CATEditor — both find a single project by
-// id). The backend's high default limit (10000) makes this safe for any
-// realistic tenant. ProjectList uses listProjectsFilteredPage below for the
-// full page object so it can drive useInfiniteQuery.
-export const listProjects = () =>
-  request<{ data: Project[]; cursor: number; has_more: boolean }>('/projects').then(r => r.data);
+// getProject: one project, the same row as a project list entry.
+export const getProject = (projectId: number) =>
+  request<{ data: Project }>(`/projects/${projectId}`).then(r => r.data);
 
 // listProjectsFilteredPage: returns the FULL page object (data + cursor +
 // has_more) so React Query's useInfiniteQuery can drive cursor pagination.
@@ -221,9 +224,11 @@ export interface ProjectCreatePayload {
     tm_on_upload?: boolean;
     auto_complete?: boolean;
     inline_html?: boolean;
+    linguist_terms?: LinguistTerms;
     qa_profile_id?: number | null;
+    segmentation_profile_id?: number;
     tm_profile_id?: number;
-    mt_router_id?: number;
+    mt_router_id?: number | null;
   };
   tm_assignments?: { tm_id: number; mode: string; priority: number; penalty_pct?: number }[];
   term_assignments?: { term_base_id: number; source_language: string; target_language: string; mode: string; priority: number }[];
@@ -314,13 +319,22 @@ export interface ProjectSettings {
   // the project's fuzzy_threshold / penalties are the PROFILE's values.
   tm_profile?: import('./tm-profiles').TMProfileRef | null;
   term_assignments: ProjectTermAssignment[];
-  workflow_steps: import('../types/generated').WorkflowStep[];
+  workflow_steps: ProjectWorkflowStep[];
+}
+
+/** A project workflow step as GET /settings returns it. `locked`: jobs have
+ *  reached this step or one after it, so it keeps its place; its assignee and
+ *  deadline stay editable. `reached_jobs` counts the jobs that reached it. */
+export type ProjectWorkflowStep = import('../types/generated').WorkflowStep & {
+  language_deadlines: { target_language: string; deadline: string }[];
+  locked: boolean;
+  reached_jobs: number;
 }
 
 export const getProjectSettings = (projectId: number) =>
   request<{ data: ProjectSettings }>(`/projects/${projectId}/settings`).then(r => r.data);
 
-export const updateProjectSettings = (projectId: number, data: { fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean; qa_profile_id?: number | null; tm_profile_id?: number; mt_router_id?: number | null }) =>
+export const updateProjectSettings = (projectId: number, data: { fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null }) =>
   request<{ data: Project }>(`/projects/${projectId}/settings`, {
     method: 'PATCH',
     body: JSON.stringify(data),
@@ -443,14 +457,6 @@ export const uploadFile = (
   });
 };
 
-// Segments
-export const listSegments = (fileId: number) =>
-  request<{ data: Segment[] }>(`/files/${fileId}/segments`).then(r => r.data);
-
-// Translations
-export const listTranslations = (fileId: number, lang: string) =>
-  request<{ data: Translation[] }>(`/files/${fileId}/translations?lang=${lang}`).then(r => r.data);
-
 /**
  * Every endpoint that writes translation text answers `task_reopened: true`,
  * beside its payload, when the write put the job's completed task back in
@@ -517,9 +523,6 @@ export const updateTranslationHuman = (
     taskReopened: taskReopenedOf(r),
   }));
 
-export const lockTranslation = (fileId: number, translationId: number) =>
-  request<{ status: string }>(`/files/${fileId}/translations/${translationId}/lock`, { method: 'POST' });
-
 export const unlockTranslation = (fileId: number, translationId: number) =>
   request<{ status: string }>(`/files/${fileId}/translations/${translationId}/unlock`, { method: 'POST' });
 
@@ -566,6 +569,9 @@ export interface SegmentComment {
   author_email: string;
   content: string;
   created_at: string;
+  /** The number of the row the comment was written on, when a join moved it
+   *  to this row. */
+  from_segment?: string | null;
 }
 
 export const listComments = (translationId: number) =>
@@ -606,9 +612,11 @@ export const saveTranslationDraft = (
   }).then(r => ({ translation: r.data, taskReopened: taskReopenedOf(r) }));
 
 /**
- * Project-level pre-translation fan-out.
- * Triggers pre-translate for every job in the project that isn't already
- * running or completed. Returns counts so the caller can render an honest
+ * Project-level pre-translation fan-out: one worker task per job.
+ * With no options, every job in the project that isn't already running or
+ * completed gets TM and MT. With `jobIds` and `phase` (the bulk bar's Apply
+ * TM / Apply MT), only those jobs get that phase, under the checks of the
+ * job's own button. Returns counts so the caller can render an honest
  * toast like "Queued 4 jobs (2 already running)".
  *
  * Server returns HTTP 200 in sync mode (no enqueuer wired) or 202 in
@@ -621,8 +629,11 @@ export interface ProjectPretranslateResult {
   total: number;
 }
 
-export const pretranslateProject = (projectId: number) =>
-  request<ProjectPretranslateResult>(`/projects/${projectId}/pretranslate`, { method: 'POST' });
+export const pretranslateProject = (projectId: number, opts?: { jobIds: number[]; phase: 'tm' | 'mt' }) =>
+  request<ProjectPretranslateResult>(`/projects/${projectId}/pretranslate`, {
+    method: 'POST',
+    ...(opts ? { body: JSON.stringify({ job_ids: opts.jobIds, phase: opts.phase }) } : {}),
+  });
 
 /**
  * Format options for the file export endpoint.

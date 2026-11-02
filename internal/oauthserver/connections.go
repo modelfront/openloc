@@ -15,7 +15,7 @@ import (
 	"openloc/internal/logging"
 )
 
-// Settings → "Connected apps": what the USER has authorized, with revocation.
+// AI settings → Connect an AI tool → "Connected apps": what the USER has authorized, with revocation.
 // Mounted inside the authenticated /api group (browser session), scoped to
 // the calling user — you see and disconnect only your own grants.
 

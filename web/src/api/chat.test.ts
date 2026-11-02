@@ -61,7 +61,64 @@ describe('sendChatMessage stream handling', () => {
     }
     expect(h.onAlive).toHaveBeenCalledTimes(2) // one call per received chunk, the ping included
     expect(h.onText).toHaveBeenCalledWith('partial')
-    expect(h.onError).toHaveBeenCalledWith(expect.stringContaining('interrupted'))
+    expect(h.onError).toHaveBeenCalledWith(expect.stringContaining('interrupted'), { interrupted: true })
+  })
+
+  it('reports a stream that breaks mid-read as an interruption, not the browser text', async () => {
+    const { sendChatMessage } = await import('./chat')
+    // Safari rejects the read with this TypeError when the connection drops.
+    let sent = false
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) {
+          controller.error(new TypeError('Error in input stream'))
+          return
+        }
+        sent = true
+        controller.enqueue(new TextEncoder().encode('event: text\ndata: {"text":"partial"}\n\n'))
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })))
+    const h = {
+      onText: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(),
+      onDone: vi.fn(), onError: vi.fn(),
+    }
+    try {
+      await sendChatMessage({ message: 'q' }, h)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(h.onText).toHaveBeenCalledWith('partial')
+    expect(h.onError).toHaveBeenCalledWith(expect.stringContaining('interrupted'), { interrupted: true })
+    expect(h.onError).not.toHaveBeenCalledWith(expect.stringContaining('input stream'))
+  })
+
+  it('a stream the user stops mid-read rejects with the abort, not an interruption', async () => {
+    const { sendChatMessage } = await import('./chat')
+    const ctrl = new AbortController()
+    let sent = false
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) {
+          ctrl.abort()
+          controller.error(new DOMException('The operation was aborted.', 'AbortError'))
+          return
+        }
+        sent = true
+        controller.enqueue(new TextEncoder().encode('event: text\ndata: {"text":"partial"}\n\n'))
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })))
+    const h = {
+      onText: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(),
+      onDone: vi.fn(), onError: vi.fn(),
+    }
+    try {
+      await expect(sendChatMessage({ message: 'q' }, h, ctrl.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(h.onError).not.toHaveBeenCalled()
   })
 
   it('does NOT report an interruption when the stream ends with done', async () => {
@@ -119,6 +176,12 @@ describe('dispatchFrame', () => {
     // The backend omits ok:false via omitempty — absence must read as failed.
     dispatchFrame('event: tool_end\ndata: {"tool":"openloc_get_job"}', h)
     expect(h.onToolEnd).toHaveBeenCalledWith('openloc_get_job', false)
+  })
+
+  it('routes start with the conversation id as a number', () => {
+    const h = { ...handlers(), onStart: vi.fn() }
+    dispatchFrame('event: start\ndata: {"conversation_id":42}', h)
+    expect(h.onStart).toHaveBeenCalledWith({ conversation_id: 42 })
   })
 
   it('routes done with the conversation id as a number', () => {

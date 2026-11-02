@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -196,19 +197,28 @@ func TestIntegrationTourSpeechRejectsBadInputAndReportsProviderErrors(t *testing
 		}
 	}
 
-	fake.status = http.StatusUnauthorized
-	rec := f.do(t, "POST", "/api/chat/speech", speechBody("Hi there.", ""), f.ownerA, f.tenantA.ID)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("rejected key = %d, want 502", rec.Code)
-	}
-	var env struct {
-		Error struct{ Code, Message string } `json:"error"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Error.Code != "voice_failed" || env.Error.Message == "" || env.Error.Message == "bad key" {
-		t.Errorf("error = %+v, want a user message, not the provider payload", env.Error)
+	// A rejected key is the user's to fix: a 4xx, so it is not reported as our
+	// fault. OpenAI failing is a 502, which is.
+	for _, c := range []struct {
+		provider, want int
+	}{
+		{http.StatusUnauthorized, http.StatusBadRequest},
+		{http.StatusServiceUnavailable, http.StatusBadGateway},
+	} {
+		fake.status = c.provider
+		rec := f.do(t, "POST", "/api/chat/speech", speechBody(fmt.Sprintf("Hi there, %d.", c.provider), ""), f.ownerA, f.tenantA.ID)
+		if rec.Code != c.want {
+			t.Fatalf("provider %d = %d, want %d", c.provider, rec.Code, c.want)
+		}
+		var env struct {
+			Error struct{ Code, Message string } `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatal(err)
+		}
+		if env.Error.Code != "voice_failed" || env.Error.Message == "" || env.Error.Message == "bad key" {
+			t.Errorf("provider %d: error = %+v, want a user message, not the provider payload", c.provider, env.Error)
+		}
 	}
 }
 
@@ -283,7 +293,7 @@ func TestIntegrationTourSpeechInTheDemoUsesTheVisitorsOrgKey(t *testing.T) {
 	// message sends them there, not to the demo's AI settings.
 	fake.status = http.StatusUnauthorized
 	rec := visit(f.tenantA.ID, "POST", speechBody("Welcome back to the demo.", ""))
-	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "your own organization") {
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "your own organization") {
 		t.Errorf("rejected key in the demo: %d %s", rec.Code, rec.Body.String())
 	}
 }

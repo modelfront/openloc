@@ -8,6 +8,9 @@ export type QaFinding = ResultDTO
 
 export const EMPTY_QA_SUMMARY: ReportSummary = { error: 0, warning: 0, info: 0, ignored: 0 }
 
+/** Why every Run QA button is off while the project has no QA profile. */
+export const NO_QA_PROFILE_REASON = 'This project has no QA profile. Assign one in the project settings to run QA.'
+
 /** Findings that still need attention — ignored ones are excluded. */
 export function activeIssues<T extends { ignored?: boolean }>(issues: T[]): T[] {
   return issues.filter(i => !i.ignored)
@@ -139,9 +142,9 @@ export function severityTextClass(severity: string): string {
 export function mergeQAReportRows(prev: ReportDTO | undefined, translationId: number, issues: QaFinding[]): ReportDTO {
   // Seed an empty report when the initial load has not landed yet: autosave
   // is a first-class QA trigger and must populate dots on its own.
-  const base = prev ?? { summary: EMPTY_QA_SUMMARY, results: [] }
+  const base = prev ?? { summary: EMPTY_QA_SUMMARY, results: [], profile_assigned: true }
   const results = [...base.results.filter(r => r.translation_id !== translationId), ...issues]
-  return { summary: countQASummary(results), results }
+  return { ...base, summary: countQASummary(results), results }
 }
 
 /**

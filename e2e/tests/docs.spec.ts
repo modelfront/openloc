@@ -1,5 +1,4 @@
-import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { expect, freshContext, login, test } from "./helpers";
 
 // In-app user documentation (/docs). Role filtering is
 // covered by Go tests (internal/productdocs); this spec proves the wiring:
@@ -8,7 +7,7 @@ import { login } from "./helpers";
 
 test.describe("Docs pages", () => {
   test("signed out, the docs are public and offer Open app", async ({ browser }) => {
-    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    const ctx = await freshContext(browser);
     expect((await ctx.request.get("/api/docs")).status()).toBe(200);
     const page = await ctx.newPage();
     await page.goto("/docs/guides/cat-editor");
@@ -20,7 +19,6 @@ test.describe("Docs pages", () => {
     await page.route("**/api/auth/dev-login", (route) => route.abort());
     await page.goto("/projects");
     await expect(page).toHaveURL(/\/login/);
-    await ctx.close();
   });
 
   test("Docs is in the account menu and opens in a new tab, without the nav rail", async ({ page, context }) => {

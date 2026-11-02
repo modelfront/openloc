@@ -19,7 +19,7 @@
 // the narrowing assertions independent of popover click flakiness.
 
 import { test, expect } from '@playwright/test'
-import { login } from './helpers'
+import { login, standardWorkflowId } from './helpers'
 import { SEED_OWNER_NAME, SEED_VENDOR_EMAIL, SEED_VENDOR_NAME } from '../seed-identity'
 
 const TS = Date.now()
@@ -45,7 +45,7 @@ test.describe('creator attribution', () => {
     await login(page)
 
     const p = await page.request.post('/api/projects', {
-      data: { name: PROJECT_NAME, source_language: 'en', target_languages: ['fr'] },
+      data: { name: PROJECT_NAME, source_language: 'en', target_languages: ['fr'], workflow_id: await standardWorkflowId(page) },
     })
     expect(p.ok()).toBe(true)
     projectId = (await p.json()).data.id
@@ -125,7 +125,7 @@ test.describe('creator attribution', () => {
     await expect(page.getByTestId(`tm-row-${tmId}`)).toBeVisible()
 
     await page.goto(`/memories?created_by=${otherId}`)
-    await expect(page.getByTestId('tm-filter-bar')).toBeVisible()
+    await expect(page.getByTestId('tm-filter-created-by')).toBeVisible()
     await expect(page.getByTestId(`tm-row-${tmId}`)).toHaveCount(0)
   })
 
@@ -141,7 +141,7 @@ test.describe('creator attribution', () => {
     await expect(page.getByTestId(`term-base-row-${tbId}`)).toBeVisible()
 
     await page.goto(`/terminology?created_by=${otherId}`)
-    await expect(page.getByTestId('term-base-filter-bar')).toBeVisible()
+    await expect(page.getByTestId('term-base-filter-created-by')).toBeVisible()
     await expect(page.getByTestId(`term-base-row-${tbId}`)).toHaveCount(0)
   })
 

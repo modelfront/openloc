@@ -10,8 +10,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 const mockEditor = vi.hoisted(() => ({
   text: 'initial',
   richText: null as string | null,
-  // The component's onBlur prop is captured here so tests can fire it directly.
+  // The component's onBlur / onTextChange props are captured here so tests can
+  // fire them directly.
   fireBlur: () => {},
+  fireChange: () => {},
 }))
 
 vi.mock('sonner', () => ({
@@ -68,9 +70,12 @@ vi.mock('@/components/ui/virtual-data-table', async () => {
 vi.mock('@/components/RichTextCellEditor', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
   const { forwardRef, useEffect, useImperativeHandle } = React
-  const Mock = forwardRef<unknown, { initialText: string; onBlur?: () => void; dataTestId?: string }>(
+  const Mock = forwardRef<unknown, { initialText: string; onBlur?: () => void; onTextChange?: (t: string) => void; dataTestId?: string }>(
     function MockEditor(props, ref) {
-      useEffect(() => { mockEditor.fireBlur = props.onBlur ?? (() => {}) })
+      useEffect(() => {
+        mockEditor.fireBlur = props.onBlur ?? (() => {})
+        mockEditor.fireChange = () => props.onTextChange?.(mockEditor.text)
+      })
       useImperativeHandle(ref, () => ({
         getText: () => mockEditor.text,
         getRichText: () => mockEditor.richText,
@@ -289,6 +294,65 @@ describe('TMBrowser inline cell editing', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('tm-cell-edit-42-target')).toBeNull()
     })
+    expect(mockUpdateTMEntry).not.toHaveBeenCalled()
+  })
+
+  // Tag chips add nothing to getText(), so a tag-only edit leaves the plain
+  // text as it was; only the rich text shows the change.
+  it('saves an edit that only inserts a tag', async () => {
+    mockUpdateTMEntry.mockResolvedValue({ ...SAMPLE_ENTRY, target_rich_text: 'Hola <ph id="1"/>mundo', updated_at: '2026-04-21T10:00:00Z' })
+    const user = userEvent.setup()
+    renderTMBrowser()
+    await user.click(await screen.findByTestId('tm-cell-42-target'))
+    await screen.findByTestId('tm-cell-edit-42-target')
+
+    mockEditor.text = 'Hola mundo'
+    mockEditor.richText = 'Hola <ph id="1"/>mundo'
+    act(() => mockEditor.fireChange())
+    act(() => mockEditor.fireBlur())
+
+    await waitFor(() => expect(mockUpdateTMEntry).toHaveBeenCalledTimes(1))
+    expect(mockUpdateTMEntry).toHaveBeenCalledWith(1, 42, expect.objectContaining({
+      targetText: 'Hola mundo',
+      targetRichText: 'Hola <ph id="1"/>mundo',
+    }))
+  })
+
+  it('saves an edit that only deletes a tag', async () => {
+    mockListTMEntries.mockResolvedValue({
+      data: [{ ...SAMPLE_ENTRY, target_rich_text: 'Hola <ph id="1"/>mundo' }], cursor: 0, has_more: false, total: 1,
+    })
+    mockUpdateTMEntry.mockResolvedValue({ ...SAMPLE_ENTRY, updated_at: '2026-04-21T10:00:00Z' })
+    const user = userEvent.setup()
+    renderTMBrowser()
+    await user.click(await screen.findByTestId('tm-cell-42-target'))
+    await screen.findByTestId('tm-cell-edit-42-target')
+
+    mockEditor.text = 'Hola mundo'
+    mockEditor.richText = null
+    act(() => mockEditor.fireChange())
+    act(() => mockEditor.fireBlur())
+
+    await waitFor(() => expect(mockUpdateTMEntry).toHaveBeenCalledTimes(1))
+    expect(mockUpdateTMEntry).toHaveBeenCalledWith(1, 42, expect.objectContaining({ targetRichText: null }))
+  })
+
+  it('skips the PATCH when the text and the tags are unchanged', async () => {
+    mockListTMEntries.mockResolvedValue({
+      data: [{ ...SAMPLE_ENTRY, target_rich_text: 'Hola <ph id="1"/>mundo' }], cursor: 0, has_more: false, total: 1,
+    })
+    const user = userEvent.setup()
+    renderTMBrowser()
+    await user.click(await screen.findByTestId('tm-cell-42-target'))
+    await screen.findByTestId('tm-cell-edit-42-target')
+
+    // A chip deleted and put back: the editor changed, the entry did not.
+    mockEditor.text = 'Hola mundo'
+    mockEditor.richText = 'Hola <ph id="1"/>mundo'
+    act(() => mockEditor.fireChange())
+    act(() => mockEditor.fireBlur())
+
+    await waitFor(() => expect(screen.queryByTestId('tm-cell-edit-42-target')).toBeNull())
     expect(mockUpdateTMEntry).not.toHaveBeenCalled()
   })
 

@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { useOnChange } from '@/hooks/useOnChange'
 import { baseLanguage } from '@/lib/lang-pair'
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
-import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
+import { arrayMove } from '@dnd-kit/sortable'
+import { SortableList } from '@/components/list/SortableList'
+import { SortableGridRow } from '@/components/list/SortableGridRow'
 import { toast } from 'sonner'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -16,11 +15,15 @@ import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import type { CreateResourceContext, CreateResourceResult } from '../AssignmentSection'
 import { LanguagePair } from '@/components/ui/language-code'
 import { Chip } from '@/components/ui/chip'
-import { TM_LANGS_SHOWN } from '@/lib/tm-display'
+import { TM_LANGS_SHOWN, tmEntriesLabel } from '@/lib/tm-display'
 import { PenaltyInput } from './PenaltyInput'
 import { errorText } from '@/lib/error-text'
 import { SaveStatus } from '@/components/ui/save-status'
 import { useSavedFlash } from '@/hooks/useSavedFlash'
+import { cn } from '@/lib/utils'
+import { tableHeaderRowClass } from '@/components/list/list-row'
+import { TextLink } from '@/components/ui/text-link'
+import { tmPath } from '@/lib/asset-links'
 
 // TM assignments are per-TM. A TM declares its own source + target
 // languages, so the assignment row carries no per-pair languages —
@@ -44,6 +47,8 @@ export interface TMResource {
   name: string
   source_language?: string | null
   target_languages?: string[] | null
+  /** Entries in the TM; absent when the caller has no count. */
+  entry_count?: number
 }
 
 const baseEq = (a?: string | null, b?: string | null) =>
@@ -120,7 +125,7 @@ export function TMAssignmentSection({
     return tmCollections
       .filter(t => !assignedIds.has(t.id))
       .filter(t => !projectSourceLanguage || baseEq(t.source_language, projectSourceLanguage))
-      .map(t => ({ id: t.id, name: t.name }))
+      .map(t => ({ id: t.id, name: t.name, entry_count: t.entry_count }))
   }, [tmCollections, assignedIds, projectSourceLanguage])
 
   // Every save replaces the whole list, so saves run one after another: two in
@@ -217,19 +222,9 @@ export function TMAssignmentSection({
     autoSave(newRows)
   }
 
-  // Drag-to-sort via dnd-kit (pointer + keyboard). Priority is the row order
-  // (0 = top = checked first); the list re-sorts and saves once, on drop.
-  // Pointer activation needs a few px of travel so a click on the handle is
-  // not a drag; the keyboard sensor gives Space / arrows / Space for free.
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return
-    const from = rows.findIndex(r => r.tmId === active.id)
-    const to = rows.findIndex(r => r.tmId === over.id)
-    if (from < 0 || to < 0) return
+  // Drag-to-sort. Priority is the row order (0 = top = checked first); the
+  // list re-sorts and saves once, on drop.
+  const handleMove = (from: number, to: number) => {
     const reordered = reorderRows(rows, from, to)
     setRows(reordered)
     autoSave(reordered)
@@ -278,7 +273,7 @@ export function TMAssignmentSection({
               Hidden while the rows belong to a TM profile. */}
           {!readOnly && (
             <Combobox
-              options={pickerResources.map(r => ({ value: String(r.id), label: r.name }))}
+              options={pickerResources.map(r => ({ value: String(r.id), label: r.name, chip: r.entry_count != null ? tmEntriesLabel(r.entry_count) : undefined }))}
               value=""
               onChange={(id) => addTM(Number(id))}
               actions={onCreateNewResource ? [createAction(createNewLabel ?? 'Create new...', async () => {
@@ -289,6 +284,7 @@ export function TMAssignmentSection({
               }, addTM)] : undefined}
               placeholder="Add translation memory"
               className="w-56"
+              contentClassName="w-[26rem]"
               data-testid="add-tm-select"
             />
           )}
@@ -298,7 +294,7 @@ export function TMAssignmentSection({
       {rows.length > 0 ? (
         <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 mb-3 overflow-x-auto overflow-y-hidden" data-testid="tm-assignment-table">
           <div
-            className="bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider rounded-t-lg"
+            className={cn(tableHeaderRowClass, 'rounded-t-lg')}
             style={{ display: 'grid', gridTemplateColumns: gridCols }}
           >
             <div className="px-3 py-2 flex items-center gap-1">
@@ -316,16 +312,13 @@ export function TMAssignmentSection({
             <div className="px-3 py-2"></div>
           </div>
 
-          {/* Locked to the vertical axis and to the list box: a row that follows
-              the pointer sideways or past the last row would poke out of the
-              scroll wrapper and grow scrollbars mid-drag. */}
-          <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis, restrictToParentElement]} onDragEnd={handleDragEnd}>
-          <SortableContext items={rows.map(r => r.tmId)} strategy={verticalListSortingStrategy}>
+          <SortableList ids={rows.map(r => r.tmId)} onMove={handleMove}>
           {rows.map((item, idx) => {
             const tm = tmById.get(item.tmId)
             const warn = targetOverlapMissing(tm)
             return (
-              <SortableRow key={item.tmId} id={item.tmId} disabled={readOnly} gridCols={gridCols} testId={`tm-assignment-row-${item.tmId}`}>
+              <SortableGridRow key={item.tmId} id={item.tmId} disabled={readOnly} gridCols={gridCols} testId={`tm-assignment-row-${item.tmId}`}
+                className="border-b border-gray-100 dark:border-gray-800">
                 {({ handleRef, handleProps }) => (<>
                 <div className="flex items-center gap-2 py-2 pl-2" data-testid={`tm-assignment-sequence-${item.tmId}`}>
                   {!readOnly && <DragHandle
@@ -345,10 +338,17 @@ export function TMAssignmentSection({
                     </span>
                   )}
                 </div>
-                <div className="px-3 py-2 text-sm text-gray-900 dark:text-gray-100 truncate">
-                  {tm?.name ?? `TM #${item.tmId}`}
-                </div>
                 <div className="px-3 py-2 min-w-0">
+                  <div className="text-sm text-gray-900 dark:text-gray-100 truncate">
+                    {tm
+                      ? <TextLink to={tmPath(tm.id)} newTab newTabIcon={false} data-testid={`tm-assignment-link-${tm.id}`}>{tm.name}</TextLink>
+                      : `TM #${item.tmId}`}
+                  </div>
+                  {tm?.entry_count != null && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400" data-testid={`tm-assignment-size-${item.tmId}`}>{tmEntriesLabel(tm.entry_count)}</div>
+                  )}
+                </div>
+                <div className="px-3 py-2 min-w-0" data-testid={`tm-assignment-langs-${item.tmId}`}>
                   <TMLangs tm={tm} warn={warn} />
                 </div>
                 <div className="flex items-center justify-center py-2">
@@ -387,16 +387,15 @@ export function TMAssignmentSection({
                   {!readOnly && <DeleteButton size="icon-xs" onClick={() => removeRow(idx)} aria-label="Remove" data-testid={`tm-assignment-remove-${item.tmId}`} />}
                 </div>
                 </>)}
-              </SortableRow>
+              </SortableGridRow>
             )
           })}
-          </SortableContext>
-          </DndContext>
+          </SortableList>
         </div>
       ) : (
         <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 mb-3 overflow-x-auto overflow-y-hidden">
           <div
-            className="bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider rounded-t-lg"
+            className={cn(tableHeaderRowClass, 'rounded-t-lg')}
             style={{ display: 'grid', gridTemplateColumns: gridCols }}
           >
             <div className="px-3 py-2">Sequence</div>
@@ -433,8 +432,9 @@ function TMLangs({ tm, warn }: { tm?: { source_language?: string | null; target_
     return <span className="text-xs text-gray-400 dark:text-gray-500">no declared languages</span>
   }
   return (
-    <span className="inline-flex items-center gap-1 min-w-0">
-      <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
+    // A long list wraps inside the column instead of running under Read/Write.
+    <span className="flex items-center gap-1 min-w-0">
+      <span className="min-w-0 text-xs text-gray-500 dark:text-gray-400">
         <LanguagePair source={src} targets={tgts} max={TM_LANGS_SHOWN} />
       </span>
       {warn && (
@@ -464,31 +464,4 @@ function TMLangs({ tm, warn }: { tm?: { source_language?: string | null; target_
 /** Moves the row at `from` to `to` and renumbers priority to match the order. */
 export function reorderRows(rows: TMAssignmentItem[], from: number, to: number): TMAssignmentItem[] {
   return arrayMove(rows, from, to).map((r, i) => ({ ...r, priority: i }))
-}
-
-// One sortable grid row. dnd-kit owns the transform/transition (rows slide
-// out of the way while dragging) and the activator is the grip button, so a
-// click anywhere else in the row never starts a drag. The dragged row is the
-// placeholder: tinted + outlined, fully opaque.
-function SortableRow({ id, disabled, gridCols, testId, children }: {
-  id: number
-  disabled: boolean
-  gridCols: string
-  testId: string
-  children: (h: { handleRef: (el: HTMLElement | null) => void; handleProps: Record<string, unknown> }) => ReactNode
-}) {
-  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id, disabled })
-  return (
-    <div
-      ref={setNodeRef}
-      data-testid={testId}
-      data-dragging={isDragging ? 'true' : undefined}
-      className={`border-b border-gray-100 dark:border-gray-800 items-center ${
-        isDragging ? 'relative z-10 bg-primary/10 ring-1 ring-inset ring-primary/50' : ''
-      }`}
-      style={{ display: 'grid', gridTemplateColumns: gridCols, transform: CSS.Transform.toString(transform), transition }}
-    >
-      {children({ handleRef: setActivatorNodeRef, handleProps: { ...attributes, ...listeners } })}
-    </div>
-  )
 }

@@ -1,6 +1,8 @@
 package emaillayout
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,20 +47,35 @@ func TestRender_NavyBrandBarWithLogo(t *testing.T) {
 	if !strings.Contains(out, `bgcolor="#101828"`) {
 		t.Errorf("brand bar is not navy:\n%s", out)
 	}
-	if !strings.Contains(out, `<img src="https://app.example.com/email-logo.png"`) {
-		t.Errorf("logo should load from the app origin:\n%s", out)
+	if !strings.Contains(out, `<img src="https://app.example.com/email-wordmark.png" width="88" height="26" alt="OpenLoc"`) {
+		t.Errorf("wordmark image should load from the app origin, with the name as alt text:\n%s", out)
+	}
+	// The image is the whole wordmark: no second "OpenLoc" as text next to it.
+	if strings.Contains(out, ">OpenLoc<") {
+		t.Errorf("wordmark also rendered as text:\n%s", out)
 	}
 }
 
 // Without an origin there is nowhere to load the logo from: the bar shows the
-// wordmark alone instead of a broken image.
+// wordmark as text instead of a broken image.
 func TestRender_NoBaseURLOmitsLogo(t *testing.T) {
 	out := render(t, "", Content{Heading: "Hello"})
 	if strings.Contains(out, "<img") {
 		t.Errorf("logo rendered without a base URL:\n%s", out)
 	}
-	if !strings.Contains(out, HeaderMarker) {
-		t.Errorf("wordmark missing:\n%s", out)
+	if !strings.Contains(out, HeaderMarker) || !strings.Contains(out, ">OpenLoc</td>") {
+		t.Errorf("wordmark text missing:\n%s", out)
+	}
+}
+
+// The images emails link to ship in the frontend's public folder. Emails
+// already in inboxes load /email-logo.png, so it stays even though new emails
+// link to LogoPath.
+func TestLogoPath_FileExists(t *testing.T) {
+	for _, path := range []string{LogoPath, "/email-logo.png"} {
+		if _, err := os.Stat(filepath.Join("..", "..", "web", "public", path)); err != nil {
+			t.Errorf("logo file %s missing: %v", path, err)
+		}
 	}
 }
 

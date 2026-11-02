@@ -15,6 +15,19 @@ export const DEFAULT_AUTO_COMPLETE = true
 
 // Mirrors the settings_profiles.inline_html column default: strings are HTML.
 export const DEFAULT_INLINE_HTML = true
+// Whether linguists add terms from the editor, and their terms' status
+// (settings_profiles.linguist_terms). The column default is pending.
+export type LinguistTerms = 'off' | 'pending' | 'approved'
+export const DEFAULT_LINGUIST_TERMS: LinguistTerms = 'pending'
+export const LINGUIST_TERMS_LABELS: Record<LinguistTerms, string> = {
+  off: 'No',
+  pending: 'Yes, saved as pending',
+  approved: 'Yes, saved as approved',
+}
+
+// Narrows the API's plain string; anything unknown reads as the default.
+export const toLinguistTerms = (v: string | undefined | null): LinguistTerms =>
+  v === 'off' || v === 'approved' ? v : DEFAULT_LINGUIST_TERMS
 
 // How pre-translation walks several TMs (settings_profiles.tm_lookup_order).
 // The column default is match_percent.
@@ -46,7 +59,10 @@ export function projectSettingsToValues(
     tmOnUpload: project?.tm_on_upload ?? false,
     autoComplete: project?.auto_complete ?? DEFAULT_AUTO_COMPLETE,
     inlineHTML: project?.inline_html ?? DEFAULT_INLINE_HTML,
+    linguistTerms: toLinguistTerms(project?.linguist_terms),
     qaProfileId: project?.qa_profile_id ?? null,
+    segmentationProfileId: project?.segmentation_profile_id ?? null,
+    segmentationProfileName: project?.segmentation_profile_name ?? undefined,
     tmProfileId: settings.tm_profile?.id ?? null,
     tmProfileName: settings.tm_profile?.name,
     tmProfileUsageCount: settings.tm_profile?.usage_count,

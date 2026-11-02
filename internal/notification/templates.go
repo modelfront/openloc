@@ -3,6 +3,7 @@ package notification
 import (
 	"fmt"
 	"html/template"
+	"net/url"
 
 	"openloc/internal/emaillayout"
 	"openloc/internal/langcode"
@@ -39,13 +40,42 @@ func IssueSubject(id int64, title string) string {
 	return fmt.Sprintf("Issue #%d: %s", id, title)
 }
 
-// EmailSubject is the subject of an event's email. It is the bell's subject,
-// except for an issue update, whose email takes the issue's own subject.
+// EmailSubject is the subject of an event's email. A job email is titled by
+// its project alone, so every email about a project lands in one inbox
+// thread; the file and language are in the body. An issue update takes the
+// issue's own subject. Anything else uses the bell's subject.
 func EmailSubject(e Event) string {
 	if e.Type == EventIssueUpdated {
 		return IssueSubject(e.IssueID, e.IssueTitle)
 	}
+	if isProjectEmail(e) && e.ProjectName != "" {
+		return "[OpenLoc] " + e.ProjectName
+	}
 	return Subject(e)
+}
+
+// EmailThread is the conversation an event's email belongs to: the event's
+// own thread when it has one, else the project's for a job email. A project
+// thread has no root email; every email refers to the same id. The id holds
+// the app's host and the tenant, so two deployments or orgs never share one.
+func EmailThread(e Event, baseURL string) emaillayout.Thread {
+	if e.Thread != (emaillayout.Thread{}) || !isProjectEmail(e) || e.ProjectID <= 0 {
+		return e.Thread
+	}
+	host := "openloc"
+	if u, err := url.Parse(baseURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	return emaillayout.Thread{ID: fmt.Sprintf("project-%d-%d.%s", e.TenantID, e.ProjectID, host)}
+}
+
+// isProjectEmail reports whether e's email is about a job in a project.
+func isProjectEmail(e Event) bool {
+	switch e.Type {
+	case EventAssignment, EventRejection, EventCompletion, EventDeadline:
+		return true
+	}
+	return false
 }
 
 // BodyPreview returns a short plain-text preview for the notification list.

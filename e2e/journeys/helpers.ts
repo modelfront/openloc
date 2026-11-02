@@ -14,8 +14,9 @@ export {
   login,
   authHeaders,
   inviteMember,
-  sessionAs,
+  openSessionAs,
   segmentEditor,
+  EDITOR_READS,
   fillEditorExactly,
   waitForPipeline,
   uploadFileViaAPI,
@@ -35,13 +36,16 @@ export {
   openJob,
   selectFirstTask,
   submitProjectWizard,
+  pickProjectWorkflow,
+  standardWorkflow,
   deleteDraftFromURL,
   importTMXViaAPI,
   deleteViaAPI,
   deleteTMViaAPI,
 } from "../tests/helpers";
 
-import { deleteProjectViaAPI as deleteProjectRowViaAPI, deleteViaAPI } from "../tests/helpers";
+import { deleteProjectViaAPI as deleteProjectRowViaAPI, deleteViaAPI, standardWorkflow, withDefaultWorkflow } from "../tests/helpers";
+import { wordEnds } from "../tests/word-ends";
 
 const API = "";
 
@@ -200,7 +204,7 @@ export async function createProjectViaAPI(
   const headers = await authHeader(page);
   const res = await page.request.post(`${API}/api/projects`, {
     headers,
-    data: { name, source_language: srcLang, target_languages: tgtLangs, template_id: templateId },
+    data: await withDefaultWorkflow(page, { name, source_language: srcLang, target_languages: tgtLangs, template_id: templateId }),
   });
   expect(res.ok(), `createProject "${name}": ${res.status()}`).toBe(true);
   const body = await res.json();
@@ -722,7 +726,7 @@ export async function createTemplateViaAPI(page: Page, name: string): Promise<{ 
   const headers = await authHeader(page);
   const res = await page.request.post(`${API}/api/templates`, {
     headers,
-    data: { name },
+    data: { name, workflow_id: (await standardWorkflow(page)).id },
   });
   expect(res.ok(), `createTemplate "${name}": ${res.status()}`).toBe(true);
   const body = await res.json();
@@ -836,30 +840,7 @@ export async function verifyProjectSettings(
  * my selection".
  */
 export async function selectWordInActiveSource(page: Page, word: string): Promise<void> {
-  const ends = await page.evaluate((w) => {
-    const box = document.querySelector('[data-testid="active-source-box"]');
-    if (!box) throw new Error("active source box missing — is a segment active?");
-    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      const i = node.data.indexOf(w);
-      if (i === -1) continue;
-      const charRect = (at: number) => {
-        const r = document.createRange();
-        r.setStart(node, at);
-        r.setEnd(node, at + 1);
-        return r.getBoundingClientRect();
-      };
-      const first = charRect(i), last = charRect(i + w.length - 1);
-      // Inside the first character's left half and the last one's right half,
-      // so the caret lands before and after the word.
-      return {
-        from: { x: first.left + 1, y: first.top + first.height / 2 },
-        to: { x: last.right - 1, y: last.top + last.height / 2 },
-      };
-    }
-    throw new Error(`"${w}" not found in the active source box`);
-  }, word);
+  const ends = await wordEnds(page.getByTestId("active-source-box"), word);
   await page.mouse.move(ends.from.x, ends.from.y);
   await page.mouse.down();
   await page.mouse.move(ends.to.x, ends.to.y, { steps: 4 });

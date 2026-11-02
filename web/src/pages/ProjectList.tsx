@@ -33,6 +33,7 @@ import { hoverActionClass } from '@/components/list/hover-action'
 import { listCardClass, listCardHeaderClass, listCardTitleClass } from '@/components/list/list-row'
 import { LoadMoreButton } from '@/components/list/LoadMoreButton'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ProjectFilterBar } from '../components/project/ProjectFilterBar'
@@ -121,7 +122,7 @@ export default function ProjectList() {
           title="Projects"
           actions={
             <Link to="/projects/new">
-              <Button data-guide="projects.new">New project</Button>
+              <CreateButton data-guide="projects.new">New project</CreateButton>
             </Link>
           }
         />

@@ -3,6 +3,7 @@ import { baseLanguage } from '@/lib/lang-pair'
 import { toast } from 'sonner'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { TextLink } from '@/components/ui/text-link'
 import { Input } from '@/components/ui/input'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Combobox, createAction, type ComboboxAction } from '@/components/ui/combobox'
@@ -15,6 +16,8 @@ import { LanguagePair } from '@/components/ui/language-code'
 import { SaveStatus } from '@/components/ui/save-status'
 import { errorText } from '@/lib/error-text'
 import { useSavedFlash } from '@/hooks/useSavedFlash'
+import { capitalize, cn } from '@/lib/utils'
+import { tableHeaderRowClass } from '@/components/list/list-row'
 
 /**
  * Context passed to `onCreateNewResource` so the parent can pre-fill dialogs
@@ -63,15 +66,20 @@ export function parseResKey(v: string): { kind?: string; id: number } {
   return { kind: v.slice(0, i), id: Number(v.slice(i + 1)) }
 }
 
-export function AssignmentSection({ title, helpText, items, resources, resourceActions, resourceLabel, hasMode, hasPriority, onSave, initialEditing, onDraftChange, languages, fetchLanguagePairs, onCreateNewResource, createNewLabel, autoSourceLanguage, restrictTargetsTo, resourceLangs, headerContent, emptyStateText }: {
+export function AssignmentSection({ title, helpText, items, resources, resourcePath, resourceActions, resourceLabel, hasMode, hasPriority, onSave, initialEditing, onDraftChange, languages, fetchLanguagePairs, onCreateNewResource, createNewLabel, autoSourceLanguage, restrictTargetsTo, resourceLangs, headerContent, emptyStateText, variant = 'card' }: {
   title: string
   helpText?: string
   items: AssignmentItem[]
   /** `meta` is the option's trailing chip (e.g. an AI engine's provider/model/mode). */
   resources: { id: number; name: string; kind?: string; meta?: ReactNode }[]
+  /** The page of a resource. In resource mode its name links there, in a new
+   *  tab, with no icon; a resource missing from `resources` stays plain text. */
+  resourcePath?: (id: number) => string
   /** Pinned "New …" rows for the kind-aware (MT) add-row picker. The
    *  numeric-id sections use `onCreateNewResource` instead. */
   resourceActions?: ComboboxAction[]
+  /** The resource noun as it reads mid-sentence ("term base", "TM"), as in
+   *  "Add term base". The column header capitalises its first letter. */
   resourceLabel: string
   /** Extra content rendered inside the section, between the title and the table
    *  (e.g. the MT "Default engine" selector, so it sits under the block heading). */
@@ -79,6 +87,11 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
   /** Overrides the "No {title} assigned yet." empty-state line. Used by MT to say
    *  the default engine already covers everything when there are no overrides. */
   emptyStateText?: string
+  /**
+   * `embedded` drops the card chrome so the parent's section owns the border,
+   * and shows the title as the smaller subheading.
+   */
+  variant?: 'card' | 'embedded'
   hasMode?: boolean
   hasPriority?: boolean
   onSave?: (items: AssignmentItem[]) => Promise<void>
@@ -199,6 +212,7 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
   // read-only. Picker offers source-matching, not-yet-assigned resources.
   const resourceMode = !!resourceLangs
   const assignedResourceIds = useMemo(() => new Set(rows.map(r => r.resourceId)), [rows])
+
   const pickerResources = useMemo(() => {
     if (!resourceMode) return resources
     return resources
@@ -215,6 +229,16 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
         return tbTargets.some(t => restrictTargetsTo.some(p => baseEq(p, t)))
       })
   }, [resourceMode, resources, assignedResourceIds, autoSourceLanguage, restrictTargetsTo, resourceLangs])
+  // Resource mode rows read their name and size from here (no kinds there).
+  const resourceById = useMemo(() => new Map(resources.map(r => [r.id, r])), [resources])
+  // Resource mode's read-only name: a link to the resource when it still exists.
+  const resourceNameCell = (item: AssignmentItem) => {
+    const res = resourceById.get(item.resourceId)
+    const name = res?.name || item.resourceName || `#${item.resourceId}`
+    return res && resourcePath
+      ? <TextLink to={resourcePath(res.id)} newTab newTabIcon={false} data-testid={`assignment-link-${res.id}-${item.sourceLang}-${item.targetLang}`}>{name}</TextLink>
+      : name
+  }
 
   // Languages for just-created resources: they aren't in the `resourceLangs`
   // prop yet (the list query hasn't refetched), so the create flow stashes them
@@ -397,11 +421,14 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
     if (next !== null) setNewMode(next)
   }
 
+  const embedded = variant === 'embedded'
   return (
-    <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+    <div className={embedded ? '' : 'bg-card rounded-lg border border-gray-200 dark:border-gray-800 p-4'}>
       <div className="flex max-md:flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-1">
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</h3>
+          {embedded
+            ? <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">{title}</h4>
+            : <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</h3>}
           {helpText && <HelpTip text={helpText} />}
         </div>
         <div className="flex items-center gap-3">
@@ -409,7 +436,7 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
           {/* Resource mode (Terminology): add/create control lives here, like TM. */}
           {resourceMode && (
             <Combobox
-              options={pickerResources.map(r => ({ value: String(r.id), label: r.name }))}
+              options={pickerResources.map(r => ({ value: String(r.id), label: r.name, chip: r.meta }))}
               value=""
               onChange={(id) => addResource(Number(id))}
               actions={onCreateNewResource ? [createAction(createNewLabel ?? 'Create new...', async () => {
@@ -423,6 +450,7 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
               }, addResource)] : undefined}
               placeholder={`Add ${resourceLabel}`}
               className="w-56"
+              contentClassName="w-[26rem]"
               data-testid="resource-select"
             />
           )}
@@ -435,11 +463,11 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
       <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 mb-3 max-md:overflow-x-auto max-md:overflow-y-hidden">
           {/* Header */}
           <div
-            className="gap-0 bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider rounded-t-lg"
+            className={cn('gap-0', tableHeaderRowClass, 'rounded-t-lg')}
             style={{ display: 'grid', gridTemplateColumns: gridCols }}
           >
             {hasPriority && <div className="px-1 py-2"></div>}
-            <div className="px-3 py-2">{resourceLabel}</div>
+            <div className="px-3 py-2">{capitalize(resourceLabel)}</div>
             {resourceMode ? (
               <div className="px-3 py-2">Languages</div>
             ) : (
@@ -492,9 +520,16 @@ export function AssignmentSection({ title, helpText, items, resources, resourceA
               )}
               <div className="px-3 py-2 min-w-0">
                 {resourceMode ? (
-                  <span className="text-sm text-gray-900 dark:text-gray-100 truncate block">
-                    {resources.find(r => r.id === item.resourceId)?.name || item.resourceName || `#${item.resourceId}`}
-                  </span>
+                  <>
+                    <span className="text-sm text-gray-900 dark:text-gray-100 truncate block">
+                      {resourceNameCell(item)}
+                    </span>
+                    {resourceById.get(item.resourceId)?.meta != null && (
+                      <span className="text-xs text-gray-500 dark:text-gray-400 block" data-testid={`assignment-resource-meta-${item.resourceId}`}>
+                        {resourceById.get(item.resourceId)?.meta}
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <Combobox
                     value={resKey(item.engineKind, item.resourceId)}

@@ -1,9 +1,11 @@
 -- name: CreateFile :one
 -- inline_html is nil-keeps-default (on): a struct literal that omits it must
 -- not parse a file as plain text. xlsx_layout is NULL for every file but an
--- Excel workbook the uploader laid out (parser.XLSXLayout).
-INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout)
-VALUES ($1, $2, $3, $4, $5, COALESCE(sqlc.narg('inline_html')::bool, true), sqlc.narg('xlsx_layout')::jsonb)
+-- Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
+-- the rule set the file was split with (segmentation.Snapshot); NULL means
+-- the conservative built-in set.
+INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation)
+VALUES ($1, $2, $3, $4, $5, COALESCE(sqlc.narg('inline_html')::bool, true), sqlc.narg('xlsx_layout')::jsonb, sqlc.narg('segmentation')::jsonb)
 RETURNING *;
 
 -- name: LockFileTenant :one
@@ -38,6 +40,16 @@ SELECT EXISTS (
 -- Tenant-scoped through the file's project.
 UPDATE files f
 SET xlsx_layout = @xlsx_layout::jsonb, updated_at = now()
+FROM projects p
+WHERE f.id = @id AND p.id = f.project_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
+RETURNING f.*;
+
+-- name: UpdateFileSegmentation :one
+-- A draft file's segmentation snapshot, resolved again at publish when the
+-- draft's source language changed after the upload. Tenant-scoped through the
+-- file's project.
+UPDATE files f
+SET segmentation = @segmentation::jsonb, updated_at = now()
 FROM projects p
 WHERE f.id = @id AND p.id = f.project_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
 RETURNING f.*;
@@ -117,7 +129,7 @@ FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = @file_id
   AND t.target_language = @target_language
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: UpdateTranslationFromReimport :execrows
 -- XLIFF re-import: stamps a translation with the incoming target. Treats the

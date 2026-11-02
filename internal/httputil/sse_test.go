@@ -34,7 +34,7 @@ func TestStartSSE_WritesEventsAndComments(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("answered %d %q, want 200 text/event-stream", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	if got, want := rec.Body.String(), "event: holds\ndata: {\"n\":1}\n\n: keepalive\n\n"; got != want {
+	if got, want := rec.Body.String(), ": open\n\nevent: holds\ndata: {\"n\":1}\n\n: keepalive\n\n"; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
@@ -62,7 +62,7 @@ func TestSSE_RetryGoesOutWithTheNextEventOnly(t *testing.T) {
 	if err := sse.Event("holds", struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := rec.Body.String(), "retry: 2500\nevent: connected\ndata: {}\n\nevent: holds\ndata: {}\n\n"; got != want {
+	if got, want := rec.Body.String(), ": open\n\nretry: 2500\nevent: connected\ndata: {}\n\nevent: holds\ndata: {}\n\n"; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }

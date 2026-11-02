@@ -65,6 +65,7 @@ func TestIntegration_QAIgnore(t *testing.T) {
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "QA Ignore Project", "source_language": "en", "target_languages": []string{"es"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantA),
 	}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {

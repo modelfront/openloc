@@ -78,17 +78,32 @@ type State struct {
 	LastCompletedOrder int32
 	LastCompletedName  string
 	LastCompletedType  string
+	// LastClearStepOrder is the order of the workflow's first human or hybrid
+	// step, the last one a clear is allowed in (0 without one).
+	LastClearStepOrder int32
 }
 
 // inFirstStep reports whether the current task is the workflow's first step
-// (true for a job without a workflow). First-step-only actions — Apply TM/MT
-// and clearing a segment — read it.
+// (true for a job without a workflow). Apply TM/MT reads it.
 func (st State) inFirstStep() bool {
 	switch {
 	case st.ActiveID != 0:
 		return st.ActiveStepOrder == 0
 	case st.LastCompletedID != 0:
 		return st.LastCompletedOrder == 0
+	}
+	return true
+}
+
+// inClearWindow reports whether the current task is at or before the
+// workflow's first human or hybrid step (true for a job without a workflow).
+// Clearing a segment reads it.
+func (st State) inClearWindow() bool {
+	switch {
+	case st.ActiveID != 0:
+		return st.ActiveStepOrder <= st.LastClearStepOrder
+	case st.LastCompletedID != 0:
+		return st.LastCompletedOrder <= st.LastClearStepOrder
 	}
 	return true
 }
@@ -155,6 +170,7 @@ func stateFromJob(r db.GetTaskEditStateRow) State {
 		HasWorkflow: r.HasWorkflow, ActiveID: r.ActiveID, ActiveIsAIStep: r.ActiveIsAiStep, ActiveStepType: r.ActiveStepType, ActiveStepOrder: r.ActiveStepOrder,
 		LastCompletedID: r.LastCompletedID, LastCompletedOrder: r.LastCompletedOrder,
 		LastCompletedName: r.LastCompletedName, LastCompletedType: r.LastCompletedType,
+		LastClearStepOrder: r.LastClearStepOrder,
 	}
 }
 

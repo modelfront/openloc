@@ -23,6 +23,17 @@ describe('navItemsForRole', () => {
     expect(navItemsForRole('linguist', false).map(i => i.label)).toEqual(['Tasks'])
   })
 
+  it.each(['owner', 'admin', 'project_manager'])('gives %s File configurations right after QA profiles', role => {
+    const items = navItemsForRole(role, false)
+    const labels = items.map(i => i.label)
+    expect(labels.indexOf('File configurations')).toBe(labels.indexOf('QA profiles') + 1)
+    expect(items.find(i => i.label === 'File configurations')).toMatchObject({ to: '/file-configurations', guide: 'nav.file_configurations' })
+  })
+
+  it('keeps File configurations from a linguist', () => {
+    expect(navItemsForRole('linguist', false).map(i => i.label)).not.toContain('File configurations')
+  })
+
   it('appends the operator console only for a platform admin', () => {
     expect(navItemsForRole('admin', false).map(i => i.label)).not.toContain('Organizations')
     expect(navItemsForRole('admin', true).map(i => i.label)).toContain('Organizations')

@@ -149,7 +149,7 @@ describe('SegmentRow — a server change while the row is active', () => {
   it('the Clear dialog clears the row, unsaved typing included, and the next save names the cleared version', async () => {
     const cleared = { ...v1, active_text: null, status: 'needs_review' as const, edited_by: null, updated_at: '2026-10-01T10:00:07Z' }
     mockClear.mockResolvedValue({ translation: cleared, taskReopened: false })
-    const row = renderSegmentRow({ translation: v1, isAdmin: true, inFirstStep: true })
+    const row = renderSegmentRow({ translation: v1, inClearWindow: true })
     await waitFor(() => expect(editorText()).toBe('first approval'))
     act(() => row.insertRef.current.replaceAll!('unsaved'))
     await waitFor(() => expect(editorText()).toBe('unsaved'))
@@ -168,7 +168,7 @@ describe('SegmentRow — a server change while the row is active', () => {
   it('an emptied target clears the row and the next save names the cleared version', async () => {
     const cleared = { ...v1, active_text: null, status: 'needs_review' as const, edited_by: null, updated_at: '2026-10-01T10:00:07Z' }
     mockClear.mockResolvedValue({ translation: cleared, taskReopened: false })
-    const row = renderSegmentRow({ translation: v1, isAdmin: true, inFirstStep: true })
+    const row = renderSegmentRow({ translation: v1, inClearWindow: true })
     await waitFor(() => expect(editorText()).toBe('first approval'))
 
     act(() => row.insertRef.current.replaceAll!(''))

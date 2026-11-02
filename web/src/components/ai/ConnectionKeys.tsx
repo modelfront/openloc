@@ -12,7 +12,7 @@ import { queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
 import ConfirmDialog from '../ConfirmDialog'
 import { AttachKeyDialog } from './AttachKeyDialog'
-import { Button } from '@/components/ui/button'
+import { Button, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
@@ -82,8 +82,8 @@ export function ConnectionKeys({ provider, keyLabel, entries, ensureConnectionId
           Keys
         </span>
         {!showCreate && !readOnly && (
-          <Button variant="outline" size="xs" onClick={() => { createMut.reset(); setShowCreate(true) }} data-testid="ai-token-add">
-            <Plus /> Add key
+          <Button variant="outline" size="xs" onClick={() => { createMut.reset(); setShowCreate(true) }} startIcon={<Plus />} data-testid="ai-token-add">
+            Add key
           </Button>
         )}
       </div>
@@ -214,7 +214,7 @@ function TokenForm({ provider, keyLabel = 'API key', initial, onSubmit, onCancel
   serverError?: Error | null
 }) {
   const schema = z.object({ name: z.string(), api_key: z.string(), use_for_chat: z.boolean() })
-  const { register, control, handleSubmit, setError, formState: { errors } } = useForm<z.infer<typeof schema>>({
+  const { register, control, handleSubmit, setError, formState: { errors, isDirty } } = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: initial?.name ?? '',
@@ -287,7 +287,14 @@ function TokenForm({ provider, keyLabel = 'API key', initial, onSubmit, onCancel
       )}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" size="sm" disabled={isPending}>{isPending ? 'Saving…' : initial ? 'Update' : 'Add'}</Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={isPending || (!!initial && !isDirty)}
+          disabledReason={initial && !isDirty ? NOTHING_CHANGED_REASON : undefined}
+        >
+          {isPending ? 'Saving…' : initial ? 'Update' : 'Add'}
+        </Button>
       </div>
     </form>
   )

@@ -54,6 +54,7 @@ func TestProjectSettingsRoundTripsAllUploadCombos(t *testing.T) {
 		t.Helper()
 		rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 			"name": name, "source_language": "en", "target_languages": []string{"fr"},
+			"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 		}, user.ID, tenant.ID)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var resp struct {

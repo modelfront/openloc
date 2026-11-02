@@ -6,6 +6,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="light"
       className="toaster group"
+      closeButton
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
@@ -22,8 +23,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
+        // The `!` utilities override Sonner's own close-button styles: a
+        // plain X inside the top-right corner, with room kept for it.
         classNames: {
-          toast: "cn-toast",
+          toast: "cn-toast pr-10!",
+          closeButton:
+            "left-auto! right-1! top-1! transform-none! size-6! rounded-md! border-0! bg-transparent! text-muted-foreground! hover:bg-muted! hover:text-foreground!",
         },
       }}
       {...props}

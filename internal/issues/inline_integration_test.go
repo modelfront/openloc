@@ -44,17 +44,13 @@ func TestIntegrationIssue_InlineImageInDescription(t *testing.T) {
 	if rec := f.getAs(t, issuePath(issue.ID, image), f.outsider.ID, f.other.ID, "owner"); rec.Code != http.StatusNotFound {
 		t.Errorf("another org opens the image: %d, want 404", rec.Code)
 	}
-
-	body := newestBody(t, f.outbox, operatorEmail)
-	if !strings.Contains(body, "[image: step one.png]") || strings.Contains(body, "attachment:") {
-		t.Errorf("new-issue email shows the reference, not [image: …]:\n%s", body)
-	}
 }
 
 // A comment's image points at the comment's own file, on both sides.
 func TestIntegrationIssue_InlineImageInComments(t *testing.T) {
 	f := newFixture(t)
 	issue := f.report(t, "Export does nothing")
+	f.assignTo(t, issue.ID, f.operator.ID)
 
 	d := decodeDetail(t, f.asMember(t, issuePath(issue.ID, "/comments"), f.reporter.ID, f.tenant.ID,
 		map[string]string{"body": "Here: ![after.png](upload:0) see?"}, png("after.png")))
@@ -64,7 +60,7 @@ func TestIntegrationIssue_InlineImageInComments(t *testing.T) {
 		t.Fatalf("reporter comment = %+v", c)
 	}
 	if got := newestBody(t, f.outbox, operatorEmail); !strings.Contains(got, "Here: [image: after.png] see?") {
-		t.Errorf("reply email:\n%s", got)
+		t.Errorf("reply email to the assignee:\n%s", got)
 	}
 
 	pd := decodeDetail(t, f.operatorMultipart(t, platformPath(issue.ID, "/comments"),

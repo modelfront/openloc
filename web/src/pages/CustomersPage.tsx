@@ -32,7 +32,8 @@ import { LoadFailed } from '@/components/layout/LoadFailed'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Pencil } from 'lucide-react'
 import { InlineRenameField } from '@/components/list/InlineRenameField'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { useScrollToError } from '../hooks/useScrollToError'
@@ -40,7 +41,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { listCardHeaderClass, listCardTitleClass } from '@/components/list/list-row'
 
 const customerSchema = z.object({
-  name: z.string().min(1, 'Customer name is required').max(200, 'Name too long (max 200)'),
+  name: z.string().trim().min(1, 'Customer name is required').max(200, 'Name too long (max 200)'),
 })
 type CustomerFormValues = z.infer<typeof customerSchema>
 
@@ -49,9 +50,10 @@ export default function CustomersPage() {
     register: registerCreate,
     handleSubmit: handleCreateSubmit,
     reset: resetCreate,
-    formState: { errors: createErrors },
+    formState: { errors: createErrors, isValid: createValid },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
+    mode: 'onTouched',
     defaultValues: { name: '' },
   })
   useScrollToError(createErrors)
@@ -96,9 +98,9 @@ export default function CustomersPage() {
         <PageHeader
           title="Customers"
           actions={
-            <Button onClick={() => setShowForm(!showForm)}>
+            <CreateButton onClick={() => setShowForm(!showForm)}>
               New customer
-            </Button>
+            </CreateButton>
           }
         />
 
@@ -111,7 +113,12 @@ export default function CustomersPage() {
                 autoFocus
               />
             </FormField>
-            <Button type="submit" size="sm" disabled={createMut.isPending}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createMut.isPending || !createValid}
+              disabledReason={createValid ? undefined : MISSING_REQUIRED_REASON}
+            >
               {createMut.isPending ? 'Creating...' : 'Create'}
             </Button>
           </form>

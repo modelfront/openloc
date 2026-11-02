@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -13,10 +15,11 @@ import (
 )
 
 // Loop caps. maxIterations bounds model calls per user message: each
-// iteration is one model call, and tool-using answers typically need 2-4.
-// Eight is generous headroom without letting a confused model burn a budget.
+// iteration is one model call. Questions need 2-4; a setup job that builds an
+// engine, router, step, workflow and project needs a dozen. turnTimeout bounds
+// the wall-clock cost on top.
 const (
-	maxIterations    = 8
+	maxIterations    = 20
 	defaultMaxTokens = 4096
 	// maxToolResultChars truncates one tool result before it re-enters the
 	// model context. list_segments pages at 50 rows; this fits that with room
@@ -207,9 +210,19 @@ func Run(ctx context.Context, llm LLM, session toolSession, system SystemPrompt,
 			Tools:          tools,
 			MaxTokens:      defaultMaxTokens,
 		}
+		// streamed is this step's text as the user saw it, kept for a turn
+		// that runs out of time before the step returns.
+		var streamed strings.Builder
 		stream := func(req Request) (*Turn, error) {
+			streamed.Reset()
 			return llm.Stream(ctx, req, func(delta string) {
-				onEvent(Event{Type: "text", Text: delta})
+				out := delta
+				// Each step's text starts a new paragraph, as in res.Text.
+				if streamed.Len() == 0 && res.Text != "" {
+					out = stepBreak + delta
+				}
+				streamed.WriteString(delta)
+				onEvent(Event{Type: "text", Text: out})
 			})
 		}
 		turn, err := stream(req)
@@ -222,14 +235,24 @@ func Run(ctx context.Context, llm LLM, session toolSession, system SystemPrompt,
 			turn, err = stream(req)
 		}
 		if err != nil {
+			// Out of time: keep the work already done. A cancelled turn (tab
+			// closed, server draining) has nobody to continue it, so it fails.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				logging.Warn(ctx, err, "chat turn hit the time limit", "chat-turn-time-limit")
+				res.addStepText(streamed.String())
+				res.stopEarly(timeLimitNotice, onEvent)
+				return res, nil
+			}
 			return nil, err
 		}
 		res.InputTokens += turn.InputTokens
 		res.OutputTokens += turn.OutputTokens
-		if turn.Text != "" {
-			res.Text += turn.Text
-		}
+		res.addStepText(turn.Text)
 
+		if hitTokenLimit(turn.StopReason) {
+			res.stopEarly(tokenLimitNotice, onEvent)
+			return res, nil
+		}
 		if turn.StopReason != StopToolUse || len(turn.ToolCalls) == 0 {
 			return res, nil
 		}
@@ -291,8 +314,28 @@ func Run(ctx context.Context, llm LLM, session toolSession, system SystemPrompt,
 
 	// Cap tripped: return what we have with an honest marker rather than
 	// erroring away a partially useful answer.
-	res.Text += "\n\n_(stopped: too many tool calls for one message — ask a narrower question)_"
+	res.stopEarly(iterationCapNotice, onEvent)
 	return res, nil
+}
+
+const (
+	stepBreak          = "\n\n"
+	continueReply      = "Continue"
+	iterationCapNotice = "_(stopped: too many tool calls for one message — press Continue to go on)_"
+	tokenLimitNotice   = "_(stopped: the answer got too long — press Continue to go on)_"
+	timeLimitNotice    = "_(stopped: this took too long for one message — press Continue to go on)_"
+)
+
+// stopEarly ends a turn the model did not finish: the notice is saved and
+// streamed, and a Continue button shows the user the assistant is waiting.
+func (r *Result) stopEarly(notice string, onEvent func(Event)) {
+	if r.Text != "" {
+		onEvent(Event{Type: "text", Text: stepBreak + notice})
+	} else {
+		onEvent(Event{Type: "text", Text: notice})
+	}
+	r.addStepText(notice)
+	onEvent(Event{Type: "client_action", Action: "suggest_replies", Tool: repliesToolName, Replies: []string{continueReply}})
 }
 
 func listTools(ctx context.Context, session toolSession, allowWrites bool) ([]ToolDef, error) {
@@ -373,4 +416,15 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// addStepText appends one step's text to the answer as its own paragraph.
+func (r *Result) addStepText(text string) {
+	if text == "" {
+		return
+	}
+	if r.Text != "" {
+		r.Text += stepBreak
+	}
+	r.Text += text
 }

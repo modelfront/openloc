@@ -1,17 +1,19 @@
-// WorkflowStepsEditor: steps are picked from the library;
-// the editor owns order and assignee (due dates are WorkflowDeadlines').
+// WorkflowStepsEditor: steps are picked from the library; the editor owns
+// order, the assignee and, on a project, each step's deadline.
 //
 // Pinned:
 //   - Assignee picker filter: project context = qualified-for-ANY
-//     target pair UNION managers; template / library context = all members.
+//     target pair UNION managers; library context = all members.
 //   - Stale-FK indicator for a deleted assignee.
 //   - Step picker offers the library; picking a definition takes its identity
 //     (type, engine, role); an ai step has no assignee ("Automated").
 //   - A pre-library row shows as "(custom)" and can be swapped, never typed.
-//   - Placeholders block Save; the 9-step cap hides the add-row.
+//   - Locked rows: no grip, no delete, the step cannot be swapped; the
+//     assignee and deadline stay editable. Moves stay below them.
+//   - The 9-step cap hides the add-row.
 //
 // Mocks: React Query cache pre-seed for members / users-by-pair / ai-engines /
-// step-definitions; Combobox rendered as a native <select>; sonner silent.
+// step-definitions; Combobox rendered as a native <select>.
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ComboboxProps, MultiComboboxProps } from '@/components/ui/combobox'
@@ -19,19 +21,19 @@ import { render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { toast } from 'sonner'
-import { WorkflowStepsEditor, unpickedRows, type WorkflowStep } from './WorkflowStepsEditor'
+import { useState } from 'react'
+import { WorkflowStepsEditor, moveTailRow, unpickedRows, type WorkflowStep } from './WorkflowStepsEditor'
 import type { Member, AIEngine, StepDefinitionRow } from '../api'
-
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+import { pickDeadline, PICKER_FLOW_TIMEOUT } from '@/test/deadline-picker'
 
 vi.mock('@/components/ui/combobox', () => ({
-  Combobox: ({ value, onChange, options, disabled, className, placeholder, 'data-testid': testId }: ComboboxProps) => (
+  Combobox: ({ value, onChange, options, disabled, className, placeholder, 'aria-invalid': ariaInvalid, 'data-testid': testId }: ComboboxProps) => (
     <>
       <select
         data-testid={testId}
         value={value}
         disabled={disabled}
+        aria-invalid={ariaInvalid}
         className={className}
         aria-label={placeholder}
         onChange={(e) => onChange(e.target.value)}
@@ -104,8 +106,13 @@ interface Setup {
   sourceLang?: string
   targetLangs?: string[]
   definitions?: StepDefinitionRow[]
-  onSave?: (steps: WorkflowStep[]) => Promise<void>
-  initialEditing?: boolean
+  deadlines?: boolean
+}
+
+// The editor is controlled; this holds its steps the way a caller does.
+function Harness({ initial, onChange, ...rest }: { initial: WorkflowStep[]; onChange: (s: WorkflowStep[]) => void; sourceLang?: string; targetLangs?: string[]; deadlines?: boolean }) {
+  const [steps, setSteps] = useState(initial)
+  return <WorkflowStepsEditor steps={steps} onChange={next => { setSteps(next); onChange(next) }} {...rest} />
 }
 
 function setup(opts: Setup) {
@@ -115,25 +122,29 @@ function setup(opts: Setup) {
   qc.setQueryData(['ai-prompts'], [])
   qc.setQueryData(['ai-vendors'], [])
   qc.setQueryData(['step-definitions'], opts.definitions ?? LIBRARY)
+  qc.setQueryData(['languages'], [])
+  qc.setQueryData(['ai-routers'], [{ id: 10, name: 'QE router', unusable: 'disabled', rules: [] }])
   if (opts.sourceLang && opts.targetLangs) {
     for (const t of opts.targetLangs) {
       const data = t === 'fr' ? (opts.qualifiedFR ?? [memberFR]) : t === 'de' ? (opts.qualifiedDE ?? [memberDE]) : []
       qc.setQueryData(['users-by-pair', opts.sourceLang, t], data)
     }
   }
-  return render(
+  const onChange = vi.fn()
+  render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <WorkflowStepsEditor
-          steps={opts.steps ?? [step(defTranslation)]}
-          initialEditing={opts.initialEditing ?? true}
+        <Harness
+          initial={opts.steps ?? [step(defTranslation)]}
+          onChange={onChange}
           sourceLang={opts.sourceLang}
           targetLangs={opts.targetLangs}
-          onSave={opts.onSave}
+          deadlines={opts.deadlines}
         />
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return { onChange, last: (): WorkflowStep[] => onChange.mock.calls.at(-1)?.[0] }
 }
 
 const optionsOf = (testId: string) =>
@@ -171,9 +182,21 @@ describe('WorkflowStepsEditor assignee picker filter', () => {
     expect(opts.some(o => o.includes('Nora'))).toBe(true)
   })
 
-  it('surfaces a "(deleted user)" option for an assignee no longer in the picker', () => {
-    setup({ sourceLang: 'en', targetLangs: ['fr'], steps: [step(defTranslation, { default_assignee: 999 })] })
+  it('surfaces a "(deleted user)" option for an assignee no longer in the picker, and marks the field invalid', () => {
+    setup({ sourceLang: 'en', targetLangs: ['fr'], steps: [step(defTranslation, { default_assignee: 999 }), step(defReview, { default_assignee: 3 })] })
     expect(screen.getByRole('option', { name: /deleted user/i })).toBeInTheDocument()
+    expect(screen.getByTestId('workflow-step-assignee-0')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('workflow-step-assignee-1')).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('a member outside the language-pair filter keeps their name, not "(deleted user)"', () => {
+    // Nora has no en→fr pair, so the filter does not offer her; she is still a member.
+    setup({ sourceLang: 'en', targetLangs: ['fr'], steps: [step(defTranslation, { default_assignee: memberNone.id })] })
+    const picker = screen.getByTestId('workflow-step-assignee-0') as HTMLSelectElement
+    expect(picker.value).toBe(String(memberNone.id))
+    expect(picker.selectedOptions[0].textContent).toBe('Nora (no pairs)')
+    expect(screen.queryByRole('option', { name: /deleted user/i })).not.toBeInTheDocument()
+    expect(picker).not.toHaveAttribute('aria-invalid', 'true')
   })
 
   it('clears default_assignee when "No default" is picked', async () => {
@@ -216,20 +239,23 @@ describe('WorkflowStepsEditor step picker', () => {
     expect(picker.value).toBe('2')
   })
 
-  it('"Add step" appends an unpicked row and Save refuses until it is picked', async () => {
+  it('"Add step" appends an unpicked row', async () => {
     const user = userEvent.setup()
-    const onSave = vi.fn().mockResolvedValue(undefined)
-    setup({ initialEditing: false, onSave })
-    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const { last } = setup({})
     await user.click(screen.getByTestId('workflow-add-step'))
     expect((screen.getByTestId('workflow-step-picker-1') as HTMLSelectElement).value).toBe('')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).not.toHaveBeenCalled()
-    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/row 2/))
+    expect(screen.getByTestId('workflow-step-picker-1'), 'an unpicked row is marked invalid').toHaveAttribute('aria-invalid', 'true')
+    expect(unpickedRows(last())).toEqual([2])
     await user.selectOptions(screen.getByTestId('workflow-step-picker-1'), '2')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledTimes(1)
-    expect(onSave.mock.calls[0][0].map((s: WorkflowStep) => s.name)).toEqual(['Translation', 'Review'])
+    expect(last().map(s => s.name)).toEqual(['Translation', 'Review'])
+    expect(screen.getByTestId('workflow-step-picker-1')).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('an AI step names its router and what is wrong with it; a human step has no router line', () => {
+    setup({ steps: [step(defTranslation), step(defAIReview)] })
+    expect(screen.queryByTestId('workflow-step-router-0')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workflow-step-router-1')).toHaveTextContent('QE router')
+    expect(screen.getByTestId('workflow-step-router-1')).toHaveTextContent('(engine off)')
   })
 
   it('points at the step library when it is empty', () => {
@@ -237,14 +263,6 @@ describe('WorkflowStepsEditor step picker', () => {
     expect(screen.getByTestId('workflow-library-empty')).toHaveTextContent(/Create a step/)
   })
 
-
-
-  it('view mode names the step with its type and "Automated" for an ai step', () => {
-    setup({ initialEditing: false, steps: [step(defAutoAPE), step(defReview, { default_assignee: 3 })] })
-    expect(screen.getByTestId('workflow-step-badge-0')).toHaveTextContent('Auto APE')
-    expect(screen.getByTestId('workflow-step-badge-0')).toHaveTextContent('Automated')
-    expect(screen.getByTestId('workflow-step-badge-1')).toHaveTextContent('Fred')
-  })
 })
 
 describe('9-step cap', () => {
@@ -267,5 +285,52 @@ describe('unpickedRows', () => {
       { step_definition_id: null, name: '', step_type: 'human' },
       { id: 5, step_definition_id: null, name: 'LQA', step_type: 'human' },
     ])).toEqual([2])
+  })
+})
+
+describe('locked rows', () => {
+  const locked = (def: StepDefinitionRow, id: number, reached: number, over: Partial<WorkflowStep> = {}) =>
+    step(def, { id, locked: true, reached_jobs: reached, ...over })
+
+  it('a locked row keeps its step but not its assignee: no grip, no delete, picker disabled', async () => {
+    const user = userEvent.setup()
+    const { last } = setup({ steps: [locked(defTranslation, 1, 2), step(defReview, { id: 2 })] })
+    expect(screen.getByTestId('workflow-step-row-0')).toHaveAttribute('data-locked', 'true')
+    expect(screen.getByTestId('workflow-step-locked-0')).toBeInTheDocument()
+    expect(screen.getByLabelText('Locked step')).toBeInTheDocument()
+    expect(screen.queryByTestId('workflow-step-drag-0')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workflow-step-remove-0')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workflow-step-picker-0')).toBeDisabled()
+    expect(screen.getByTestId('workflow-step-assignee-0')).toBeEnabled()
+    // The unlocked row after it has both.
+    expect(screen.getByTestId('workflow-step-drag-1')).toBeInTheDocument()
+    expect(screen.getByTestId('workflow-step-remove-1')).toBeInTheDocument()
+    expect(screen.getByTestId('workflow-step-picker-1')).toBeEnabled()
+
+    await user.selectOptions(screen.getByTestId('workflow-step-assignee-0'), '3')
+    expect(last()[0]).toMatchObject({ step_definition_id: defTranslation.id, default_assignee: 3, locked: true })
+  })
+
+  it('removing an unlocked row leaves the locked ones', async () => {
+    const user = userEvent.setup()
+    const { last } = setup({ steps: [locked(defTranslation, 1, 1), step(defReview, { id: 2 }), step(defAIReview, { id: 3 })] })
+    await user.click(screen.getByTestId('workflow-step-remove-1'))
+    expect(last().map(s => s.id)).toEqual([1, 3])
+  })
+
+  it('a locked row keeps an editable deadline on a project', () => {
+    const { last } = setup({ deadlines: true, sourceLang: 'en', targetLangs: ['fr'], steps: [locked(defTranslation, 1, 1), step(defAutoAPE, { id: 2 })] })
+    expect(screen.getByTestId('workflow-deadline-input-0')).toBeEnabled()
+    pickDeadline('workflow-deadline-input-0', '2030-03-04', '09:00')
+    expect(last()[0].deadline).toMatch(/^2030-03-04/)
+    expect(last()[0]).toMatchObject({ id: 1, locked: true })
+    // An automated step has no deadline.
+    expect(screen.queryByTestId('workflow-deadline-input-1')).not.toBeInTheDocument()
+  }, PICKER_FLOW_TIMEOUT)
+
+  it('moves happen below the locked rows', () => {
+    const rows = [locked(defTranslation, 1, 1), locked(defReview, 2, 1), step(defAIReview, { id: 3 }), step(defAutoAPE, { id: 4 })]
+    expect(moveTailRow(rows, 1, 0).map(s => s.id)).toEqual([1, 2, 4, 3])
+    expect(moveTailRow(rows, 0, 1).map(s => s.id)).toEqual([1, 2, 4, 3])
   })
 })

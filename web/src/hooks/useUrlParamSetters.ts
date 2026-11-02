@@ -24,6 +24,18 @@ export function useUrlParamSetters() {
     }, { replace: true })
   }, [setParams])
 
+  /** Several keys in one URL update; null or '' removes a key. */
+  const setParamValues = useCallback((values: Record<string, string | null>) => {
+    setParams(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [key, value] of Object.entries(values)) {
+        if (value == null || value === '') next.delete(key)
+        else next.set(key, value)
+      }
+      return next
+    }, { replace: true })
+  }, [setParams])
+
   const clearParams = useCallback((keys?: readonly string[]) => {
     setParams(prev => {
       if (!keys) return new URLSearchParams()
@@ -33,5 +45,5 @@ export function useUrlParamSetters() {
     }, { replace: true })
   }, [setParams])
 
-  return { setParam, clearParams }
+  return { setParam, setParamValues, clearParams }
 }

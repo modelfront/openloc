@@ -2,14 +2,11 @@ package issues
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5"
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
@@ -37,7 +34,8 @@ type IssueUpdate struct {
 // PlatformUpdate applies an operator's change and records each changed field
 // in the history: kind, severity, area, priority and tags as internal
 // entries, the assignee as an entry the org sees. Only a support team member
-// may be assigned. Nothing tells the reporter.
+// may be assigned. Nothing tells the reporter. The assignee hears of an edit
+// someone else made, but not of being assigned.
 func (s *Service) PlatformUpdate(ctx context.Context, op Operator, id int64, u IssueUpdate) (PlatformIssueDetail, error) {
 	if u.Kind != nil && kindLabels[*u.Kind] == "" {
 		return PlatformIssueDetail{}, clientError("Pick a kind: Bug, Enhancement or Feature request.")
@@ -57,12 +55,15 @@ func (s *Service) PlatformUpdate(ctx context.Context, op Operator, id int64, u I
 			return PlatformIssueDetail{}, err
 		}
 	}
-	_, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
+	var changed []string
+	var reassigned bool
+	locked, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		issue, err := q.LockIssueForPlatform(ctx, id)
 		if err != nil {
 			return db.Issue{}, err
 		}
 		r := recorder{ctx: ctx, q: q, issueID: id, author: &op.UserID}
+		defer func() { changed, reassigned = r.changed, r.reassigned }()
 		if u.Kind != nil || u.Severity != nil || u.Area != nil {
 			r.triage(issue, u.Kind, u.Severity, u.Area)
 		}
@@ -81,6 +82,14 @@ func (s *Service) PlatformUpdate(ctx context.Context, op Operator, id int64, u I
 		return PlatformIssueDetail{}, err
 	}
 	logging.Info(ctx, "updated an issue", "issue-updated", logging.IssueID(id))
+	s.refreshSlack(ctx, id)
+	if !reassigned && len(changed) > 0 {
+		labels := make([]string, len(changed))
+		for i, field := range changed {
+			labels[i] = fieldLabels[field]
+		}
+		s.emailAssignee(ctx, locked, op.UserID, assigneeNotice{Kind: noticeEdit, Changes: labels})
+	}
 	return s.PlatformGet(ctx, id)
 }
 
@@ -95,6 +104,15 @@ type recorder struct {
 	// reporter's org's.
 	side string
 	err  error
+	// changed lists the fields recorded, in order; reassigned is set when the
+	// assignee is one of them.
+	changed    []string
+	reassigned bool
+}
+
+// fieldLabels name the fields an operator edits, as an email lists them.
+var fieldLabels = map[string]string{
+	fieldKind: "Kind", fieldSeverity: "Severity", fieldArea: "Area", fieldPriority: "Priority", fieldTags: "Tags",
 }
 
 func (r *recorder) record(field string, from, to *string) {
@@ -104,6 +122,11 @@ func (r *recorder) record(field string, from, to *string) {
 			side = sideOperator
 		}
 		r.err = recordChange(r.ctx, r.q, r.issueID, r.author, side, change{field: field, from: from, to: to})
+		if field == fieldAssignee {
+			r.reassigned = true
+		} else {
+			r.changed = append(r.changed, field)
+		}
 	}
 }
 
@@ -215,19 +238,19 @@ func cleanTags(raw []string) ([]string, error) {
 
 // checkAssignee refuses anyone outside the support team.
 func (s *Service) checkAssignee(ctx context.Context, userID int64) error {
-	user, err := db.New(s.pool).GetUser(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !s.opSet.Has(user.Email)) {
-		return clientError("Assign the issue to a member of the support team.")
-	}
+	operator, err := s.IsOperator(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("load assignee: %w", err)
+	}
+	if !operator {
+		return clientError("Assign the issue to a member of the support team.")
 	}
 	return nil
 }
 
 // PlatformNote adds an internal note: a support team comment, with files,
 // that the reporter's org never sees. It changes nothing on the issue and
-// tells nobody.
+// tells only the assignee.
 func (s *Service) PlatformNote(ctx context.Context, op Operator, id int64, in NewComment) (PlatformIssueDetail, error) {
 	body, err := commentBody(in)
 	if err != nil {
@@ -241,7 +264,7 @@ func (s *Service) PlatformNote(ctx context.Context, op Operator, id int64, in Ne
 	if err != nil {
 		return PlatformIssueDetail{}, err
 	}
-	_, err = s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
+	issue, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		issue, err := q.LockIssueForPlatform(ctx, id)
 		if err != nil {
 			return db.Issue{}, err
@@ -253,6 +276,8 @@ func (s *Service) PlatformNote(ctx context.Context, op Operator, id int64, in Ne
 		return PlatformIssueDetail{}, err
 	}
 	logging.Info(ctx, "added an internal note to an issue", "issue-note-added", logging.IssueID(id))
+	s.postWritten(ctx, id, slackNote, op.UserID, "", commentPreview(body))
+	s.emailAssignee(ctx, issue, op.UserID, assigneeNotice{Kind: noticeNote, Text: commentPreview(body)})
 	return s.PlatformGet(ctx, id)
 }
 

@@ -91,6 +91,15 @@ describe('RichTextCellEditor', () => {
     expect(ref.current!.getText()).toContain('inserted')
   })
 
+  it('getRichText keeps the id and original_tag of a loaded line break tag', async () => {
+    const ref = trackedRef()
+    const rich = 'A<x id="1" ctype="lb" original_tag="hr"/><g id="2">b</g>'
+    render(<RichTextCellEditor {...defaultProps} initialText={rich} ref={ref} />)
+    await waitFor(() => expect(ref.current).not.toBeNull())
+
+    expect(ref.current!.getRichText()).toBe(rich)
+  })
+
   it('getRichText returns null for plain text', async () => {
     const ref = trackedRef()
     render(<RichTextCellEditor {...defaultProps} ref={ref} />)
@@ -460,6 +469,24 @@ describe('RichTextCellEditor', () => {
     expect(ref.current!.getText()).toBe('second edit')
   })
 
+  // The CAT editor's source takes a caret for Split. A click there while the
+  // translation editor is still mounting keeps the caret in the source.
+  it('leaves the caret in another editable element focused before the mount focus runs', async () => {
+    const ref = trackedRef()
+    render(
+      <>
+        <div contentEditable suppressContentEditableWarning tabIndex={0} data-testid="source">Press the button</div>
+        <RichTextCellEditor {...defaultProps} initialText="first approval" ref={ref} />
+      </>,
+    )
+    const source = screen.getByTestId('source')
+    act(() => source.focus())
+    await act(() => new Promise(r => setTimeout(r, 20)))
+
+    expect(document.activeElement).toBe(source)
+    expect(ref.current!.getEditor()!.view.hasFocus()).toBe(false)
+  })
+
   it('reloads content when initialText changes externally', async () => {
     const ref = trackedRef()
     const { rerender } = render(
@@ -549,7 +576,7 @@ describe('RichTextCellEditor', () => {
       const applyScope = vi.fn().mockResolvedValue(1)
       const spellFixActions = {
         canWriteLocked: true,
-        counts: () => ({ all: 4, nonlocked: 3, locked: 1 }),
+        counts: async () => ({ all: 4, nonlocked: 3, locked: 1 }),
         applyScope,
         ignoreInProject: vi.fn(),
       }
@@ -559,8 +586,9 @@ describe('RichTextCellEditor', () => {
       await waitFor(() => expect(ref.current?.getText()).toBe('die adresse prüfen'))
 
       openMenu(ref)
+      // The counts arrive from the server after the menu opens.
       const button = screen.getByTestId(testId)
-      expect(button).toHaveTextContent(label)
+      await waitFor(() => expect(button).toHaveTextContent(label))
       expect(screen.getByText('“In all segments” also changes the 1 locked segment.')).toBeInTheDocument()
       fireEvent.click(button)
       await waitFor(() => expect(applyScope).toHaveBeenCalledWith('adresse', 'Adresse', scope))
@@ -573,7 +601,7 @@ describe('RichTextCellEditor', () => {
       const applyScope = vi.fn().mockResolvedValue(1)
       const spellFixActions = {
         canWriteLocked: false,
-        counts: () => ({ all: 4, nonlocked: 3, locked: 1 }),
+        counts: async () => ({ all: 4, nonlocked: 3, locked: 1 }),
         applyScope,
         ignoreInProject: vi.fn(),
       }
@@ -584,8 +612,8 @@ describe('RichTextCellEditor', () => {
 
       openMenu(ref)
       const all = screen.getByTestId('spellfix-all')
+      await waitFor(() => expect(screen.getByTestId('spellfix-nonlocked')).not.toHaveAttribute('aria-disabled'))
       expect(all).toHaveAttribute('aria-disabled', 'true')
-      expect(screen.getByTestId('spellfix-nonlocked')).not.toHaveAttribute('aria-disabled')
       // The disabled button's tooltip opens under the menu, so the menu's
       // locked note spells the reason out.
       const menu = screen.getByRole('dialog', { name: 'Spell check' })
@@ -597,7 +625,7 @@ describe('RichTextCellEditor', () => {
     it('names the role even when no segment is locked, since the button stays disabled', async () => {
       const spellFixActions = {
         canWriteLocked: false,
-        counts: () => ({ all: 4, nonlocked: 4, locked: 0 }),
+        counts: async () => ({ all: 4, nonlocked: 4, locked: 0 }),
         applyScope: vi.fn().mockResolvedValue(1),
         ignoreInProject: vi.fn(),
       }
@@ -609,7 +637,7 @@ describe('RichTextCellEditor', () => {
       openMenu(ref)
       expect(screen.getByTestId('spellfix-all')).toHaveAttribute('aria-disabled', 'true')
       const menu = screen.getByRole('dialog', { name: 'Spell check' })
-      expect(within(menu).getByText('Only an owner or admin can change locked segments.')).toBeVisible()
+      expect(await within(menu).findByText('Only an owner or admin can change locked segments.')).toBeVisible()
     })
   })
 })

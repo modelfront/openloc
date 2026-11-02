@@ -36,11 +36,29 @@ SELECT * FROM jobs WHERE file_id = $1 AND target_language = $2;
 SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
        j.created_at, j.updated_at,
        j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
-       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html, f.segment_count,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
        f.created_at AS file_created_at
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = $1
+ORDER BY f.created_at DESC, j.target_language;
+
+-- name: ListJobsByProjectIDs :many
+-- Internal: no tenant filter. job.Service.ListByProjectIDs checks the project
+-- with the tenant-scoped GetProject before calling it. The jobs of the project
+-- among job_ids; same columns and order as ListJobsByProject.
+SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
+       j.created_at, j.updated_at,
+       j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
+       f.created_at AS file_created_at
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+WHERE f.project_id = @project_id AND j.id = ANY(@job_ids::bigint[])
 ORDER BY f.created_at DESC, j.target_language;
 
 -- name: ListJobsByProjectPage :many
@@ -50,7 +68,9 @@ ORDER BY f.created_at DESC, j.target_language;
 SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
        j.created_at, j.updated_at,
        j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
-       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html, f.segment_count,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
        f.created_at AS file_created_at
 FROM jobs j
 JOIN files f ON f.id = j.file_id
@@ -77,7 +97,14 @@ WHERE jobs.id = $1 AND file_id IN (
 -- a job row alone would leave translations orphaned.
 DELETE FROM translations
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = $1)
-  AND target_language = $2;
+  AND translations.target_language = $2;
+
+-- name: DeleteJobLanguageSegments :exec
+-- Internal: the segments a split or join made for one file + target language.
+-- The job delete runs it after resolving the job with GetJobTenant and after
+-- DeleteJobTranslations, so their translations are already gone.
+DELETE FROM segments
+WHERE file_id = $1 AND target_language = $2;
 
 -- name: UpdateJobStatus :exec
 -- Clears error_message: every caller passes a non-failed status (queued /
@@ -87,7 +114,13 @@ WHERE segment_id IN (SELECT id FROM segments WHERE file_id = $1)
 -- a pending stop request is stale there too. The worker's start transition is
 -- StartJobRun instead, which must NOT clear it (a stop requested while the
 -- task sat in the queue has to be honoured at pickup).
-UPDATE jobs SET status = $2, current_step = $3, error_message = NULL, stop_requested_at = NULL, updated_at = now() WHERE id = $1;
+-- Queueing a run clears the progress counts, so a waiting job reads as queued
+-- and not as the last run's "Translating N / M".
+UPDATE jobs SET status = sqlc.arg(status), current_step = sqlc.arg(current_step), error_message = NULL, stop_requested_at = NULL,
+       translated_count = CASE WHEN sqlc.arg(status)::text = 'queued' THEN NULL ELSE translated_count END,
+       total_count      = CASE WHEN sqlc.arg(status)::text = 'queued' THEN NULL ELSE total_count END,
+       updated_at = now()
+WHERE id = sqlc.arg(id);
 
 -- name: UpdateJobError :exec
 -- A failed job must not keep reading "Stopping…", so the flag is cleared here too.
@@ -108,11 +141,12 @@ WHERE jobs.id = old.id
 RETURNING old.error_message;
 
 -- name: ClaimFailedJobForRerun :execrows
--- Moves a failed job to queued for a Re-run of the automation that failed.
+-- Moves a failed job to queued for a Re-run of the automation that failed,
+-- without the failed run's progress counts.
 -- 0 rows = the job is not failed, or a concurrent Re-run claimed it first
 -- → 409. Tenant scoping happens in resolveJob before this by-ID write.
 UPDATE jobs SET status = 'queued', current_step = @current_step, error_message = NULL,
-       stop_requested_at = NULL, updated_at = now()
+       stop_requested_at = NULL, translated_count = NULL, total_count = NULL, updated_at = now()
 WHERE id = @id AND status = 'failed';
 
 -- name: SaveJobRunOutcome :exec
@@ -157,7 +191,7 @@ UPDATE jobs SET status = 'queued', current_step = $2, error_message = $3, update
 -- another run holds the job → 409. The running-state predicate is the SQL
 -- twin of pipeline.IsPipelineRunning (translate.go) — keep the two in sync.
 -- Clears error_message like UpdateJobStatus does (a new run makes any prior
--- failure stale). Tenant-scoped: a job outside the tenant claims nothing.
+-- failure stale), and the progress counts like StartJobRun. Tenant-scoped: a job outside the tenant claims nothing.
 --
 -- Returns the status, step, error_message and updated_at the claim replaced,
 -- read under the row lock: a pre-flight rejection puts back exactly these,
@@ -170,19 +204,20 @@ UPDATE jobs SET status = 'queued', current_step = $2, error_message = $3, update
 -- updated_at at least once per 30-segment chunk (the sync handlers' progress
 -- writer and the worker's makeProgressFunc), far inside 30 minutes.
 WITH prev AS (
-    SELECT j.id, j.status, j.current_step, j.error_message, j.updated_at FROM jobs j
+    SELECT j.id, j.status, j.current_step, j.error_message, j.translated_count, j.total_count, j.updated_at FROM jobs j
     JOIN files f ON f.id = j.file_id
     JOIN projects p ON p.id = f.project_id
     WHERE j.id = sqlc.arg(id) AND p.tenant_id = sqlc.arg(tenant_id) AND p.deleted_at IS NULL
     FOR UPDATE OF j
 )
-UPDATE jobs SET status = 'in_progress', current_step = sqlc.arg(current_step), error_message = NULL, stop_requested_at = NULL, updated_at = now()
+UPDATE jobs SET status = 'in_progress', current_step = sqlc.arg(current_step), error_message = NULL, stop_requested_at = NULL,
+       translated_count = NULL, total_count = NULL, updated_at = now()
 FROM prev
 WHERE jobs.id = prev.id
   AND (NOT (prev.status IN ('queued', 'in_progress')
             AND lower(coalesce(prev.current_step, '')) NOT LIKE '%complete')
        OR prev.updated_at < now() - interval '30 minutes')
-RETURNING prev.status, prev.current_step, prev.error_message, prev.updated_at;
+RETURNING prev.status, prev.current_step, prev.error_message, prev.translated_count, prev.total_count, prev.updated_at;
 
 -- name: RequestJobStop :one
 -- Cooperative stop: flags a RUNNING job (same predicate as ClaimJobPipeline,
@@ -226,8 +261,10 @@ FROM jobs WHERE id = $1;
 -- name: StartJobRun :execrows
 -- Worker-side start transition. Refuses (0 rows) when a stop was requested
 -- while the task sat in the queue: the handler then marks the job stopped and
--- returns nil, so asynq does not retry it.
-UPDATE jobs SET status = 'in_progress', current_step = $2, error_message = NULL, updated_at = now()
+-- returns nil, so asynq does not retry it. A run starts without progress
+-- counts, so the counter never shows the last run's numbers.
+UPDATE jobs SET status = 'in_progress', current_step = $2, error_message = NULL,
+       translated_count = NULL, total_count = NULL, updated_at = now()
 WHERE id = $1 AND stop_requested_at IS NULL;
 
 -- name: MarkJobStopped :exec
@@ -243,18 +280,31 @@ WHERE id = $1;
 -- ClaimJobPipeline.
 -- Undo an eager ClaimJobPipeline after a pre-flight 400 (no work actually
 -- ran): put back what the claim replaced — status, step, error_message (the
--- claim nulled it — a previously-failed job must keep its explanation) and
--- updated_at, so a dead run's job stays reclaimable. Conditional on the
+-- claim nulled it — a previously-failed job must keep its explanation), the
+-- progress counts (also nulled) and updated_at, so a dead run's job stays
+-- reclaimable. Conditional on the
 -- claim's own step so a concurrent writer (worker enqueue, feedback
 -- completion) that moved the job since the claim is never clobbered.
-UPDATE jobs SET status = $2, current_step = $3, error_message = $4, updated_at = sqlc.arg(updated_at)
+UPDATE jobs SET status = $2, current_step = $3, error_message = $4,
+       translated_count = sqlc.narg(translated_count), total_count = sqlc.narg(total_count),
+       updated_at = sqlc.arg(updated_at)
 WHERE id = $1 AND status = 'in_progress' AND current_step = sqlc.arg(claim_step);
+
+-- name: RestoreJobProgress :exec
+-- Internal: the caller loaded the job tenant-scoped before queueing it.
+-- Puts back the progress counts queueing cleared when the queue then refused
+-- the task, so nothing ran.
+UPDATE jobs SET translated_count = sqlc.narg(translated_count), total_count = sqlc.narg(total_count) WHERE id = sqlc.arg(id);
 
 -- name: UpdateJobProgress :exec
 UPDATE jobs SET translated_count = $2, total_count = $3, current_step = $4, updated_at = now() WHERE id = $1;
 
 -- name: SetJobAsynqTaskID :exec
 UPDATE jobs SET asynq_task_id = $2 WHERE id = $1;
+
+-- name: GetJobLastClearStepOrder :one
+-- Internal: keyed by a job the caller already loaded tenant-scoped.
+SELECT job_last_clear_step_order(@job_id::bigint)::int AS last_clear_step_order;
 
 -- name: GetJobTranslationCounts :one
 -- Counts from job_translation_stats, which the database keeps up to date on

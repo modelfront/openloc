@@ -143,6 +143,8 @@ type IssueView struct {
 // plus their own fields.
 type PlatformIssueView struct {
 	IssueView
+	TenantID   int64    `json:"tenant_id"`
+	ReporterID int64    `json:"reporter_id"`
 	AssigneeID *int64   `json:"assignee_id"`
 	Priority   *string  `json:"priority"`
 	Tags       []string `json:"tags"`
@@ -238,7 +240,7 @@ func issueView(i db.Issue) IssueView {
 // issueRow is the shape every issue list and get query returns: the issue,
 // its org's name, the reporter, the assignee's name and the original of a
 // duplicate. The queries' generated row types all convert to it.
-type issueRow db.ListIssuesForPlatformNewestRow
+type issueRow db.GetIssueForPlatformRow
 
 // view is what every viewer sees: no org name and none of the support team's
 // own fields.
@@ -272,7 +274,8 @@ func (r issueRow) memberView(m Member) IssueView {
 
 // platformView is the support team's view, who may delete any issue.
 func (r issueRow) platformView() PlatformIssueView {
-	v := PlatformIssueView{IssueView: r.view(), AssigneeID: r.AssigneeID, Priority: r.Priority,
+	v := PlatformIssueView{IssueView: r.view(), TenantID: r.TenantID, ReporterID: r.ReporterID,
+		AssigneeID: r.AssigneeID, Priority: r.Priority,
 		Tags: sliceutil.NonNil(r.Tags), ImportKey: r.ImportKey,
 		ChatVerification: r.ChatVerification, ChatVerificationNote: r.ChatVerificationNote}
 	v.OrgName = r.OrgName

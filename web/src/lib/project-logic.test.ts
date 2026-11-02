@@ -119,6 +119,24 @@ describe('pipelineBadge', () => {
     })).toEqual({ label: 'Translating 5 / 100', color: 'blue', pulse: true })
   })
 
+  it('the counter names its phase in detail: TM counts matches, MT counts empty segments', () => {
+    expect(pipelineBadge({
+      pipeline_status: 'in_progress', current_step: 'TM lookup: 12 matches found (404 segments)',
+      translated_count: 12, total_count: 404,
+    })?.detail).toBe('TM lookup: 12 matches found in 404 segments')
+    expect(pipelineBadge({
+      pipeline_status: 'in_progress', current_step: 'MT: 120 / 404 segments',
+      translated_count: 120, total_count: 404,
+    })?.detail).toBe('Machine translation: 120 of 404 empty segments')
+    // The synchronous handlers write "TM: n / m" and "MT: n / m".
+    expect(pipelineBadge({
+      pipeline_status: 'in_progress', current_step: 'TM: 3 / 10', translated_count: 3, total_count: 10,
+    })?.detail).toBe('TM lookup: 3 matches found in 10 segments')
+    expect(pipelineBadge({
+      pipeline_status: 'in_progress', current_step: 'Running MT', translated_count: 5, total_count: 100,
+    })?.detail).toBeUndefined()
+  })
+
   it('MT without counts → blue, falls back to current_step', () => {
     expect(pipelineBadge({ pipeline_status: 'queued', current_step: 'Queued for pre-translation' })).toEqual({
       label: 'Queued for pre-translation', color: 'blue', pulse: true,
@@ -206,15 +224,21 @@ describe('bulk job-action eligibility', () => {
   })
 
   describe('canClearJob', () => {
+    const clearable = { counts: { clearable_all: 7 }, last_clear_step_order: 0 }
     it('eligible in first step, not running, with clearable content', () => {
-      expect(canClearJob({ ...idle, counts: { total: 10, untranslated: 3 } })).toBe(true)
+      expect(canClearJob({ ...idle, ...clearable })).toBe(true)
     })
-    it('blocked when nothing is clearable (all untranslated)', () => {
-      expect(canClearJob({ ...idle, counts: { total: 10, untranslated: 10 } })).toBe(false)
+    it('blocked when nothing is clearable, even with text on locked rows', () => {
+      const lockedOnly = { total: 10, untranslated: 3, clearable_all: 0 }
+      expect(canClearJob({ ...idle, ...clearable, counts: lockedOnly })).toBe(false)
     })
-    it('blocked while running or past the first step', () => {
-      expect(canClearJob({ ...running, counts: { total: 10, untranslated: 3 } })).toBe(false)
-      expect(canClearJob({ ...idle, workflow_step: { step_order: 1 }, counts: { total: 10, untranslated: 3 } })).toBe(false)
+    it('blocked while running or past the first human or hybrid step', () => {
+      expect(canClearJob({ ...running, ...clearable })).toBe(false)
+      expect(canClearJob({ ...idle, ...clearable, workflow_step: { step_order: 1 } })).toBe(false)
+    })
+    it('eligible on the first human or hybrid step after automated ones', () => {
+      expect(canClearJob({ ...idle, ...clearable, workflow_step: { step_order: 2 }, last_clear_step_order: 2 })).toBe(true)
+      expect(canClearJob({ ...idle, ...clearable, workflow_step: { step_order: 3 }, last_clear_step_order: 2 })).toBe(false)
     })
   })
 

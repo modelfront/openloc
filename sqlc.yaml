@@ -6,6 +6,7 @@ sql:
       - "internal/project/queries.sql"
       - "internal/file/queries.sql"
       - "internal/segment/queries.sql"
+      - "internal/segmentedit/queries.sql"
       - "internal/translation/queries.sql"
       - "internal/translationmemory/queries.sql"
       - "internal/mtengine/queries.sql"
@@ -49,6 +50,8 @@ sql:
       - "internal/oauthserver/queries.sql"
       - "internal/timing/queries.sql"
       - "internal/taskedit/queries.sql"
+      - "internal/editor/queries.sql"
+      - "internal/segmentationapi/queries.sql"
     gen:
       go:
         package: "db"
@@ -64,4 +67,18 @@ sql:
             go_type:
               import: "encoding/json"
               type: "RawMessage"
+            nullable: true
+          # A file's segmentation snapshot (segmentation.Snapshot): kept out of
+          # file rows sent to clients, where it would repeat a whole rule set.
+          - column: "files.segmentation"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+            nullable: true
+            go_struct_tag: 'json:"-"'
+          # NULL on an org profile; sqlc reads the view's first UNION branch only.
+          - column: "segmentation_profile_catalog.builtin_key"
+            go_type:
+              type: "string"
+              pointer: true
             nullable: true

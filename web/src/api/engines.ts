@@ -1,11 +1,12 @@
 import type { QaProfile, QaRule, WorkflowStep } from '../types/generated';
 import type { AIModelParam, ModelSettings } from './ai';
 import type { UnusableReason } from './ai-engines';
-import type { ReportDTO } from '../types/qa';
+import type { RegexRuleConfig, ReportDTO } from '../types/qa';
+import { downloadFrom } from './download';
 import type { QaFinding } from '../lib/qa-findings';
 import { request } from './request';
 import { listTemplateWorkflowSteps } from './workflows';
-import type { TMLookupOrder } from '../lib/settings-values';
+import type { LinguistTerms, TMLookupOrder } from '../lib/settings-values';
 
 // MT engines
 export interface MTEngine {
@@ -120,7 +121,10 @@ export interface Template {
   auto_complete?: boolean;
   // Optional like auto_complete: an older payload reads as the default (on).
   inline_html?: boolean;
+  linguist_terms?: LinguistTerms;
   qa_profile_id?: number | null;
+  // The segmentation profile a project made from the template starts with.
+  segmentation_profile_id?: number | null;
   // Library workflow the template's steps were copied from.
   workflow_id?: number | null;
   workflow_name?: string | null;
@@ -201,9 +205,9 @@ export const getTemplate = async (id: number): Promise<TemplateDetail> => {
 // createProject's, so the New project form saves as either.
 export interface SetupPayload {
   settings?: {
-    fuzzy_threshold?: number; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean;
+    fuzzy_threshold?: number; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms;
     sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder;
-    qa_profile_id?: number | null; tm_profile_id?: number; mt_router_id?: number;
+    qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null;
   };
   tm_assignments?: { tm_id: number; mode: string; priority: number; penalty_pct?: number }[];
   term_assignments?: { term_base_id: number; source_language: string; target_language: string; mode: string; priority: number }[];
@@ -221,7 +225,7 @@ export interface CreateTemplatePayload extends SetupPayload {
 export const createTemplate = (data: CreateTemplatePayload) =>
   request<{ data: Template }>('/templates', { method: 'POST', body: JSON.stringify(data) }).then(r => r.data);
 
-export const updateTemplate = (id: number, data: { name: string; mt_on_upload: boolean; tm_on_upload: boolean; fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; auto_complete?: boolean; inline_html?: boolean; qa_profile_id?: number | null; tm_profile_id?: number; mt_router_id?: number | null; project_name?: string; source_language?: string; target_languages?: string[]; customer_id?: number | null; domain?: string }) =>
+export const updateTemplate = (id: number, data: { name: string; mt_on_upload: boolean; tm_on_upload: boolean; fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null; project_name?: string; source_language?: string; target_languages?: string[]; customer_id?: number | null; domain?: string }) =>
   request<{ data: Template }>(`/templates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }).then(r => r.data);
 
 export const deleteTemplate = (id: number) =>
@@ -286,6 +290,37 @@ export const upsertQARule = (profileId: number, checkType: string, enabled: bool
     method: 'POST',
     body: JSON.stringify({ check_type: checkType, enabled, severity, ...(config ? { config } : {}) }),
   }).then(r => r.data);
+
+/** Creates a regex rule, or replaces the one `ruleId` names. */
+export const saveQARegexRule = (
+  profileId: number,
+  rule: { ruleId?: number; enabled: boolean; severity: string; config: RegexRuleConfig },
+) =>
+  request<{ data: QaRule }>(`/qa-profiles/${profileId}/rules`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(rule.ruleId ? { rule_id: rule.ruleId } : {}),
+      check_type: 'regex',
+      enabled: rule.enabled,
+      severity: rule.severity,
+      config: rule.config,
+    }),
+  }).then(r => r.data);
+
+/** Deletes a regex rule; a built-in rule is switched off instead. */
+export const deleteQARule = (profileId: number, ruleId: number) =>
+  request(`/qa-profiles/${profileId}/rules/${ruleId}`, { method: 'DELETE' });
+
+export const exportQAProfile = (profileId: number) =>
+  downloadFrom(`/qa-profiles/${profileId}/export`, 'qa-profile.json');
+
+/** Creates a new profile from an exported file's text. */
+export const importQAProfile = (fileText: string) =>
+  request<{ data: QaProfile }>('/qa-profiles/import', { method: 'POST', body: fileText }).then(r => r.data);
+
+/** Replaces every rule of a profile with the rules of an exported file's text. */
+export const replaceQAProfileRules = (profileId: number, fileText: string) =>
+  request<{ data: QaRule[] }>(`/qa-profiles/${profileId}/import`, { method: 'POST', body: fileText }).then(r => r.data);
 
 // ─── QA Checks ───
 

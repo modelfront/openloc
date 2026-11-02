@@ -71,7 +71,7 @@ func TestIntegrationQEAPELock_BlocksHumanEditAndDraft(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "qeape-lock")
-	projectID := createProject(t, router, "QEAPE Lock", userID, tenantID)
+	projectID := createProject(t, q, router, "QEAPE Lock", userID, tenantID)
 	proj, err := q.GetProject(ctx, db.GetProjectParams{ID: projectID, TenantID: tenantID})
 	if err != nil {
 		t.Fatalf("get project: %v", err)
@@ -124,7 +124,7 @@ func TestIntegrationQEAPELock_MTRunningNotBlocked(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "qeape-mt")
-	projectID := createProject(t, router, "QEAPE MT", userID, tenantID)
+	projectID := createProject(t, q, router, "QEAPE MT", userID, tenantID)
 	proj, err := q.GetProject(ctx, db.GetProjectParams{ID: projectID, TenantID: tenantID})
 	if err != nil {
 		t.Fatalf("get project: %v", err)
@@ -158,7 +158,7 @@ func TestIntegrationQEAPELock_CompletedQEStepNotBlocked(t *testing.T) {
 	ctx := context.Background()
 
 	userID, tenantID := registerUser(t, q, "qeape-done")
-	projectID := createProject(t, router, "QEAPE Done", userID, tenantID)
+	projectID := createProject(t, q, router, "QEAPE Done", userID, tenantID)
 	proj, err := q.GetProject(ctx, db.GetProjectParams{ID: projectID, TenantID: tenantID})
 	if err != nil {
 		t.Fatalf("get project: %v", err)

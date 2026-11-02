@@ -22,10 +22,12 @@ import {
   createWorkflowViaAPI,
   deleteWorkflowViaAPI,
   submitProjectWizard,
+  pickProjectWorkflow,
   systemLabelsViaAPI,
   addLabelValueViaAPI,
   projectLabelsViaAPI,
   setDeadline,
+  standardWorkflowId,
 } from "./helpers";
 
 // Seed-data shape that A1/A2 depend on. Default Template pre-fills these
@@ -240,7 +242,7 @@ test.describe("Project Create Flows", () => {
       // labels.
       const createResp = await page.request.post('/api/projects', {
         headers,
-        data: { name: sourceName, source_language: 'en', target_languages: ['fr', 'de'] },
+        data: { name: sourceName, source_language: 'en', target_languages: ['fr', 'de'], workflow_id: await standardWorkflowId(page) },
       });
       expect(createResp.ok()).toBe(true);
       sourceId = (await createResp.json()).data.id;
@@ -363,6 +365,7 @@ test.describe("Project Create Flows", () => {
       // The form offers the label's values rather than free text, so the value
       // has to exist before it can be picked.
       await pickComboboxOption(page, page.getByTestId(`project-label-value-${domainLabelId}`), 'Patents');
+      await pickProjectWorkflow(page);
 
       projectId = await submitAndGetId(page);
 
@@ -386,10 +389,11 @@ test.describe("Project Create Flows", () => {
       await page.getByRole("link", { name: /new project/i }).click();
       await startFromScratch(page);
       await fillBasicInfo(page, projectName, 'en', ['fr', 'de']);
+      await pickProjectWorkflow(page);
 
-      // The first step a human works — the seeded default workflow starts with
-      // an AI step, which carries no deadline and is not listed. Index by what
-      // is rendered, not by position in the workflow.
+      // The first step a human works. An AI step carries no deadline and is
+      // not listed, so index by what is rendered, not by position in the
+      // workflow.
       const stepField = page.locator('[data-testid^="workflow-deadline-input-"]').first();
       await expect(stepField).toBeVisible();
       const idx = (await stepField.getAttribute('data-testid'))!.replace('workflow-deadline-input-', '');
@@ -425,9 +429,9 @@ test.describe("Project Create Flows", () => {
         page.getByTestId('upload-confirm').click(),
       ]);
 
-      // Assert on the step ASSIGNMENT, not the job's effective deadline: the
-      // seeded workflow's first step is an AI one, which carries no date, so
-      // the job's active-step deadline is legitimately empty here.
+      // Assert on the step ASSIGNMENT, not the job's effective deadline: a
+      // workflow that starts with an AI step carries no date there, so the
+      // job's active-step deadline says nothing about the human step.
       const token = await page.evaluate(() => localStorage.getItem('token'));
       const auth = { headers: { Authorization: `Bearer ${token}` } };
       const jobs = await page.request.get(`/api/projects/${projectId}/jobs`, auth);
@@ -478,6 +482,7 @@ test.describe("Project Create Flows", () => {
       await page.reload();
       await expect(page.getByTestId('project-deadline-input')).toHaveAttribute('data-value', expected);
 
+      await pickProjectWorkflow(page);
       projectId = await submitAndGetId(page);
       const token = await page.evaluate(() => localStorage.getItem('token'));
       const res = await page.request.get(`/api/projects/${projectId}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -501,6 +506,7 @@ test.describe("Project Create Flows", () => {
       await startFromScratch(page);
       await fillBasicInfo(page, projectName, 'en', ['fr']);
       // Deliberately leave every label unanswered.
+      await pickProjectWorkflow(page);
 
       projectId = await submitAndGetId(page);
       expect(await projectLabelsViaAPI(page, projectId!)).toEqual({});
@@ -516,6 +522,8 @@ test.describe("Project Create Flows", () => {
 
     await startFromScratch(page);
     await fillBasicInfo(page, projectName, 'en', ['en']);
+    // A workflow, so the click gets past the form's own checks to the server.
+    await pickProjectWorkflow(page);
 
     // The autosave has already been refused for the same reason; the click
     // replays the form (PUT /draft when a draft exists, else POST) and gets
@@ -544,7 +552,7 @@ test.describe("Project Create Flows", () => {
         headers: {
           Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}`,
         },
-        data: { name: projectName, source_language: 'en', target_languages: ['fr'] },
+        data: { name: projectName, source_language: 'en', target_languages: ['fr'], workflow_id: await standardWorkflowId(page) },
       });
       expect(createResp.ok()).toBe(true);
       projectId = (await createResp.json()).data.id;
@@ -683,7 +691,7 @@ test.describe("Project Create Flows", () => {
     try {
       const createResp = await page.request.post('/api/projects', {
         headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` },
-        data: { name: projectName, source_language: 'en', target_languages: ['es'] },
+        data: { name: projectName, source_language: 'en', target_languages: ['es'], workflow_id: await standardWorkflowId(page) },
       });
       expect(createResp.ok()).toBe(true);
       projectId = (await createResp.json()).data.id;
@@ -783,6 +791,7 @@ test.describe("Project Create Flows", () => {
       const draftJobs = await page.request.get(`/api/projects/${draftId}/jobs`, { headers: auth });
       expect(((await draftJobs.json()).data ?? []).length, "a draft must not have jobs").toBe(0);
 
+      await pickProjectWorkflow(page);
       projectId = await submitAndGetId(page);
       expect(projectId).toBe(draftId);
       await expect(page.getByRole("link", { name: /^files$/i })).toBeVisible({ timeout: 10000 });
@@ -813,50 +822,77 @@ test.describe("Project Create Flows", () => {
   });
 
   // ============================================================
-  // B3: A plain create (no template) gets the default Translation → Review
-  //     workflow, linked to the tenant's library definitions. The create form
-  //     pre-fills the steps from the library, so this checks the UI path.
+  // B3: With library workflows, a fresh form picks none and Create project
+  //     asks for one. Nothing is published until a workflow is picked.
   // ============================================================
-  test("B3: an untouched create is based on the first library workflow; the API default is Translation → Review", async ({ page }) => {
+  test("B3: a fresh form has no workflow and Create project asks for one", async ({ page }) => {
+    await page.goto("/projects/new");
+    await startFromScratch(page);
+    await fillBasicInfo(page, `E2E no workflow ${Date.now()}`, "en", ["fr"]);
+
+    await page.getByRole("button", { name: /^create project$/i }).click();
+    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Pick a workflow, or create one" })).toBeVisible();
+    await expect(page).toHaveURL(/\/projects\/new/);
+    // Filling the form in picked no workflow and filled in no steps.
+    await expect(page.getByTestId("use-workflow-select")).toContainText("Choose a workflow");
+    await expect(page.getByTestId("create-workflow-card").locator('[data-testid^="workflow-deadline-input-"]')).toHaveCount(0);
+    // The dropdown is pointed at and framed red until a workflow is picked.
+    const select = page.getByTestId("use-workflow-select");
+    await expect(page.getByTestId("create-workflow-card")).toHaveAttribute("data-attention");
+    await expect(select).toBeFocused();
+    await expect(select).toHaveAttribute("aria-invalid", "true");
+    await pickProjectWorkflow(page);
+    await expect(select).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  test("B3b: Save as template on a fresh form needs no workflow", async ({ page }) => {
+    await page.goto("/projects/new");
+    await startFromScratch(page);
+    await fillBasicInfo(page, `E2E save-as no workflow ${Date.now()}`, "en", ["fr"]);
+
+    // A template may have no workflow, so the dialog opens straight away.
+    await page.getByTestId("save-as-template").click();
+    await expect(page.getByTestId("save-as-template-dialog")).toBeVisible();
+    await expect(page.getByTestId("use-workflow-select")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  // ============================================================
+  // B4: A create based on a picked library workflow copies its steps and links
+  //     the project to it. An API create that names no workflow (no
+  //     workflow_id, workflow_steps or template) is refused.
+  // ============================================================
+  test("B4: a picked library workflow is the project's; an API create without a workflow is refused", async ({ page }) => {
     let projectId: number | undefined;
-    let apiProjectId: number | undefined;
     const token = await page.evaluate(() => localStorage.getItem("token"));
     const headers = { Authorization: `Bearer ${token}` };
     try {
-      // The seed has library workflows, so the wizard pre-selects the first
-      // (alphabetical) one and the project is created based on it.
       const wfRes = await page.request.get(`/api/workflows`, { headers });
-      const first = ((await wfRes.json()).data as { id: number; name: string; steps: { name: string }[] }[])[0];
-      expect(first, "seed must provide at least one library workflow").toBeTruthy();
+      const library = (await wfRes.json()).data as { id: number; name: string; steps: { name: string }[] }[];
+      const picked = library.find((w) => w.name === "Standard");
+      expect(picked, "seed must provide the Standard library workflow").toBeTruthy();
 
       await page.getByRole("link", { name: /new project/i }).click();
       await startFromScratch(page);
-      await expect(page.getByTestId("use-workflow-select")).toContainText(first.name);
       await fillBasicInfo(page, `e2e-default-step-${Date.now()}`, "en", ["fr"]);
+      await pickProjectWorkflow(page);
+      await expect(page.getByTestId("use-workflow-select")).toContainText(picked!.name);
       projectId = await submitAndGetId(page);
 
       const settings = await getProjectSettingsViaAPI(page, projectId);
-      expect(settings.data.project.workflow_id).toBe(first.id);
-      expect((settings.data.workflow_steps as { name: string }[]).map((s) => s.name)).toEqual(first.steps.map((s) => s.name));
+      expect(settings.data.project.workflow_id).toBe(picked!.id);
+      expect((settings.data.workflow_steps as { name: string }[]).map((s) => s.name)).toEqual(picked!.steps.map((s) => s.name));
 
-      // Without a UI in the loop (API / MCP create sending nothing), the
-      // server's own default is Translation → Review, linked to the library.
+      const apiName = `e2e-api-no-workflow-${Date.now()}`;
       const apiRes = await page.request.post(`/api/projects`, {
-        headers, data: { name: `e2e-api-default-${Date.now()}`, source_language: "en", target_languages: ["fr"] },
+        headers, data: { name: apiName, source_language: "en", target_languages: ["fr"] },
       });
-      expect(apiRes.status()).toBe(201);
-      apiProjectId = (await apiRes.json()).data.id as number;
-      const apiSettings = await getProjectSettingsViaAPI(page, apiProjectId);
-      const steps = apiSettings.data.workflow_steps as { name: string; step_type: string; step_definition_id: number | null }[];
-      expect(steps.map((s) => s.name)).toEqual(["Translation", "Review"]);
-      for (const s of steps) {
-        expect(s.step_type, `${s.name} type`).toBe("human");
-        expect(s.step_definition_id, `${s.name} must link to a library definition`).not.toBeNull();
-      }
-      expect(apiSettings.data.project.workflow_id).toBeNull();
+      expect(apiRes.status()).toBe(400);
+      expect(await apiRes.text()).toContain("workflow_id is required");
+      const list = await page.request.get(`/api/projects?q=${encodeURIComponent(apiName)}`, { headers });
+      expect(list.ok()).toBe(true);
+      expect(((await list.json()).data as { name: string }[]).filter((p) => p.name === apiName)).toHaveLength(0);
     } finally {
       if (projectId) await deleteProjectViaAPI(page, projectId);
-      if (apiProjectId) await deleteProjectViaAPI(page, apiProjectId);
     }
   });
 

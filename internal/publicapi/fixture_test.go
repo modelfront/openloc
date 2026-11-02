@@ -76,7 +76,10 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 		}
 	}
 
-	seg := testutil.SeedSegment(t, q, f.file.ID, "Hello world.", 0)
+	// Keyed as an upload keys a TXT line, so a split can rebuild it on export.
+	key := "line:1"
+	seg, err := q.CreateSegment(ctx, db.CreateSegmentParams{FileID: f.file.ID, SourceText: "Hello world.", SegmentKey: &key, Position: 0})
+	must(err)
 	tr := testutil.SeedTranslation(t, q, seg.ID, "de", db.TranslationStatusNeedsReview)
 	comment, err := q.CreateComment(ctx, db.CreateCommentParams{TranslationID: tr.ID, UserID: &owner, Content: "check this"})
 	must(err)
@@ -113,6 +116,10 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 		SourceText: "Good morning.", TargetText: "Guten Morgen.", CreatedBy: "test"})
 	must(err)
 
+	segmentationProfile, err := q.CreateSegmentationProfile(ctx, db.CreateSegmentationProfileParams{TenantID: tenantID, Name: "House rules",
+		SourceLanguages: []string{"en"}, Definition: []byte(`{"mode":"sentence","rules":[],"abbreviations":[],"number_abbreviations":[]}`)})
+	must(err)
+
 	return map[string]int64{
 		"translationID":    tr.ID,
 		"commentID":        comment.ID,
@@ -128,6 +135,7 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 		"inviteID":         inv.ID,
 		"promptID":         prompt.ID,
 		"engineID":         engine.ID,
+		"profileID":        segmentationProfile,
 		// Not a path parameter: the AI connection an engine body names.
 		"tokenID": seedCustomProviderToken(t, q, tenantID),
 	}

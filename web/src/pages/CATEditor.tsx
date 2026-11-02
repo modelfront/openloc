@@ -1,15 +1,11 @@
-import { errorText } from '@/lib/error-text'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { ChevronLeft, Keyboard, Loader2Icon, Upload } from 'lucide-react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { ChevronLeft, FileDiff, Keyboard, Loader2Icon, Upload } from 'lucide-react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
 import {
-  listSegments,
-  listJobTranslations,
   completeJob,
-  getJob,
   runQA,
   getQAReport,
   listJobSteps,
@@ -19,9 +15,10 @@ import {
   rejectJobStep,
   type RejectStepInput,
   getCommentCounts,
-  type Translation,
+  type EditorRow,
   type TermLookupResult,
   type QAReport,
+  listJobTermBases,
 } from '../api'
 import { getMe } from '../api/auth'
 import { toast } from 'sonner'
@@ -30,23 +27,21 @@ import { invalidateJobContext, invalidateProjectStatus, invalidateTMContext } fr
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { useStableArray } from '../hooks/useStableArray'
 import { useJobPipelineActions } from '../hooks/useJobPipelineActions'
+import { usePipelineEditorRefresh } from '../hooks/usePipelineEditorRefresh'
+import { useJobDetail } from '../hooks/useJobDetail'
 import { isAdminRole, isManagerRole } from '../lib/roles'
-import { isPipelineRunning, isAIStepRunning, pipelineBadge, stoppedNote } from '../lib/project-logic'
+import { inClearWindow, isPipelineRunning, isAIStepRunning, pipelineBadge, stoppedNote } from '../lib/project-logic'
 import { canEditTask, canRerunTask, canSkipAIStep, currentTask } from '../lib/current-task'
 import { handleTaskLocked, handleTaskReopened, isTaskLockedError } from '../lib/task-edit'
 import { unapprovedCounts, blockedSegmentNumbers, type ApproveBlocked } from '../lib/step-completion'
 import type { SegmentBulkResult } from '../lib/segment-bulk'
-import { computeRepetitionSegmentIds, computeRepetitionSourceIds, computeRepetitionStats } from '../lib/cat-editor-logic'
-import { writeSpellFixes } from '../lib/spellcheck-write'
-import type { SpellError, SpellRunScope } from '../lib/spellcheck-run'
-import { qaButtonLabel, qaRunToast, patchQAReport, groupFindingsByTranslation } from '../lib/qa-findings'
-import {
-  countScope, selectScopeTargets, wordOffsets, scopeIncludesLocked, DEFAULT_RUN_SCOPE,
-  type SpellFixActions, type SpellFixScope,
-} from '../lib/spellcheck-scope'
-import { addSpellcheckDictionaryWord } from '../api'
+import type { SpellRunScope } from '../lib/spellcheck-run'
+import { qaButtonLabel, qaRunToast, patchQAReport, groupFindingsByTranslation, type QaFinding, NO_QA_PROFILE_REASON } from '../lib/qa-findings'
+import { DEFAULT_RUN_SCOPE } from '../lib/spellcheck-scope'
 import SpellCheckDialog from '../components/SpellCheckDialog'
 import ConcordanceModal from '../components/ConcordanceModal'
+import { QuickAddTermDialog } from '../components/QuickAddTermDialog'
+import { quickAddBlockedReason } from '../lib/term-quick-add'
 import { DownloadMenu } from '../components/project/DownloadMenu'
 import { ImportXLIFFAction } from '../components/project/ImportXLIFFAction'
 import EditorSidebar, { type SegmentReference } from '../components/EditorSidebar'
@@ -60,11 +55,11 @@ import { TaskActions, TaskDeadlineChip, TaskNotes, TaskStepChip } from '../compo
 import { RejectStepDialog } from '../components/RejectStepDialog'
 import { canRollback } from '../lib/rollback'
 import CompleteStepDialog from '../components/CompleteStepDialog'
-import { SegmentRow, SEGMENT_GRID_COLS, isMac, modKey } from '../components/SegmentRow'
+import { SegmentRow, SEGMENT_GRID_COLS, isMac, modKey, type SegmentRowHandle } from '../components/SegmentRow'
+import { SegmentRowPlaceholder } from '../components/SegmentRowPlaceholder'
 import { qeChipLabel } from '../lib/qe-chip'
-import { extrasColumnWidth, segmentColumnMins, segmentColumnsStyle, statusColumnWidth } from '../lib/segment-columns'
-import { showStatusChip, isAssistantConfirmed, ASSISTANT_CONFIRMED_LABEL, type DisplayStatus } from '../lib/segment-status'
-import { statusLabel } from '../components/SegmentRow.shared'
+import { extrasColumnWidth, isResizableBorder, segmentColumnMins, segmentColumnsStyle } from '../lib/segment-columns'
+import { hasOverlayScrollbars } from '../lib/scrollbar'
 import { autoApprovedBeforeStep } from '../components/step-status-labels'
 import { useColumnBorderDrag } from '../hooks/useColumnBorderDrag'
 import { ColumnResizeHandle } from '@/components/ui/column-resize-handle'
@@ -78,6 +73,7 @@ import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
 import { cn } from '@/lib/utils'
 import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
+import { LoadFailed } from '@/components/layout/LoadFailed'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { Breadcrumbs } from '@/components/layout/Breadcrumbs'
 import { EditableTitle } from '@/components/list/EditableTitle'
@@ -92,15 +88,27 @@ import {
 import { Input } from '@/components/ui/input'
 import SegmentFilterBar from '../components/SegmentFilterBar'
 import { countByDisplayStatus, filterSegments, isFilterActive, DEFAULT_FILTERS, type SegmentFilters } from '../lib/segment-filters'
-import JobLeverageStatusBar from '../components/JobLeverageStatusBar'
+import JobLeverageStatusBar, { LEVERAGE_BAR_CLEARANCE } from '../components/JobLeverageStatusBar'
 import { writeStorage } from '../lib/safe-storage'
-import { panelInsertText, type PanelInsert } from '../lib/panel-insert'
-import {
-  collectRefKeys, segmentRefKeys, indexSegments, indexTargets, refTermsSignature, buildRefTerms,
-} from '../lib/ref-terms'
+import { panelInsertApproves, panelInsertText, type PanelInsert } from '../lib/panel-insert'
+import { segmentRefKeys, type RefTerms } from '../lib/ref-terms'
+import { REPETITION_REPEAT, REPETITION_SOURCE, rowForNumber, segmentNumber, translatedRows } from '../lib/editor-index'
+import { joinRefusal, joinsWithNext } from '../lib/segment-edit'
+import type { LineCaret } from '../lib/line-caret'
+import type { EntryCaret } from '../lib/entry-caret'
+import { useSegmentSplitJoin } from '../hooks/useSegmentSplitJoin'
+import { EDITOR_PAGE_SIZE, useEditorIndex, useEditorPages, useEditorRefs, useEditorSearch } from '../hooks/useEditorRows'
+import { useSpellFixes } from '../hooks/useSpellFixes'
+import { tableHeaderRowClass } from '@/components/list/list-row'
 
 /** Width the Resources panel opens at on a click, and its starting width. */
-const SIDEBAR_CLICK_WIDTH = 200
+const SIDEBAR_CLICK_WIDTH = 320
+
+/** A row without QA findings. One shared array keeps SegmentRow's memo quiet. */
+const NO_ISSUES: QaFinding[] = []
+
+/** Rows within which a programmatic scroll is smooth; further ones jump. */
+const SMOOTH_SCROLL_ROWS = 50
 
 export default function CATEditor() {
   const { projectId, jobId } = useParams<{ projectId: string; jobId: string }>()
@@ -109,6 +117,10 @@ export default function CATEditor() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [activeSegmentIdx, setActiveSegmentIdx] = useState<number | null>(null)
+  // Where the open row's caret starts when an arrow key entered it from the
+  // row above or below, or a click on its translation opened it; every other
+  // switch clears it.
+  const [entryCaret, setEntryCaret] = useState<{ idx: number; caret: EntryCaret } | null>(null)
   const activeSegmentIdxRef = useRef<number | null>(null)
   activeSegmentIdxRef.current = activeSegmentIdx
   // The active segment's tagged source, for re-anchoring TM match tags on
@@ -145,14 +157,7 @@ export default function CATEditor() {
   // sidebar/panel button. The editor's own TipTap keymap still
   // handles these when focus IS inside the editor — the window handler
   // skips via a `.ProseMirror` closest() check to avoid double-firing.
-  const activeInsertRef = useRef<{
-    selectAndReplace: (src: string, tgt: string, mt?: string) => void
-    selectTerm: (src: string, tgt: string, mt?: string) => void
-    replaceAll?: (text: string, insertToken?: string) => void
-    confirm?: () => void
-    copySource?: () => void
-    clear?: () => void
-  }>({ selectAndReplace: () => {}, selectTerm: () => {} })
+  const activeInsertRef = useRef<SegmentRowHandle>({ selectAndReplace: () => {}, selectTerm: () => {} })
   const flushDraftRef = useRef<() => Promise<void>>(async () => {})
 
   // Modals
@@ -162,7 +167,9 @@ export default function CATEditor() {
   const [findInSelection, setFindInSelection] = useState(false)
   const [findHighlightTerm, setFindHighlightTerm] = useState<string | null>(null)
   const [showWhitespace, setShowWhitespace] = useState(() => { try { return localStorage.getItem('cat-show-whitespace') === 'true' } catch { return false } })
+  const [trackChanges, setTrackChanges] = useState(() => { try { return localStorage.getItem('cat-track-changes') === 'true' } catch { return false } })
   const [segmentFilters, setSegmentFilters] = useState<SegmentFilters>(DEFAULT_FILTERS)
+  const segmentSearchRef = useRef<HTMLInputElement>(null)
 
   // Current-user identity for the conflict banner. Drives "Saved by NAME"
   // vs "Saved from another tab/session" messaging — same-user 409s happen
@@ -178,58 +185,29 @@ export default function CATEditor() {
   const isAdmin = isAdminRole(me?.role)
   const isManager = isManagerRole(me?.role)
 
-  const [wasProcessing, setWasProcessing] = useState(false)
-
   // Project context (id, name, source language) comes off the job response.
   // `GET /api/projects` is manager-only, so linguists can't read it.
-  const { data: job, isPending: jobPending } = useQuery({
-    queryKey: queryKeys.job.detail(jid),
-    queryFn: () => getJob(jid),
-    refetchInterval: (query) => {
-      const j = query.state.data
-      if (!j) return false
-      // Poll while pipeline is running in the background.
-      // isPipelineRunning is current_step-aware, so polling stops once the
-      // pipeline writes a "*  complete" label, even though pipeline_status
-      // stays 'in_progress' until /complete fires.
-      return isPipelineRunning(j) ? 2000 : false
-    },
-  })
+  const { data: job, isPending: jobPending } = useJobDetail(jid)
   usePageTitle(job?.file_name, job?.project_name)
 
   const pipelineRunning = !!job && isPipelineRunning(job)
   // While this job's QE+APE step runs, the editor is
   // hard-locked — we show a waiting screen instead of the segment grid, and the
-  // backend also rejects edits with 409. The existing finish effect below
-  // invalidates translations when pipelineRunning flips false, so the grid
-  // loads automatically once QE+APE completes.
+  // backend also rejects edits with 409. usePipelineEditorRefresh reloads the
+  // rows when the step ends, so the grid loads automatically once it completes.
   const aiRunning = !!job && isAIStepRunning(job)
   const runningBadge = job ? pipelineBadge(job) : null
   const jobStoppedNote = job ? stoppedNote(job) : null
 
-  // When pipeline finishes, do a single atomic refetch of translations — and of
-  // the steps, since an AI step that ran may have completed or moved the task.
-  useEffect(() => {
-    if (pipelineRunning) {
-      setWasProcessing(true)
-    } else if (wasProcessing) {
-      setWasProcessing(false)
-      queryClient.invalidateQueries({ queryKey: queryKeys.job.translations(jid) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.job.steps(jid) })
-    }
-  }, [pipelineRunning, wasProcessing, jid, queryClient])
 
-  const { data: segments, isPending: segmentsPending } = useQuery({
-    queryKey: queryKeys.segments.byFile(job?.file_id ?? 0),
-    queryFn: () => listSegments(job!.file_id),
-    enabled: !!job,
-  })
-
-  const { data: translations, isPending: translationsPending } = useQuery({
-    queryKey: queryKeys.job.translations(jid),
-    queryFn: () => listJobTranslations(jid),
-    enabled: !!job,
-  })
+  // Every segment without its text: counts, filters, selection and navigation
+  // run over this. The rows on screen load their text by page, further down.
+  const editorIndex = useEditorIndex(jid, !!job)
+  const indexRows = editorIndex.rows
+  const indexLookup = editorIndex.lookup
+  // Follows a running pipeline: counts and rows on screen reload as segments
+  // are filled, and once more when the run ends.
+  usePipelineEditorRefresh(jid, job, indexRows?.length ?? 0)
 
   // Batched comment counts for the whole file — one request feeds every row's
   // comment indicator and the "Commented" filter (no per-row N+1).
@@ -292,7 +270,7 @@ export default function CATEditor() {
   // does not come back when the next refetch succeeds.
   useEffect(() => {
     if (qaReportFailed) {
-      setSegmentFilters(f => (f.qaFilter === 'all' ? f : { ...f, qaFilter: 'all' }))
+      setSegmentFilters(f => (f.qaFilters.length === 0 ? f : { ...f, qaFilters: [] }))
     }
   }, [qaReportFailed])
 
@@ -332,6 +310,11 @@ export default function CATEditor() {
   })
   const autoApprovedBefore = useMemo(() => autoApprovedBeforeStep(stepStatuses?.previous ?? []), [stepStatuses])
   const predictedBeforeStep = useMemo(() => new Set(stepStatuses?.predicted_before_step ?? []), [stepStatuses])
+  // Track changes: each loaded row carries its text when the previous step
+  // ended. A first step has nothing to compare with.
+  const hasPreviousStep = (stepStatuses?.previous.length ?? 0) > 0
+  const showTrackChanges = trackChanges && hasPreviousStep
+  const previousStepName = stepStatuses?.previous[0]?.step_name
   const canEdit = canEditTask(task.mode)
   const canEditRef = useRef(canEdit)
   canEditRef.current = canEdit
@@ -341,11 +324,11 @@ export default function CATEditor() {
   plainTextFileRef.current = plainTextFile
 
   // The page stays on one loading screen until everything its first paint
-  // depends on is in: the job, its steps, segments, translations and the user.
+  // depends on is in: the job, its steps, the segment index and the user.
   // Each piece rendering as it arrives reshuffles the page several times on a
   // slow connection. A failed query stops pending, so an error never hangs here.
   const editorLoading = mePending || jobPending
-    || (!!job && (jobStepsPending || segmentsPending || translationsPending))
+    || (!!job && (jobStepsPending || editorIndex.isPending))
   const gridShown = !editorLoading && !aiRunning
   const { rerun, skipAIStep } = useJobPipelineActions(jid, pid)
 
@@ -391,12 +374,7 @@ export default function CATEditor() {
     onSuccess: (res, comment) => {
       invalidateJobContext(queryClient, pid, jid)
       if (res.task_reopened) handleTaskReopened(queryClient, pid, jid)
-      const position = new Map<number, number>()
-      segments?.forEach((s, i) => {
-        const id = translationMap.get(s.id)?.id
-        if (id !== undefined) position.set(id, i)
-      })
-      const blocked = blockedSegmentNumbers(res.skipped, id => position.get(id))
+      const blocked = blockedSegmentNumbers(res.skipped, id => indexLookup.byTranslation.get(id), idx => segmentNumber(rows[idx]))
       if (blocked) {
         setApproveBlocked(blocked)
         return
@@ -453,11 +431,44 @@ export default function CATEditor() {
     setConcordanceOpen(true)
   }, [getSelectionText])
 
+  // Term quick-add (Alt+Shift+G, the Terminology panel's +), prefilled from
+  // what is selected in the open segment's source and translation.
+  const [quickAddTerm, setQuickAddTerm] = useState<{ source: string; target: string } | null>(null)
+  // Whether this user may add terms here: the project lets them (managers
+  // always may) and a term base for the job's pair allows Write. The + shows
+  // only then, or after a failed load so a click can try again; it refreshes
+  // when the tab comes back into focus.
+  const { data: jobTermBases, isError: jobTermBasesFailed, refetch: refetchJobTermBases } = useQuery({
+    queryKey: queryKeys.jobTermBases(jid),
+    queryFn: () => listJobTermBases(jid),
+    enabled: Number.isFinite(jid),
+    refetchOnWindowFocus: true,
+  })
+  const quickAddOpen = jobTermBasesFailed || quickAddBlockedReason(jobTermBases, { isManager }) === null
+  const openQuickAddTerm = useCallback(async () => {
+    if (activeSegmentIdxRef.current === null) return
+    // The selection first, then a fresh list: a manager may have changed the
+    // setting since the editor opened.
+    const selection = activeInsertRef.current.getTermSelection?.() ?? { source: '', target: '' }
+    const fresh = await refetchJobTermBases()
+    const reason = quickAddBlockedReason(fresh.data, { failed: fresh.isError, isManager })
+    if (reason !== null) {
+      if (reason) (fresh.isError ? toast.error : toast.warning)(reason)
+      return
+    }
+    setQuickAddTerm(selection)
+  }, [refetchJobTermBases, isManager])
+
   // A Resources-panel insert: the click on a TM match or MT suggestion, and
-  // Ctrl+1..5. Refs are stable, so no dependencies.
+  // Ctrl+1..5. An exact TM match is approved too. Refs are stable, so no
+  // dependencies.
   const handleSidebarInsert = useCallback((insert: PanelInsert) => {
     if (!canEditRef.current) return
-    activeInsertRef.current.replaceAll?.(panelInsertText(insert, activeSourceRichRef.current, plainTextFileRef.current), insert.insertToken)
+    activeInsertRef.current.replaceAll?.(
+      panelInsertText(insert, activeSourceRichRef.current, plainTextFileRef.current),
+      insert.insertToken,
+      panelInsertApproves(insert),
+    )
   }, [])
 
   // Global keyboard shortcuts (editor level)
@@ -475,6 +486,13 @@ export default function CATEditor() {
       if (mod && e.key === 'k') {
         e.preventDefault()
         openConcordance()
+      }
+      // The browser's find sees only the rows on screen; the editor's search
+      // covers every segment of the file.
+      if (mod && !e.shiftKey && !e.altKey && e.key === 'f') {
+        e.preventDefault()
+        segmentSearchRef.current?.focus()
+        segmentSearchRef.current?.select()
       }
       if (mod && e.key === 'h') {
         e.preventDefault()
@@ -539,10 +557,39 @@ export default function CATEditor() {
           activeInsertRef.current.clear()
         }
       }
+      // Tab/Shift+Tab and Down/Up from a read-only row: its editor takes no
+      // focus or keys, so they land here on the page itself (a writable
+      // editor handles them in its keymap). Focus on a control keeps them.
+      const leave = activeInsertRef.current.leaveReadOnly
+      if (leave && (!target || target === document.body) && !e.altKey && !mod) {
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          leave(e.shiftKey ? 'prev' : 'next', false)
+        } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.shiftKey) {
+          e.preventDefault()
+          leave(e.key === 'ArrowDown' ? 'next' : 'prev', true)
+        }
+      }
+      // Alt+Shift+T split, Alt+Shift+J join with next: TipTap has no binding
+      // for them, so they also run from inside the editor. Matched on the
+      // physical key: on a Mac, Alt+Shift turns e.key into another character.
+      if (activeSegmentIdxRef.current !== null && !inFormInput && e.altKey && e.shiftKey && !mod
+        && (e.code === 'KeyT' || e.code === 'KeyJ')) {
+        const run = e.code === 'KeyT' ? activeInsertRef.current.split : activeInsertRef.current.joinNext
+        if (run) {
+          e.preventDefault()
+          run()
+        }
+      }
+      // Alt+Shift+G adds a term, from inside the editor too.
+      if (activeSegmentIdxRef.current !== null && !inFormInput && e.altKey && e.shiftKey && !mod && e.code === 'KeyG') {
+        e.preventDefault()
+        void openQuickAddTerm()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [openConcordance, handleSidebarInsert])
+  }, [openConcordance, handleSidebarInsert, openQuickAddTerm])
 
   // Workflow-aware toolbar state, from the current task. Per-button gating
   // (TM / MT / Predict) lives in JobPipelineActions, which is told the
@@ -550,89 +597,69 @@ export default function CATEditor() {
   const isFinalStep = !!task.step && task.step.step_order === (jobSteps?.length ?? 1) - 1
   const currentStepIndex = task.step ? (jobSteps?.findIndex(s => s.id === task.step!.id) ?? -1) : -1
   const inFirstStep = !task.step || task.step.step_order === 0
+  // Clear (toolbar, selection bar, segment) runs up to the first human or
+  // hybrid step; Pre-translate stays first-step only.
+  const taskInClearWindow = inClearWindow(task.step, job?.last_clear_step_order ?? 0)
 
-  // Job-wide derived data, memoized on the queries: a render that changes
-  // neither (a column drag fires one per pointer move) must not walk every
-  // segment again — and a stable translationMap keeps filteredIndices memoized.
+  // Job-wide derived data, memoized on the index: a render that changes it
+  // not (a column drag fires one per pointer move) must not walk every
+  // segment again. A save replaces one index row, so these recompute then.
+  const rows = useMemo(() => indexRows ?? [], [indexRows])
   // What Complete step would leave unapproved: drafts (any text) and untranslated.
-  const unapproved = useMemo(() => unapprovedCounts(translations ?? []), [translations])
-
-  // Build segment→translation map
-  const translationMap = useMemo(() => {
-    const map = new Map<number, Translation>()
-    translations?.forEach(t => map.set(t.segment_id, t))
-    return map
-  }, [translations])
+  const unapproved = useMemo(() => unapprovedCounts(translatedRows(rows)), [rows])
   const statusCounts = useMemo(
-    () => countByDisplayStatus(segments ?? [], translationMap, predictedBeforeStep),
-    [segments, translationMap, predictedBeforeStep],
+    () => countByDisplayStatus(rows, predictedBeforeStep),
+    [rows, predictedBeforeStep],
   )
-  // Status column: wide enough for the widest status chip this job shows.
-  const statusWidth = useMemo(() => {
-    const labels = (Object.entries(statusCounts) as [DisplayStatus, number][])
-      .filter(([s, n]) => n > 0 && showStatusChip(s))
-      .map(([s]) => statusLabel(s))
-    if (translations?.some(isAssistantConfirmed)) labels.push(ASSISTANT_CONFIRMED_LABEL)
-    if (autoApprovedBefore.size > 0) labels.push(statusLabel('auto_approved'))
-    return statusColumnWidth(labels)
-  }, [statusCounts, translations, autoApprovedBefore])
 
   const qaResultsByTranslation = useMemo(() => groupFindingsByTranslation(qaReport?.results), [qaReport])
 
   // Width of the unnamed extras column: the widest row in the whole job, not
   // just the filtered or rendered rows, so filtering doesn't resize it.
-  const extrasWidth = useMemo(() => extrasColumnWidth((translations ?? []).map(t => ({
-    locked: t.locked === true,
-    qeLabel: qeChipLabel(t.qe_note),
-    hasQA: (qaResultsByTranslation.get(t.id)?.length ?? 0) > 0,
-    commentCount: commentCountByTranslation.get(t.id) ?? 0,
-  }))), [translations, qaResultsByTranslation, commentCountByTranslation])
+  const extrasWidth = useMemo(() => extrasColumnWidth(translatedRows(rows).map(r => ({
+    locked: r.locked,
+    qeLabel: qeChipLabel(r.qeNoteHead),
+    hasQA: (qaResultsByTranslation.get(r.translationId!)?.length ?? 0) > 0,
+    commentCount: commentCountByTranslation.get(r.translationId!) ?? 0,
+  }))), [rows, qaResultsByTranslation, commentCountByTranslation])
+  // Measured once: an overlay scrollbar gets an empty gutter track at the
+  // grid's right edge (OVERLAY_SCROLLBAR_GUTTER).
+  const [overlayScrollbar] = useState(hasOverlayScrollbars)
 
-  // Filtered segment indices (client-side filtering)
+  // The filter bar's text search runs on the server over the whole file; the
+  // other filters run here over the index.
+  const textSearch = useMemo(() => (segmentFilters.searchText.trim() === '' ? null : {
+    text: segmentFilters.searchText,
+    source: segmentFilters.searchSource,
+    target: segmentFilters.searchTarget,
+    caseSensitive: segmentFilters.caseSensitive,
+    regex: segmentFilters.useRegex,
+  }), [segmentFilters])
+  const { matches: textMatches, state: searchState } = useEditorSearch(jid, textSearch)
+
   // Stable while the visible rows and their order stay the same: a save
-  // rebuilds translationMap, and a new array here would make the row
+  // replaces an index row, and a new array here would make the row
   // virtualizer recompute every row position (its getItemKey depends on it).
-  const filteredIndices = useStableArray(useMemo(() => {
-    if (!segments) return []
-    return filterSegments(segments, translationMap, qaResultsByTranslation, segmentFilters, commentCountByTranslation, predictedBeforeStep)
-  }, [segments, translationMap, qaResultsByTranslation, segmentFilters, commentCountByTranslation, predictedBeforeStep]))
+  const filteredIndices = useStableArray(useMemo(
+    () => filterSegments(rows, qaResultsByTranslation, segmentFilters, textMatches, commentCountByTranslation, predictedBeforeStep),
+    [rows, qaResultsByTranslation, segmentFilters, textMatches, commentCountByTranslation, predictedBeforeStep],
+  ))
 
-  // Repetition detection — two parallel sets:
-  // `repetitionSourceIds` = FIRST occurrences that have duplicates → solid
-  // "→R" chip ("confirming this propagates to others")
-  // `repetitionSegmentIds` = SUBSEQUENT occurrences → dashed "⇢R" chip
-  // ("you were auto-propagated from earlier")
-  // The two sets are disjoint by construction; segments with unique sources
-  // belong to neither.
-  const repetitionSegmentIds = useMemo(
-    () => computeRepetitionSegmentIds(segments),
-    [segments],
-  )
-  const repetitionSourceIds = useMemo(
-    () => computeRepetitionSourceIds(segments),
-    [segments],
-  )
-  // Aggregate repetition stats for the leverage status bar's "Repetitions"
-  // band. Backend's `repetitions_*` columns are always 0 (deferred per
-  // migration 042); the bar component takes this prop and overrides the
-  // band when present.
-  const repetitionStats = useMemo(
-    () => computeRepetitionStats(segments),
-    [segments],
-  )
-
-  const segmentCount = segments?.length ?? 0
+  const segmentCount = rows.length
   const filteredCount = filteredIndices.length
 
   // Multi-segment selection, by translation id, over the filtered rows.
-  const orderedTranslationIds = useMemo(() => filteredIndices.flatMap(i => {
-    const id = segments ? translationMap.get(segments[i].id)?.id : undefined
-    return id == null ? [] : [id]
-  }), [filteredIndices, segments, translationMap])
+  const orderedTranslationIds = useMemo(
+    () => filteredIndices.flatMap(i => rows[i].translationId ?? []),
+    [filteredIndices, rows],
+  )
   const selection = useSegmentSelection(orderedTranslationIds)
   const selectionRef = useRef(selection)
   selectionRef.current = selection
-  const translationsById = useMemo(() => new Map((translations ?? []).map(t => [t.id, t])), [translations])
+  const indexRowByTranslation = useMemo(
+    () => new Map(translatedRows(rows).map(r => [r.translationId!, r])),
+    [rows],
+  )
   const pickedSet = useMemo(() => new Set(selection.picked), [selection.picked])
 
   // Single chokepoint for changing the active segment. Every
@@ -644,7 +671,7 @@ export default function CATEditor() {
   // calls to this helper.
   const switchActiveSegment = useCallback(async (
     newIdx: number | null,
-    opts: { discard?: boolean } = {},
+    opts: { discard?: boolean; caret?: EntryCaret } = {},
   ): Promise<void> => {
     if (
       !opts.discard &&
@@ -660,15 +687,16 @@ export default function CATEditor() {
       }
     }
     activeRowDirtyRef.current = false
+    setEntryCaret(opts.caret && newIdx !== null ? { idx: newIdx, caret: opts.caret } : null)
     // The ONLY legitimate setActiveSegmentIdx call site, gated by the flush invariant above.
     // eslint-disable-next-line no-restricted-syntax
     setActiveSegmentIdx(newIdx)
   }, [])
 
   // Navigate to next/previous within filtered results
-  const goToSegment = useCallback((idx: number) => {
+  const goToSegment = useCallback((idx: number, caret?: LineCaret) => {
     if (idx >= 0 && idx < filteredCount) {
-      void switchActiveSegment(filteredIndices[idx])
+      void switchActiveSegment(filteredIndices[idx], { caret })
     }
   }, [filteredCount, filteredIndices, switchActiveSegment])
 
@@ -695,9 +723,8 @@ export default function CATEditor() {
     onCollapse: handleSidebarClose,
     onExpand: handleSidebarOpen,
   })
-  // Clicking the closed panel's tab opens it narrow — enough for the TM and
-  // terminology lines, leaving the grid the rest. Dragging that tab instead
-  // chooses its own width.
+  // Clicking the closed panel's tab opens it at SIDEBAR_CLICK_WIDTH, whatever
+  // the last dragged width was. Dragging that tab instead chooses its own width.
   const openSidebarByClick = useCallback(() => {
     handleSidebarOpen()
     if (!sidebarResize.wasDragged()) sidebarResize.setWidth(SIDEBAR_CLICK_WIDTH)
@@ -726,8 +753,10 @@ export default function CATEditor() {
   // subtracts it. We measure the header rather than hardcoding so font/zoom
   // changes stay correct.
   const headerRef = useRef<HTMLDivElement>(null)
-  const columnMins = useMemo(() => segmentColumnMins(statusWidth), [statusWidth])
+  const columnMins = useMemo(() => segmentColumnMins(extrasWidth), [extrasWidth])
   const columnDrag = useColumnBorderDrag(headerRef, columnMins)
+  // The header draws no border after its last visible column.
+  const lastHeader = extrasWidth > 0 ? SEGMENT_HEADER_CELLS.length - 1 : LAST_LABELLED_HEADER
   const [headerHeight, setHeaderHeight] = useState(0)
   useLayoutEffect(() => {
     const el = headerRef.current
@@ -751,13 +780,17 @@ export default function CATEditor() {
   const rowVirtualizer = useVirtualizer({
     count: filteredCount,
     getScrollElement: () => segmentScrollRef.current,
-    estimateSize: (idx) => filteredIndices[idx] === activeSegmentIdx ? 120 : 65,
+    // A one-line row (index.css --seg-row-min-h), the same for every row.
+    // TanStack caches a measured size only when it differs from the estimate,
+    // so an estimate that changed with the active row would replace the real
+    // height of every row that measured exactly 33px.
+    estimateSize: () => 33,
     // Measured heights are cached per segment, not per list position: a filter
     // or search moves segments to new positions, and a row that stays mounted
     // through that is never measured again.
     getItemKey: useCallback(
-      (idx: number) => segments?.[filteredIndices[idx]]?.id ?? idx,
-      [segments, filteredIndices],
+      (idx: number) => rows[filteredIndices[idx]]?.segmentId ?? idx,
+      [rows, filteredIndices],
     ),
     overscan: 10,
     // Sticky header occupies this many px at the top of the scroll content.
@@ -866,20 +899,20 @@ export default function CATEditor() {
     requestAnimationFrame(settle)
   }, [activeSegmentIdx])
 
-  // Scroll to a specific translation by ID (used by Find & Replace navigation).
-  // Explicitly scrolls the virtualizer — does NOT rely on the activeSegmentIdx effect,
-  // which has "restore position" logic that fights programmatic navigation.
-  // Only scrolls when the segment is off-screen or clipped; uses smooth behavior.
-  const scrollToTranslation = useCallback(async (
-    translationId: number,
+  // Scroll to a row by its index position (Find & Replace, spell check,
+  // cross-references, Jump to segment, a reload). Explicitly scrolls the
+  // virtualizer — does NOT rely on the activeSegmentIdx effect, which has
+  // "restore position" logic that fights programmatic navigation. Only scrolls
+  // when the row is off-screen or clipped; smooth only over a short distance,
+  // since a smooth scroll across thousands of rows of estimated height misses.
+  // Returns false when the filter hides the row.
+  const scrollToRow = useCallback(async (
+    segIdx: number,
     opts: { activate?: boolean } = {},
-  ) => {
+  ): Promise<boolean> => {
     const activate = opts.activate ?? true
-    if (!segments) return
-    const segIdx = segments.findIndex(s => translationMap.get(s.id)?.id === translationId)
-    if (segIdx === -1) return
     const filteredPos = filteredIndices.indexOf(segIdx)
-    if (filteredPos === -1) return
+    if (filteredPos === -1) return false
     programmaticScrollRef.current = true // tell the activeSegmentIdx effect to skip its scroll
     // Route through the chokepoint so the previously-active row's draft
     // is flushed before we navigate to the F&R match.
@@ -891,12 +924,13 @@ export default function CATEditor() {
     if (activate) await switchActiveSegment(segIdx)
     requestAnimationFrame(() => {
       const scrollEl = segmentScrollRef.current
+      const items = rowVirtualizer.getVirtualItems()
+      const behavior = Math.abs(filteredPos - (items[0]?.index ?? 0)) < SMOOTH_SCROLL_ROWS ? 'smooth' : 'auto'
       if (!scrollEl) {
-        rowVirtualizer.scrollToIndex(filteredPos, { align: 'center', behavior: 'smooth' })
+        rowVirtualizer.scrollToIndex(filteredPos, { align: 'center', behavior })
         return
       }
       // Check if the target row is already fully visible
-      const items = rowVirtualizer.getVirtualItems()
       const item = items.find(v => v.index === filteredPos)
       if (item) {
         const rowTop = item.start - scrollEl.scrollTop
@@ -909,9 +943,73 @@ export default function CATEditor() {
         }
       }
       // 'auto' = minimal scroll to bring item into view (TanStack's equivalent of 'nearest')
-      rowVirtualizer.scrollToIndex(filteredPos, { align: 'auto', behavior: 'smooth' })
+      rowVirtualizer.scrollToIndex(filteredPos, { align: 'auto', behavior })
     })
-  }, [segments, translationMap, filteredIndices, rowVirtualizer, switchActiveSegment])
+    return true
+  }, [filteredIndices, rowVirtualizer, switchActiveSegment])
+
+  const scrollToTranslation = useCallback(async (translationId: number, opts: { activate?: boolean } = {}) => {
+    const segIdx = indexLookup.byTranslation.get(translationId)
+    if (segIdx !== undefined) await scrollToRow(segIdx, opts)
+  }, [indexLookup, scrollToRow])
+
+  // Split and join, while the task takes edits: Split on the open row's
+  // source, Alt+Shift+J before a row it can join, Join on a selection.
+  const openTranslation = useCallback((id: number) => void scrollToTranslation(id, { activate: true }), [scrollToTranslation])
+  const splitJoin = useSegmentSplitJoin({ jobId: jid, projectId: pid, lookup: indexLookup, openTranslation })
+  const pickedRows = useMemo(
+    () => selection.picked.flatMap(id => indexLookup.byTranslation.get(id) ?? []).sort((a, b) => a - b),
+    [selection.picked, indexLookup],
+  )
+  const joinSelection = async () => {
+    await switchActiveSegment(null)
+    const ids = pickedRows.flatMap(i => rows[i].translationId ?? [])
+    selection.clear()
+    splitJoin.joinTranslations(ids)
+  }
+
+  // The last opened segment stays in the URL (?seg=<segment id>), so a reload,
+  // Back or a shared link returns to it. Replaced, not pushed: moving between
+  // segments adds no history entries.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeSegmentId = activeSegmentIdx != null ? rows[activeSegmentIdx]?.segmentId : undefined
+  useEffect(() => {
+    if (activeSegmentId === undefined || searchParams.get('seg') === String(activeSegmentId)) return
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('seg', String(activeSegmentId))
+      return next
+    }, { replace: true })
+  }, [activeSegmentId, searchParams, setSearchParams])
+
+  // Once the grid is up, open the segment the URL names.
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current || !gridShown || !indexRows) return
+    restoredRef.current = true
+    const idx = indexLookup.bySegment.get(Number(searchParams.get('seg')))
+    if (idx !== undefined) void scrollToRow(idx)
+  }, [gridShown, indexRows, indexLookup, searchParams, scrollToRow])
+
+  // Text of the rows on screen, plus the open row wherever it is, by segment
+  // id. A row whose page has not arrived yet renders as a placeholder.
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const shownIndices = useMemo(() => {
+    const out = virtualItems.map(v => filteredIndices[v.index])
+    // Unfiltered, the page past each edge of the view loads too, so a short
+    // scroll finds its rows ready.
+    if (out.length > 0 && filteredIndices.length === rows.length) {
+      out.push(Math.max(0, out[0] - EDITOR_PAGE_SIZE / 2), Math.min(rows.length - 1, out[out.length - 1] + EDITOR_PAGE_SIZE / 2))
+    }
+    if (activeSegmentIdx != null) out.push(activeSegmentIdx)
+    return out
+  }, [virtualItems, filteredIndices, activeSegmentIdx, rows.length])
+  const loadedRows = useEditorPages(jid, indexRows, shownIndices)
+  const rowAt = (idx: number): EditorRow | undefined => {
+    const row = rows[idx]
+    return row ? loadedRows.get(row.segmentId) : undefined
+  }
+  const activeRow = activeSegmentIdx != null ? rowAt(activeSegmentIdx) : undefined
 
   // --- Spell check review dialog ---
   //
@@ -919,87 +1017,67 @@ export default function CATEditor() {
   // the user last had open: `beforeRun` deactivates it first, so there's one
   // write path instead of an editor branch racing its own autosave against the
   // batch writes.
-  const translationById = useMemo(() => {
-    const map = new Map<number, Translation>()
-    translations?.forEach(t => map.set(t.id, t))
-    return map
-  }, [translations])
+  const spellSegmentIds = useMemo(() => rows.map(r => r.segmentId), [rows])
+  const spellRowsBySegment = useMemo(() => new Map(translatedRows(rows).map(r => [
+    r.segmentId, { id: r.translationId!, status: r.status, locked: r.locked },
+  ])), [rows])
 
-  const sourceTextBySegment = useMemo(() => {
-    const map = new Map<number, string>()
-    segments?.forEach(s => map.set(s.id, s.source_text))
-    return map
-  }, [segments])
-
-  const spellSegmentIds = useMemo(() => segments?.map(s => s.id) ?? [], [segments])
-
-  // Cross-reference terms. Built in two stages on purpose: the
-  // signature depends only on the REFERENCED segments' targets, so the map
-  // keeps its identity while unrelated segments are edited. SegmentRow's memo
-  // compares it by reference, and the grid is virtualized — a map that churned
-  // per keystroke would re-render every visible row. See lib/ref-terms.ts.
-  const refKeys = useMemo(() => collectRefKeys(segments), [segments])
-  const segIndex = useMemo(() => indexSegments(segments), [segments])
-  const targetsBySegment = useMemo(() => indexTargets(translations), [translations])
-  const refSignature = useMemo(
-    () => refTermsSignature(refKeys, targetsBySegment, segIndex.idByKey),
-    [refKeys, targetsBySegment, segIndex],
+  // Cross-reference terms, from the server's list of referenced segments. The
+  // map keeps its identity until a referenced target changes (a save patches
+  // the cached list): SegmentRow's memo compares it by reference, and a map
+  // that churned per keystroke would re-render every visible row.
+  const { data: refs } = useEditorRefs(jid, !!job)
+  const refTerms = useMemo<RefTerms>(
+    () => new Map((refs ?? []).map(r => [r.key, { source: r.source, target: r.target }])),
+    [refs],
   )
-  const refTerms = useMemo(
-    () => buildRefTerms(refKeys, targetsBySegment, segIndex.idByKey, segIndex.sourceByKey),
-    // Identity is deliberately keyed on the signature, not the raw
-    // translations array.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [refSignature],
-  )
+  // Where each referenced segment sits in the index, by key.
+  const refRowByKey = useMemo(() => {
+    const out = new Map<string, number>()
+    for (const r of refs ?? []) {
+      const idx = indexLookup.bySegment.get(r.segment_id)
+      if (idx !== undefined) out.set(r.key, idx)
+    }
+    return out
+  }, [refs, indexLookup])
 
-  // Jump to the segment a cross-reference points at: resolve the
-  // decoded ref key to the defining segment's translation and navigate via the
-  // same helper F&R uses. Called from the sidebar's References section — the
-  // chips themselves are deliberately not clickable (a jump on plain click
-  // teleported linguists away when they merely meant to activate the row).
-  // Plain function, not useCallback: the sidebar comparator ignores callbacks,
-  // and it closes over translationMap, which is rebuilt per render anyway.
+  // Jump to the segment a cross-reference points at, via the same helper F&R
+  // uses. Called from the sidebar's References section — the chips themselves
+  // are deliberately not clickable (a jump on plain click teleported linguists
+  // away when they merely meant to activate the row).
   const jumpToReference = (refKey: string) => {
-    const segId = segIndex.idByKey.get(refKey)
-    const trans = segId !== undefined ? translationMap.get(segId) : undefined
-    if (trans) void scrollToTranslation(trans.id)
+    const idx = refRowByKey.get(refKey)
+    const translationId = idx !== undefined ? rows[idx].translationId : null
+    if (translationId != null) void scrollToTranslation(translationId)
   }
 
   // The active segment's cross-references for the sidebar's References section:
   // the term each chip renders + the row that defines it. Identity is stable
   // across unrelated edits (deps change only on segment switch or when a
-  // referenced target changes via refTerms' signature-keyed identity), which is
-  // what the sidebar's memo comparator relies on.
+  // referenced target changes), which is what the sidebar's memo comparator
+  // relies on.
+  const activeSourceRich = activeRow?.segment.source_rich_text
   const activeReferences = useMemo<SegmentReference[]>(() => {
-    if (activeSegmentIdx === null || !segments) return []
-    const keys = segmentRefKeys(segments[activeSegmentIdx]?.source_rich_text)
-    return keys.map(key => {
-      const segId = segIndex.idByKey.get(key)
-      const idx = segId !== undefined ? segments.findIndex(s => s.id === segId) : -1
+    return segmentRefKeys(activeSourceRich).map(key => {
+      const idx = refRowByKey.get(key)
       const term = refTerms.get(key)
       return {
         refKey: key,
         source: term?.source ?? '',
         target: term?.target ?? '',
-        segmentNumber: idx >= 0 ? idx + 1 : null,
+        segmentNumber: idx !== undefined ? segmentNumber(rows[idx]) : null,
       }
     })
-  }, [activeSegmentIdx, segments, segIndex, refTerms])
+  }, [activeSourceRich, refRowByKey, refTerms, rows])
   // Mirror the active segment's tagged source into a ref so the TM insert
   // paths (sidebar click + Mod+1..5) can re-anchor tags without re-subscribing.
-  activeSourceRichRef.current =
-    activeSegmentIdx !== null && segments ? segments[activeSegmentIdx]?.source_rich_text ?? '' : ''
+  activeSourceRichRef.current = activeSourceRich ?? ''
 
-  const activeSourceText =
-    activeSegmentIdx !== null && segments ? segments[activeSegmentIdx]?.source_text ?? '' : ''
+  const activeSourceText = activeRow?.segment.source_text ?? ''
 
   // Same hook + query key the sidebar's TM section uses, so this shares its
   // request rather than issuing a second one.
-  const activeTranslationId = useMemo(() => {
-    if (activeSegmentIdx == null || !segments) return undefined
-    return translationMap.get(segments[activeSegmentIdx]?.id ?? -1)?.id
-  }, [activeSegmentIdx, segments, translationMap])
+  const activeTranslationId = activeSegmentIdx != null ? rows[activeSegmentIdx]?.translationId ?? undefined : undefined
 
   const { usable: usableTMMatches } = useTMMatches(jid, activeSourceText, activeTranslationId ?? null)
 
@@ -1016,54 +1094,12 @@ export default function CATEditor() {
   useEffect(() => { setHoveredTMSource(null) }, [activeSegmentIdx])
   const tmDiffReference = hoveredTMSource ?? usableTMMatches[0]?.source_text ?? null
 
-  /**
-   * Apply spell corrections through the bulk draft endpoint.
-   *
-   * Routed through `useMutationWithToast` per the project convention; the success
-   * message is a function of the result because the count isn't known until the
-   * write returns. Conflict / unfixable warnings are raised inside the mutation
-   * because they're partial-success notes, not failures. Resolves null when
-   * the task refused the write, which handleTaskLocked has already reported.
-   */
-  const spellFixMut = useMutationWithToast<number | null, {
-    errors: SpellError[]
-    replacement: string
-    includeLocked: boolean
-  }>({
-    mutationFn: ({ errors, replacement, includeLocked }) => writeSpellFixes({
-      fileId: job?.file_id ?? 0,
-      errors,
-      replacement,
-      includeLocked,
-      lookup: id => translationById.get(id),
-      onTaskLocked: err => handleTaskLocked(queryClient, pid, jid, err),
-      onTaskReopened: () => handleTaskReopened(queryClient, pid, jid),
-    }),
-    successMessage: applied =>
-      applied === null ? null : `Corrected ${applied} segment${applied === 1 ? '' : 's'}`,
-    errorMessage: 'Could not apply the correction',
-    // One call covers the job's translations, detail and analysis caches.
-    onSuccess: () => invalidateJobContext(queryClient, pid, jid),
-  })
+  const { applySpellFixes, spellFixActions } = useSpellFixes({ jid, pid, job, isAdmin, activeTranslationId })
 
-  const applySpellFixes = useCallback(async (
-    errors: SpellError[], replacement: string, includeLocked: boolean,
-  ): Promise<number> => {
-    if (errors.length === 0) return 0
-    return (await spellFixMut.mutateAsync({ errors, replacement, includeLocked })) ?? 0
-  }, [spellFixMut])
-
-  // --- Word-level fixes from the inline right-click menu ---
-  //
-  // The open segment is fixed through the editor itself (see RichTextCellEditor),
-  // so these only cover the OTHER segments — writing the open row underneath a
-  // mounted editor would race its autosave.
   // Segment holds: the open row is held for this user while they may edit it;
   // a row someone else holds is read-only here and names them. It follows
   // activeTranslationId, which changes only after switchActiveSegment's flush.
-  const activeRowLocked = activeSegmentIdx != null && segments
-    ? translationMap.get(segments[activeSegmentIdx]?.id ?? -1)?.locked === true
-    : false
+  const activeRowLocked = activeSegmentIdx != null && rows[activeSegmentIdx]?.locked === true
   const { heldByOthers, streamLive: holdStreamLive } = useSegmentHold({
     jobId: jid,
     translationId: activeTranslationId ?? null,
@@ -1073,52 +1109,6 @@ export default function CATEditor() {
   })
   const activeRowHeld = activeTranslationId != null && heldByOthers.has(activeTranslationId)
 
-  const spellFixActions = useMemo<SpellFixActions>(() => ({
-    // The server writes through a lock for owners and admins only — the same
-    // tier that may unlock — so both spell check surfaces offer the all scope
-    // to them alone.
-    canWriteLocked: isAdmin,
-    counts: word => countScope(translations ?? [], word),
-
-    applyScope: async (word, replacement, scope: SpellFixScope) => {
-      const targets = selectScopeTargets(translations ?? [], word, scope, activeTranslationId)
-      if (targets.length === 0) return 0
-
-      // Synthesize one finding per whole-word occurrence and reuse the same
-      // tag-safe builder the review flow uses, rather than hand-rolling string
-      // surgery over rich text here.
-      const errors: SpellError[] = []
-      for (const t of targets) {
-        for (const offset of wordOffsets(t.active_text ?? '', word)) {
-          errors.push({
-            translationId: t.id,
-            segmentId: 0,
-            segmentIndex: -1,
-            offset,
-            length: word.length,
-            word,
-            message: '',
-            suggestions: [replacement],
-            ruleCategory: '',
-          })
-        }
-      }
-
-      return applySpellFixes(errors, replacement, scopeIncludesLocked(scope))
-    },
-
-    ignoreInProject: async word => {
-      if (!job?.project_id || !job?.target_language) return false
-      try {
-        await addSpellcheckDictionaryWord(job.project_id, job.target_language, word)
-        toast.success(`"${word}" added to the project dictionary`)
-        return true
-      } catch (err) {
-        toast.error(errorText(err, `Could not save "${word}"`))
-        return false
-      }
-    },
-  }), [isAdmin, translations, activeTranslationId, applySpellFixes, job?.project_id, job?.target_language])
 
   // Click outside active segment → deactivate.
   // Route through `switchActiveSegment(null)` so the flush-on-transition
@@ -1162,7 +1152,7 @@ export default function CATEditor() {
   return (
     <TooltipProvider delay={200}>
       {/* data-hold-stream says whether other editors' holds arrive live or by poll. */}
-      <PageContainer width="full" className="max-md:min-w-3xl" data-hold-stream={holdStreamLive ? 'live' : 'polling'}>
+      <PageContainer width="full" className={cn('max-md:min-w-3xl', LEVERAGE_BAR_CLEARANCE)} data-hold-stream={holdStreamLive ? 'live' : 'polling'}>
         <Breadcrumbs
           items={[
             { label: 'Projects', to: '/projects' },
@@ -1230,7 +1220,7 @@ export default function CATEditor() {
         <div className="flex items-center justify-between gap-y-2 flex-wrap mb-4">
           <div className="flex items-center gap-3">
             {runningBadge && (
-              <Chip color={runningBadge.color} className="animate-pulse">
+              <Chip color={runningBadge.color} className="animate-pulse" title={runningBadge.detail}>
                 {runningBadge.label}
               </Chip>
             )}
@@ -1251,7 +1241,7 @@ export default function CATEditor() {
             {/* hideComplete: "Complete step →" / "Complete final step ✓" on
                 the breadcrumb line is this screen's completion control, so the
                 per-job Complete would be a second button with the same meaning. */}
-            {job && <JobPipelineActions job={job} projectId={pid} inFirstStep={inFirstStep} canEdit={canEdit} hideComplete />}
+            {job && <JobPipelineActions job={job} projectId={pid} inFirstStep={inFirstStep} inClearWindow={taskInClearWindow} canEdit={canEdit} hideComplete />}
             <Tooltip>
               {/* preventDefault stops the browser collapsing the segment-list
                   selection, so the highlight stays visible while the modal opens.
@@ -1285,20 +1275,32 @@ export default function CATEditor() {
                 Review spelling one error at a time, with replace all and ignore all
               </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger render={
-                <Button
-                  data-testid="run-qa-btn"
-                  onClick={() => runQAMut.mutate()}
-                  disabled={runQAMut.isPending || !job || job.counts.total === 0}
-                  variant="outline"
-                  size="sm"
-                />
-              }>
-                {qaButtonLabel(runQAMut.isPending, qaReport?.summary)}
-              </TooltipTrigger>
-              <TooltipContent>Run quality checks on all segments (tags, numbers, terminology, punctuation)</TooltipContent>
-            </Tooltip>
+            {qaReport?.profile_assigned === false ? (
+              <Button
+                data-testid="run-qa-btn"
+                disabled
+                disabledReason={NO_QA_PROFILE_REASON}
+                variant="outline"
+                size="sm"
+              >
+                {qaButtonLabel(false, qaReport.summary)}
+              </Button>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={
+                  <Button
+                    data-testid="run-qa-btn"
+                    onClick={() => runQAMut.mutate()}
+                    disabled={runQAMut.isPending || !job || job.counts.total === 0}
+                    variant="outline"
+                    size="sm"
+                  />
+                }>
+                  {qaButtonLabel(runQAMut.isPending, qaReport?.summary)}
+                </TooltipTrigger>
+                <TooltipContent>Run quality checks on all segments (tags, numbers, terminology, punctuation)</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </div>
 
@@ -1332,13 +1334,19 @@ export default function CATEditor() {
               It unlocks automatically as soon as the step completes.
             </div>
           </div>
+        ) : editorIndex.error ? (
+          // Without the index there is no grid to show; an empty one would
+          // read as a file with no segments.
+          <LoadFailed what="segments" error={editorIndex.error} onRetry={() => void editorIndex.refetch()} />
         ) : (
           <>
           {/* Progress bar */}
-          {translations && translations.length > 0 && (() => {
-            const approved = translations.filter(t => t.status === 'approved' || t.status === 'auto_approved').length
-            const pct = Math.round((approved / translations.length) * 100)
-            const summary = `${pct}% approved (${approved}/${translations.length})`
+          {indexRowByTranslation.size > 0 && (() => {
+            // Approved and auto-approved: every translation Complete step would not count.
+            const total = indexRowByTranslation.size
+            const approved = total - unapproved.drafts - unapproved.untranslated
+            const pct = Math.round((approved / total) * 100)
+            const summary = `${pct}% approved (${approved}/${total})`
             return (
               <Progress
                 value={pct}
@@ -1354,6 +1362,8 @@ export default function CATEditor() {
 
           <SegmentFilterBar
             filters={segmentFilters}
+            searchInputRef={segmentSearchRef}
+            searchState={searchState}
             onChange={setSegmentFilters}
             totalCount={segmentCount}
             filteredCount={filteredCount}
@@ -1363,10 +1373,45 @@ export default function CATEditor() {
             statusCounts={statusCounts}
             actions={
               <>
+                {hasPreviousStep ? (
+                  <Tooltip>
+                    <TooltipTrigger render={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        aria-label="Track changes"
+                        aria-pressed={showTrackChanges}
+                        onClick={() => {
+                          setTrackChanges(v => {
+                            const next = !v
+                            try { localStorage.setItem('cat-track-changes', String(next)) } catch { /* storage blocked */ }
+                            return next
+                          })
+                        }}
+                      />
+                    }>
+                      <FileDiff className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent>{`Track changes: mark what changed since ${previousStepName ?? 'the previous step'}`}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    aria-label="Track changes"
+                    disabled
+                    disabledReason="Track changes: available once a workflow step is finished"
+                  >
+                    <FileDiff className="size-3.5" />
+                  </Button>
+                )}
                 <Tooltip>
                   <TooltipTrigger render={
                     <Button
-                      variant={showWhitespace ? 'default' : 'outline'}
+                      variant="outline"
+                      aria-pressed={showWhitespace}
                       size="sm"
                       className="h-7 text-xs font-mono"
                       onClick={() => {
@@ -1393,12 +1438,15 @@ export default function CATEditor() {
               projectId={pid}
               picked={selection.picked}
               selectedCount={selection.selected.size}
-              translationsById={translationsById}
+              translationsById={indexRowByTranslation}
               canConfirm={canEdit}
               canLock={canEdit && isManager}
               canUnlock={canEdit}
-              canClear={canEdit && isManager && inFirstStep}
+              canClear={canEdit && taskInClearWindow}
               canPretranslate={canEdit && inFirstStep && job.pipeline_status !== 'failed' && !isPipelineRunning(job)}
+              qaDisabledReason={qaReport?.profile_assigned === false ? NO_QA_PROFILE_REASON : undefined}
+              onJoin={canEdit ? () => void joinSelection() : undefined}
+              joinRefusal={joinRefusal(rows, pickedRows)}
               beforeRun={() => switchActiveSegment(null)}
               onSpellCheck={() => { setSpellCheckScope('selected'); setSpellCheckOpen(true) }}
               onFindReplace={() => { setFindInSelection(true); setFindReplaceOpen(true) }}
@@ -1427,18 +1475,13 @@ export default function CATEditor() {
                 initialInSelection={findInSelection}
                 canReplaceLocked={isAdmin}
               />
-              {/* pb-10 reserves ~40px so the last segment row can scroll past
-                  the fixed JobLeverageStatusBar (~24-28px tall) at the
-                  viewport bottom. Without this, the user can't see the last
-                  segment fully — the bar overlays its bottom half even at
-                  max scroll. */}
-              <div ref={segmentScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-10" style={segmentColumnsStyle({ statusWidth, extrasWidth, widths: columnDrag.widths })}>
+              <div ref={segmentScrollRef} data-testid="segment-grid" className="flex-1 overflow-y-auto overflow-x-hidden" style={segmentColumnsStyle({ extrasWidth, widths: columnDrag.widths, overlayScrollbar })}>
               {/* Header is a sticky row INSIDE the scroll container so it shares
                   the same scrollbar-reduced width as the body rows (see
                   headerHeight/scrollMargin above). z-20 keeps it above the
                   active row (zIndex 10); its background is opaque so rows scroll
                   cleanly beneath it. */}
-              <div ref={headerRef} className={`${SEGMENT_GRID_COLS} sticky top-0 z-20 bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider`}>
+              <div ref={headerRef} className={`${SEGMENT_GRID_COLS} sticky top-0 z-20 ${tableHeaderRowClass}`}>
                 {SEGMENT_HEADER_CELLS.map((cell, i) => (
                   <div
                     key={i}
@@ -1447,15 +1490,15 @@ export default function CATEditor() {
                       cell.className,
                       // A visible line on every draggable border, like the
                       // project Tasks tab's header.
-                      i < SEGMENT_HEADER_CELLS.length - 1 && 'border-r border-gray-200 dark:border-gray-700',
+                      i < lastHeader && 'border-r border-gray-200 dark:border-gray-700',
                     )}
                   >
                     {i === 0 ? (
                       <SelectAllHeader state={selection.header} onToggle={selection.toggleAll} disabled={orderedTranslationIds.length === 0} />
                     ) : cell.label}
-                    {/* The border after every column but the last: drag to
-                        move it, double-click to restore the default widths. */}
-                    {i < SEGMENT_HEADER_CELLS.length - 1 && (
+                    {/* The border after every visible column but the last: drag
+                        to move it, double-click to restore the default widths. */}
+                    {i < lastHeader && isResizableBorder(i, extrasWidth > 0) && (
                       <ColumnResizeHandle
                         active={columnDrag.dragging === i}
                         onPointerDown={columnDrag.startDrag(i)}
@@ -1469,12 +1512,15 @@ export default function CATEditor() {
               </div>
               <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
-                  const actualIdx = filteredIndices[virtualRow.index]
-                  const seg = segments![actualIdx]
-                  const idx = actualIdx
+                  const idx = filteredIndices[virtualRow.index]
+                  const indexRow = rows[idx]
+                  const loaded = rowAt(idx)
+                  const seg = loaded?.segment
+                  const translation = loaded?.translation ?? undefined
+                  const tid = indexRow.translationId ?? -1
                   return (
                     <div
-                      key={seg.id}
+                      key={indexRow.segmentId}
                       // Dynamic measurement. `estimateSize` is only a
                       // first guess; multi-line rows grow past it, so ref +
                       // data-index opt the row into TanStack Virtual's
@@ -1498,11 +1544,10 @@ export default function CATEditor() {
                       // Cmd/Ctrl+click adds the row to the selection (or takes
                       // it out) instead of opening it.
                       onClickCapture={(e) => {
-                        const tid = translationMap.get(seg.id)?.id
-                        if (tid == null || !isSelectToggleClick(e)) return
+                        if (indexRow.translationId == null || !isSelectToggleClick(e)) return
                         e.preventDefault()
                         e.stopPropagation()
-                        selection.toggle(tid)
+                        selection.toggle(indexRow.translationId)
                       }}
                       style={{
                         position: 'absolute',
@@ -1517,24 +1562,35 @@ export default function CATEditor() {
                         zIndex: activeSegmentIdx === idx ? 10 : 0,
                       }}
                     >
+                      {!seg ? <SegmentRowPlaceholder number={segmentNumber(rows[idx])} /> : (
                       <SegmentRow
                         segment={seg}
-                        translation={translationMap.get(seg.id)}
-                        index={idx + 1}
+                        translation={translation}
+                        number={segmentNumber(rows[idx])}
+                        onSplit={activeSegmentIdx === idx && canEdit && tid > 0
+                          ? (offset, version) => splitJoin.split.mutate({ translation_id: tid, offset, expected_updated_at: version })
+                          : undefined}
+                        onJoinNext={activeSegmentIdx === idx && canEdit && tid > 0 && joinsWithNext(rows, idx)
+                          ? version => splitJoin.joinTranslations([tid, rows[idx + 1].translationId ?? 0], { [tid]: version })
+                          : undefined}
                         jobId={jid}
                         fileId={job?.file_id ?? 0}
                         projectId={job?.project_id ?? null}
                         targetLanguage={job?.target_language ?? ''}
                         sourceLanguage={job?.source_language ?? ''}
                         isActive={activeSegmentIdx === idx}
-                        onActivate={() => void switchActiveSegment(idx)}
-                        onNavigate={(dir) => {
+                        // virtualRow.start counts from the top of the scroll
+                        // content, header included: the row's top below the
+                        // header's bottom edge.
+                        actionsBelow={activeSegmentIdx === idx && virtualRow.start - (rowVirtualizer.scrollOffset ?? 0) - headerHeight < ACTION_BAR_REACH}
+                        onActivate={caret => void switchActiveSegment(idx, { caret })}
+                        onNavigate={(dir, caret) => {
                           // Navigate within filtered results
                           const pos = filteredIndices.indexOf(idx)
                           if (pos === -1) return
-                          if (dir === 'next') goToSegment(pos + 1)
-                          else goToSegment(pos - 1)
+                          goToSegment(dir === 'next' ? pos + 1 : pos - 1, caret)
                         }}
+                        entryCaret={entryCaret?.idx === idx ? entryCaret.caret : undefined}
                         // Escape is the ONLY transition that discards (no flush).
                         // Every other path routes through switchActiveSegment(...) without `discard`.
                         onDeactivate={() => void switchActiveSegment(null, { discard: true })}
@@ -1544,7 +1600,8 @@ export default function CATEditor() {
                         insertRef={activeSegmentIdx === idx ? activeInsertRef : undefined}
                         flushDraftRef={activeSegmentIdx === idx ? flushDraftRef : undefined}
                         readOnly={!canEdit}
-                        qaIssues={translationMap.get(seg.id)?.id ? qaResultsByTranslation.get(translationMap.get(seg.id)!.id) ?? [] : []}
+                        pretranslating={pipelineRunning}
+                        qaIssues={qaResultsByTranslation.get(tid) ?? NO_ISSUES}
                         showWhitespace={showWhitespace}
                         refTerms={refTerms}
                         spellCheck
@@ -1552,22 +1609,24 @@ export default function CATEditor() {
                         findHighlightTerm={findHighlightTerm}
                         tmDiffReference={activeSegmentIdx === idx ? tmDiffReference : undefined}
                         currentUserId={currentUserId}
-                        isAdmin={isAdmin}
-                        canLock={canEdit && isManager}
-                        inFirstStep={inFirstStep}
-                        isRepetition={repetitionSegmentIds.has(seg.id)}
-                        isRepetitionSource={repetitionSourceIds.has(seg.id)}
-                        commentCount={commentCountByTranslation.get(translationMap.get(seg.id)?.id ?? -1) ?? 0}
-                        isSelected={selection.selected.has(translationMap.get(seg.id)?.id ?? -1)}
+                        inClearWindow={taskInClearWindow}
+                        isRepetition={indexRow.repetition === REPETITION_REPEAT}
+                        isRepetitionSource={indexRow.repetition === REPETITION_SOURCE}
+                        commentCount={commentCountByTranslation.get(tid) ?? 0}
+                        isSelected={selection.selected.has(tid)}
                         onSelectClick={selection.onCheckboxClick}
-                        heldByName={heldByOthers.get(translationMap.get(seg.id)?.id ?? -1) ?? null}
-                        autoApprovedBeforeStep={autoApprovedBefore.has(translationMap.get(seg.id)?.id ?? -1)}
-                        predictedBeforeStep={predictedBeforeStep.has(translationMap.get(seg.id)?.id ?? -1)}
+                        heldByName={heldByOthers.get(tid) ?? null}
+                        autoApprovedBeforeStep={autoApprovedBefore.has(tid)}
+                        predictedBeforeStep={predictedBeforeStep.has(tid)}
+                        trackChanges={showTrackChanges}
+                        trackChangesFrom={showTrackChanges ? loaded?.previous_step_text ?? null : null}
+                        placeables={loaded?.placeables}
                         plainText={plainTextFile}
                         onQARefresh={(translationId, issues) => {
                           void patchQAReport(queryClient, qaReportKey, translationId, issues)
                         }}
                       />
+                      )}
                     </div>
                   )
                 })}
@@ -1610,6 +1669,7 @@ export default function CATEditor() {
                 onJumpToReference={refKey => void jumpToReference(refKey)}
                 onInsertMatch={handleSidebarInsert}
                 plainText={plainTextFile}
+                onAddTerm={quickAddOpen ? openQuickAddTerm : undefined}
                 onTermClick={handleTermClick}
                 onTermHover={handleTermHover}
                 onClose={handleSidebarClose}
@@ -1665,9 +1725,7 @@ export default function CATEditor() {
         spellFixActions={spellFixActions}
         segmentIds={spellSegmentIds}
         filteredIndices={filteredIndices}
-        translationBySegment={translationMap}
-        textFor={id => translationById.get(id)?.active_text ?? ''}
-        sourceTextFor={id => sourceTextBySegment.get(id) ?? ''}
+        translationBySegment={spellRowsBySegment}
         filterActive={isFilterActive(segmentFilters)}
         selectedIds={pickedSet}
         initialScope={spellCheckScope}
@@ -1698,6 +1756,21 @@ export default function CATEditor() {
         initialQuery={concordanceQuery}
       />
 
+      {job && (
+        <QuickAddTermDialog
+          open={quickAddTerm !== null}
+          onClose={() => {
+            setQuickAddTerm(null)
+            activeInsertRef.current.clearSourceSelection?.()
+          }}
+          jobId={jid}
+          projectId={job.project_id}
+          isManager={isManager}
+          initialSource={quickAddTerm?.source ?? ''}
+          initialTarget={quickAddTerm?.target ?? ''}
+        />
+      )}
+
       {/* Jump-to-segment dialog (Ctrl+G) */}
       <Dialog open={jumpOpen} onOpenChange={setJumpOpen}>
         <DialogContent className="sm:max-w-xs">
@@ -1706,24 +1779,29 @@ export default function CATEditor() {
           </DialogHeader>
           <form onSubmit={(e) => {
             e.preventDefault()
-            const num = parseInt(jumpInput)
-            if (num >= 1 && num <= segmentCount) {
-              goToSegment(num - 1)
-              setJumpOpen(false)
+            // The number the grid shows ("12", or "12.1" for a piece of a
+            // split), also with a filter on.
+            const typed = jumpInput.trim()
+            const idx = rowForNumber(rows, typed)
+            if (idx === undefined) {
+              toast.info(`There is no segment ${typed}.`)
+              return
             }
+            setJumpOpen(false)
+            void scrollToRow(idx).then(shown => {
+              if (!shown) toast.info(`Segment ${typed} is hidden by the filter.`)
+            })
           }}>
             <Input
-              type="number"
-              min={1}
-              max={segmentCount}
+              inputMode="decimal"
               value={jumpInput}
               onChange={(e) => setJumpInput(e.target.value)}
-              placeholder={`1–${segmentCount}`}
+              placeholder={rows.length > 0 ? `1–${segmentNumber(rows[rows.length - 1])}` : ''}
               autoFocus
               className="mb-3"
             />
             <div className="flex justify-end">
-              <Button type="submit" size="sm" disabled={!jumpInput || parseInt(jumpInput) < 1 || parseInt(jumpInput) > segmentCount}>
+              <Button type="submit" size="sm" disabled={!jumpInput.trim()}>
                 Go
               </Button>
             </div>
@@ -1758,14 +1836,17 @@ export default function CATEditor() {
         />
       )}
 
-      {/* Always-visible live leverage breakdown. Fixed to the viewport
-          bottom, VSCode-style;
-          the outer editor div doesn't need extra padding because the bar
-          is below the segment scroll container. */}
-      <JobLeverageStatusBar jobId={jid} localRepetitionStats={repetitionStats} segmentCount={segmentCount} wordCount={job?.word_count ?? 0} />
+      {/* Always-visible live leverage breakdown, fixed to the viewport
+          bottom, VSCode-style. The page's LEVERAGE_BAR_CLEARANCE keeps
+          everything above it. */}
+      <JobLeverageStatusBar jobId={jid} localRepetitionStats={editorIndex.repetitionStats} segmentCount={segmentCount} wordCount={job?.word_count ?? 0} />
     </TooltipProvider>
   )
 }
+
+// How far the open row's action bar reaches above the row: half its height
+// (SegmentRowActionBar, h-4), as it sits centred on its box's top border.
+const ACTION_BAR_REACH = 8
 
 // Header cells, in SEGMENT_GRID_COLS order. Match, Status and the unlabelled
 // extras column use px-2, like their body cells.
@@ -1774,9 +1855,13 @@ const SEGMENT_HEADER_CELLS = [
   { label: 'Source', className: 'px-3 py-2' },
   { label: 'Translation', className: 'px-3 py-2' },
   { label: 'Match', className: 'px-2 py-2 text-center' },
-  { label: 'Status', className: 'px-2 py-2' },
+  { label: <span className="sr-only">Status</span>, className: 'px-2 py-2' },
   { label: null, className: '' },
 ]
+
+// The last header with text. The unlabelled extras column after it shows only
+// when some row has a lock, QE, QA or comment.
+const LAST_LABELLED_HEADER = SEGMENT_HEADER_CELLS.reduce((last, cell, i) => (cell.label ? i : last), 0)
 
 /** Cmd+click (Mac) / Ctrl+click elsewhere, outside the open editor's text. */
 function isSelectToggleClick(e: ReactMouseEvent): boolean {
@@ -1806,19 +1891,24 @@ function KeyboardShortcutsButton() {
     { keys: `${modKey}+Enter`, desc: 'Confirm segment & go to next' },
     { keys: 'Tab', desc: 'Next segment (without confirming)' },
     { keys: 'Shift+Tab', desc: 'Previous segment' },
+    { keys: '↓ / ↑', desc: 'Next / previous segment, from the last / first line' },
     { keys: 'Shift+Enter', desc: 'Line break inside the segment' },
     { keys: 'Escape', desc: 'Exit editing' },
     { keys: `${modKey}+Z`, desc: 'Undo' },
     { keys: `${modKey}+Shift+S`, desc: 'Copy source to target' },
     { keys: `${modKey}+G`, desc: 'Jump to segment #' },
     { keys: `${modKey}+K`, desc: 'Concordance search — looks up the selected phrase' },
+    { keys: `${modKey}+F`, desc: 'Search all segments' },
     { keys: `${modKey}+H`, desc: 'Find and replace' },
     { keys: `${modKey}+B`, desc: 'Bold' },
     { keys: `${modKey}+I`, desc: 'Italic' },
     { keys: `${modKey}+1..5`, desc: 'Insert TM match #1–5' },
-    { keys: 'F8', desc: 'Insert next missing source tag' },
-    { keys: 'Alt+F8', desc: 'Insert all missing source tags' },
+    { keys: 'F8', desc: 'Insert next missing tag, placeable (number, URL, variable…) or term' },
+    { keys: 'Alt+F8', desc: 'Insert all missing tags, placeables and terms' },
     { keys: `${modKey}+Shift+Backspace`, desc: 'Clear translation' },
+    { keys: 'Alt+Shift+T', desc: 'Split the segment where you clicked in the source' },
+    { keys: 'Alt+Shift+J', desc: 'Join with the next sentence or piece' },
+    { keys: 'Alt+Shift+G', desc: 'Add the selected words to the term base' },
     { keys: `${modKey}+Click`, desc: 'Add segment to selection, or remove it' },
     { keys: 'Shift+Click #', desc: 'Select a range of segments' },
     { keys: 'Escape', desc: 'Clear selection (when not editing)' },
@@ -1842,11 +1932,11 @@ function KeyboardShortcutsButton() {
         </TooltipTrigger>
         <TooltipContent>Keyboard shortcuts</TooltipContent>
       </Tooltip>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3 mt-2">
+        <div className="-mx-1 mt-2 min-h-0 flex-1 space-y-3 overflow-y-auto px-1" data-testid="keyboard-shortcuts-list">
           {shortcuts.map(s => (
             <div key={s.keys} className="flex items-center justify-between">
               <span className="text-sm text-gray-600 dark:text-gray-400">{s.desc}</span>

@@ -1,5 +1,11 @@
 package parser
 
+import (
+	"fmt"
+
+	"openloc/internal/segmentation"
+)
+
 // The strings of a JSON i18n, PO/POT, TXT or XLSX file are HTML or plain
 // text, as the "Strings contain HTML" setting says. HTML strings get chips on
 // import and keep only the source's tags on export; a plain-text string is
@@ -72,17 +78,45 @@ func TextFormatTranslation(text, rich string, inlineHTML bool) string {
 // stored on the file row.
 type ParseOptions struct {
 	InlineHTML bool
+	// Segmenter splits prose blocks into sentences; nil uses the conservative
+	// built-in set (segmentation.ConservativeID).
+	Segmenter *segmentation.Segmenter
 	// XLSXLayout is the uploader's column layout of a workbook; nil reads an
 	// Excel file by its row 1.
 	XLSXLayout *XLSXLayout
 }
 
-// GetParserWith is GetParserFor that also applies an Excel column layout.
+// GetParserWith is GetParserFor that also applies an Excel column layout and
+// the file's segmentation rules.
 func GetParserWith(format string, o ParseOptions) (Parser, error) {
 	if format == "xlsx" && o.XLSXLayout != nil {
 		return XLSX{PlainText: !o.InlineHTML, Layout: o.XLSXLayout}, nil
 	}
-	return GetParserFor(format, o.InlineHTML)
+	p, err := GetParserFor(format, o.InlineHTML)
+	if err != nil {
+		return nil, err
+	}
+	return withSegmenter(p, o.Segmenter), nil
+}
+
+// withSegmenter returns p splitting sentences with seg, for the parsers that
+// split; nil keeps the conservative default.
+func withSegmenter(p Parser, seg *segmentation.Segmenter) Parser {
+	if seg == nil {
+		return p
+	}
+	switch v := p.(type) {
+	case sentenceSegmenter:
+		v.seg = seg
+		return v
+	case XML:
+		v.Segmenter = seg
+		return v
+	case PPTX:
+		v.Segmenter = seg
+		return v
+	}
+	return p
 }
 
 // FileXLSXLayout decodes the layout stored on a file row; nil when none.
@@ -91,4 +125,21 @@ func FileXLSXLayout(raw []byte) (*XLSXLayout, error) {
 		return nil, nil
 	}
 	return ParseXLSXLayout(raw)
+}
+
+// FileOptions are the ParseOptions a stored file is parsed with again: its
+// strings mode, its Excel layout (FileXLSXLayout) and the segmentation
+// snapshot it was imported with (nil or JSON null: the conservative built-in
+// set). Every re-parse of a stored file goes through here, so it splits
+// exactly as it did on import.
+func FileOptions(inlineHTML bool, xlsxLayout, segmentationSnapshot []byte) (ParseOptions, error) {
+	layout, err := FileXLSXLayout(xlsxLayout)
+	if err != nil {
+		return ParseOptions{}, fmt.Errorf("read stored xlsx layout: %w", err)
+	}
+	seg, err := segmentation.ForSnapshot(segmentationSnapshot)
+	if err != nil {
+		return ParseOptions{}, err
+	}
+	return ParseOptions{InlineHTML: inlineHTML, XLSXLayout: layout, Segmenter: seg}, nil
 }

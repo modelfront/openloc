@@ -1,4 +1,4 @@
-import { useMemo, useRef, type CSSProperties, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useRef, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { flushSync } from 'react-dom'
 import {
   type ColumnDef,
@@ -11,9 +11,12 @@ import {
 } from '@tanstack/react-table'
 
 import { cn } from '@/lib/utils'
-import { ArrowDown, ArrowUp } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import { Button } from './button'
 import { ColumnResizeHandle } from './column-resize-handle'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip'
+import { usePageRowVirtualizer } from './use-page-row-virtualizer'
+import { tableHeaderRowClass } from '@/components/list/list-row'
 
 /**
  * Optional `meta` on a column. `onCellClick` / `onHeaderClick` make the whole
@@ -28,11 +31,66 @@ export interface DataTableColumnMeta<TData> {
    *  query that drops a low-priority column when the table is narrow. */
   className?: string
   /**
-   * The list is sorted by this column, in `direction`: the header becomes a
-   * button with an arrow that calls `onToggle`, and carries `aria-sort`. The
-   * caller sorts the data (usually on the server, since lists load in pages).
+   * The column is sortable: its header becomes a button that calls `onToggle`
+   * with whether Shift was held. `direction` is how the list is sorted by this
+   * column, or null when it is not: then the button shows a faint two-way
+   * arrow. In a sort of several levels, `rank` (1, 2, …) is this column's
+   * place, shown next to the arrow; only the first level carries `aria-sort`.
+   * `hint` is the button's tooltip. `arrow` overrides the arrow `direction`
+   * implies, for a list whose columns each start in a natural order: down for
+   * that order, up for its reverse. The caller sorts the data (usually on the
+   * server, since lists load in pages).
    */
-  sort?: { direction: 'asc' | 'desc'; onToggle: () => void }
+  sort?: SortMeta
+}
+
+export interface SortMeta {
+  direction: 'asc' | 'desc' | null
+  rank?: number
+  hint?: string
+  arrow?: 'down' | 'up'
+  onToggle: (shift: boolean) => void
+}
+
+const ORDINALS = ['1st', '2nd', '3rd']
+
+/** A sortable column's header: the label, the arrow, and the level's rank. */
+function SortButton({ sort, id, children }: { sort: SortMeta; id: string; children: ReactNode }) {
+  const arrow = sort.direction && (sort.arrow ?? (sort.direction === 'desc' ? 'down' : 'up'))
+  const Arrow = arrow === 'down' ? ArrowDown : arrow === 'up' ? ArrowUp : ArrowUpDown
+  const button = (
+    <Button variant="ghost" size="xs" data-testid={`sort-${id}`}
+      className="-mx-2 font-medium uppercase tracking-wider text-inherit"
+      // Shift+click must not select the header text.
+      onMouseDown={e => { if (e.shiftKey) e.preventDefault() }}
+      onClick={e => sort.onToggle(e.shiftKey)}>
+      {children}
+      <Arrow className={cn(!sort.direction && 'opacity-40')} aria-hidden />
+      {sort.rank && sort.direction && (
+        <span className="text-[10px] tabular-nums" data-testid={`sort-rank-${id}`}>
+          <span aria-hidden>{sort.rank}</span>
+          <span className="sr-only">
+            sorted {ORDINALS[sort.rank - 1] ?? sort.rank}, {sort.direction === 'desc' ? 'descending' : 'ascending'}
+          </span>
+        </span>
+      )}
+    </Button>
+  )
+  if (!sort.hint) return button
+  return (
+    <TooltipProvider delay={200}>
+      <Tooltip>
+        <TooltipTrigger render={button} />
+        <TooltipContent>{sort.hint}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+/** aria-sort goes on one header: the column the list is first sorted by. */
+function ariaSort(sort: SortMeta | undefined): 'ascending' | 'descending' | undefined {
+  if (!sort?.direction || (sort.rank ?? 1) !== 1) return undefined
+  return sort.direction === 'desc' ? 'descending' : 'ascending'
 }
 
 const cellClickHandler = (run: (() => void) | undefined) => run && ((e: React.MouseEvent) => {
@@ -48,8 +106,12 @@ interface DataTableProps<TData, TValue> {
   emptyMessage?: string
   /** Optional: className for the wrapper */
   className?: string
-  /** Optional: row click handler */
-  onRowClick?: (row: TData) => void
+  /** Optional: row click handler. It gets the event too, for a click with a
+   *  modifier key (see openRowLink). */
+  onRowClick?: (row: TData, event: React.MouseEvent) => void
+  /** Optional: a middle click on a row, outside its links and controls — for a
+   *  row that opens a page, the new tab a link would open (see openRowLink). */
+  onRowAuxClick?: (row: TData, event: React.MouseEvent) => void
   /** Optional: className per row (e.g., for hover group). Merged last, so a
    *  row that owns its background (and hover) overrides the default grey hover. */
   rowClassName?: string | ((row: TData) => string)
@@ -69,6 +131,13 @@ interface DataTableProps<TData, TValue> {
    */
   columnSizing?: ColumnSizingState
   onColumnSizingChange?: Dispatch<SetStateAction<ColumnSizingState>>
+  /**
+   * Optional: mount only the rows near the screen, for a long table that
+   * grows the page (it scrolls with its nearest scrolling ancestor, not in a
+   * box of its own). Every row is `rowHeight` px tall, so the rows' content
+   * must fit one line.
+   */
+  virtualRows?: { rowHeight: number }
 }
 
 /**
@@ -132,11 +201,13 @@ export function DataTable<TData, TValue>({
   emptyMessage = 'No data.',
   className = '',
   onRowClick,
+  onRowAuxClick,
   rowClassName,
   rowTestId,
   meta,
   columnSizing,
   onColumnSizingChange,
+  virtualRows,
 }: DataTableProps<TData, TValue>) {
   const boxRef = useRef<HTMLDivElement>(null)
   const sizing = columnSizing ?? {}
@@ -164,6 +235,16 @@ export function DataTable<TData, TValue>({
     }),
   })
 
+  const rows = table.getRowModel().rows
+  const virtualizer = usePageRowVirtualizer(boxRef, rows.length, virtualRows?.rowHeight)
+  const items = virtualizer?.getVirtualItems()
+  const padTop = items?.length ? items[0].start : 0
+  const padBottom = items?.length ? virtualizer!.getTotalSize() - items[items.length - 1].end : 0
+  const shown = items ? items.map(i => ({ row: rows[i.index], index: i.index })) : rows.map((row, index) => ({ row, index }))
+  const spacer = (height: number) => height > 0 && (
+    <tr aria-hidden style={{ height }}><td colSpan={columns.length} className="p-0" /></tr>
+  )
+
   return (
     // On a phone, narrower than what its columns need, the table scrolls sideways
     // inside its box instead of squeezing the columns over each other.
@@ -176,7 +257,7 @@ export function DataTable<TData, TValue>({
           {table.getHeaderGroups().map(headerGroup => (
             <tr
               key={headerGroup.id}
-              className="bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+              className={tableHeaderRowClass}
             >
               {headerGroup.headers.map(header => {
                 const colMeta = header.column.columnDef.meta as DataTableColumnMeta<TData> | undefined
@@ -193,15 +274,13 @@ export function DataTable<TData, TValue>({
                       colMeta?.className,
                     )}
                     style={{ width: flexible ? undefined : header.getSize() }}
-                    aria-sort={colMeta?.sort ? (colMeta.sort.direction === 'desc' ? 'descending' : 'ascending') : undefined}
+                    aria-sort={ariaSort(colMeta?.sort)}
                     onClick={cellClickHandler(onHeaderClick && (() => onHeaderClick(table)))}
                   >
                     {header.isPlaceholder ? null : colMeta?.sort ? (
-                      <Button variant="ghost" size="xs" onClick={colMeta.sort.onToggle} data-testid={`sort-${id}`}
-                        className="-mx-2 font-medium uppercase tracking-wider text-inherit">
+                      <SortButton sort={colMeta.sort} id={id}>
                         {flexRender(header.column.columnDef.header, header.getContext())}
-                        {colMeta.sort.direction === 'desc' ? <ArrowDown /> : <ArrowUp />}
-                      </Button>
+                      </SortButton>
                     ) : flexRender(header.column.columnDef.header, header.getContext())}
                     {header.column.getCanResize() && (
                       <ColumnResizeHandle
@@ -231,24 +310,31 @@ export function DataTable<TData, TValue>({
           ))}
         </thead>
         <tbody>
-          {table.getRowModel().rows.length === 0 ? (
+          {rows.length === 0 ? (
             <tr>
               <td colSpan={columns.length} className="text-center py-8 text-sm text-gray-400 dark:text-gray-500">
                 {emptyMessage}
               </td>
             </tr>
-          ) : (
-            table.getRowModel().rows.map(row => {
+          ) : (<>
+            {spacer(padTop)}
+            {shown.map(({ row, index }) => {
               const rClassName = typeof rowClassName === 'function' ? rowClassName(row.original) : rowClassName
               return (
                 <tr
                   key={row.id}
+                  data-index={virtualizer ? index : undefined}
+                  style={virtualRows && { height: virtualRows.rowHeight }}
                   className={cn(
                     'border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800',
                     onRowClick && 'cursor-pointer',
                     rClassName,
                   )}
-                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onClick={onRowClick ? e => onRowClick(row.original, e) : undefined}
+                  onAuxClick={onRowAuxClick ? e => {
+                    if (e.button !== 1 || (e.target as HTMLElement).closest('a, button, input, label')) return
+                    onRowAuxClick(row.original, e)
+                  } : undefined}
                   data-testid={rowTestId?.(row.original)}
                 >
                   {row.getVisibleCells().map(cell => {
@@ -266,8 +352,9 @@ export function DataTable<TData, TValue>({
                   })}
                 </tr>
               )
-            })
-          )}
+            })}
+            {spacer(padBottom)}
+          </>)}
         </tbody>
       </table>
     </div>

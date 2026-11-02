@@ -1,16 +1,18 @@
-import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { listProjects, listTemplates, listJobs, getProjectSettings, getMe, updateProjectMetadata, listLabels, listProjectLabels, setProjectLabels, type ProjectStatus } from '../api'
+import { getProject, listTemplates, getProjectSettings, getMe, updateProjectMetadata, listLabels, listProjectLabels, setProjectLabels, type ProjectStatus } from '../api'
 import { toast } from 'sonner'
 import { queryKeys } from '../lib/query-keys'
 import { projectCacheKeys } from '../lib/query-invalidation'
 import { useUploadQueue, type LayoutAnswer } from '../hooks/useUploadQueue'
 import { usePageTitle } from '../hooks/usePageTitle'
+import { useProjectJobs } from '../hooks/useProjectJobs'
 import { isAdminRole, isManagerRole } from '../lib/roles'
-import { isPipelineRunning } from '../lib/project-logic'
 import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import { PageContainer } from '@/components/layout/PageContainer'
+import { FileDropOverlay } from '@/components/ui/file-drop-overlay'
+import { useFileDrop } from '@/hooks/useFileDrop'
 import { Breadcrumbs } from '@/components/layout/Breadcrumbs'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import ProjectSettingsTab from '../components/ProjectSettingsTab'
@@ -54,8 +56,6 @@ export default function ProjectDetail() {
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
-  const [dragging, setDragging] = useState(false)
-  const dragCounter = useRef(0)
   const [pollUntil, setPollUntil] = useState(0) // timestamp — poll until this time
   // Files chosen but not yet uploaded — the confirm dialog is open for them.
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
@@ -63,8 +63,7 @@ export default function ProjectDetail() {
   // `open` so a project page visit doesn't pay for timings nobody asked for.
   const [timingsOpen, setTimingsOpen] = useState(false)
 
-  const { data: projects } = useQuery({ queryKey: queryKeys.projects.all, queryFn: listProjects })
-  const project = projects?.find(p => p.id === pid)
+  const { data: project } = useQuery({ queryKey: queryKeys.projects.detail(pid), queryFn: () => getProject(pid) })
   usePageTitle(project?.name)
 
   // A draft is edited in the wizard, which is where the project list links it.
@@ -137,19 +136,7 @@ export default function ProjectDetail() {
     queryKey: queryKeys.project.settings(pid),
     queryFn: () => getProjectSettings(pid),
   })
-  const { data: jobs, isLoading, dataUpdatedAt: jobsUpdatedAt } = useQuery({
-    queryKey: queryKeys.jobs.byProject(pid),
-    queryFn: () => listJobs(pid),
-    refetchInterval: (query) => {
-      const jobList = query.state.data
-      if (!jobList) return false
-      // Poll while any job's pipeline is running in the background
-      const anyProcessing = jobList.some(j => isPipelineRunning(j))
-      // Also poll briefly after upload to catch fast-finishing workers
-      const recentUpload = Date.now() < pollUntil
-      return (anyProcessing || recentUpload) ? 2000 : false
-    },
-  })
+  const { data: jobs, isLoading, dataUpdatedAt: jobsUpdatedAt } = useProjectJobs(pid, pollUntil > 0)
 
   // Stop forced polling when timer expires
   useEffect(() => {
@@ -174,41 +161,16 @@ export default function ProjectDetail() {
   // otherwise dragging a file in still triggers an upload (the dimmed button
   // doesn't gate the page-wide drop handler).
   const uploadLocked = project?.status === 'completed'
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounter.current = 0
-    setDragging(false)
+  const handleDropFiles = useCallback((files: File[]) => {
     if (uploadLocked) {
       toast.error('Project is completed — reopen it to upload more files')
       return
     }
-    const files = e.dataTransfer.files
-    if (files.length > 0) setPendingFiles(Array.from(files))
+    if (files.length > 0) setPendingFiles(files)
   }, [uploadLocked])
-
-  // Only react to file drags. Internal element drags (e.g. TM reorder in the
-  // Settings tab) carry text, not files — they must NOT trigger the upload
-  // drop-zone overlay.
-  const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
-
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    if (!isFileDrag(e)) return
-    e.preventDefault()
-    dragCounter.current++
-    setDragging(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!isFileDrag(e)) return
-    e.preventDefault()
-    dragCounter.current--
-    if (dragCounter.current === 0) setDragging(false)
-  }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!isFileDrag(e)) return
-    e.preventDefault()
-  }, [])
+  // Only file drags show the drop view: internal element drags (the TM reorder
+  // in the Settings tab) carry text, not files.
+  const drop = useFileDrop(handleDropFiles)
 
   // The panel is the last path segment (/projects/:id → tasks). Each SubNav
   // item keeps the current query string, so filters survive a trip to another
@@ -235,16 +197,9 @@ export default function ProjectDetail() {
   return (
     <PageContainer
       className="relative"
-      onDrop={handleDrop}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
+      {...drop.handlers}
     >
-      {dragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded-xl pointer-events-none">
-          <p className="text-primary text-lg font-medium">Drop files to upload</p>
-        </div>
-      )}
+      <FileDropOverlay show={drop.dragging} label="Drop files to upload" />
 
       <Breadcrumbs items={[
         { label: 'Projects', to: '/projects' },

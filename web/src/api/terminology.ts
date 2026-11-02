@@ -220,3 +220,48 @@ export const exportTermTBX = (baseId: number, baseName: string) =>
 
 export const lookupTerms = (projectId: number, sourceLang: string, targetLang: string, sourceText: string) =>
   request<{ data: TermLookupResult[] }>(`/terminology/lookup?project_id=${projectId}&source_language=${sourceLang}&target_language=${targetLang}&source_text=${encodeURIComponent(sourceText)}`).then(r => r.data);
+
+/** A term base the job's project uses for the job's language pair. */
+export interface JobTermBase {
+  id: number;
+  name: string;
+}
+
+/** The term bases a job's quick-add can write to. can_add is false for a
+ *  linguist while the project does not let linguists add terms. */
+export interface JobTermBases {
+  term_bases: JobTermBase[];
+  can_add: boolean;
+  /** The status a linguist's term gets. */
+  linguist_status: 'pending' | 'approved';
+}
+
+export interface QuickAddTermInput {
+  term_base_id: number;
+  source_term: string;
+  target_term: string;
+  /** Ignored for a linguist, whose term is saved as pending. */
+  status?: string;
+  definition?: string;
+  notes?: string;
+}
+
+export interface QuickAddTermResult {
+  concept_id: number;
+  term_id: number;
+  source_term: string;
+  target_term: string;
+  status: string;
+  created_concept: boolean;
+}
+
+/** The term bases the editor's quick-add can write to, best priority first. */
+export const listJobTermBases = (jobId: number) =>
+  request<{ data: JobTermBases }>(`/jobs/${jobId}/term-bases`).then(r => r.data);
+
+/** Adds a source/target pair, in the job's languages, from the editor. */
+export const quickAddJobTerm = (jobId: number, input: QuickAddTermInput) =>
+  request<{ data: QuickAddTermResult }>(`/jobs/${jobId}/terms`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }).then(r => r.data);

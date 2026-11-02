@@ -54,6 +54,7 @@ awk '{ printf "%s \r\n", $0 }' "$T/tricky-LICENSE" > "$T/tricky-crlf-LICENSE"
   entry github.com/tricky/mod v3.0.0 "-" "$T/tricky-LICENSE"
   entry github.com/trickier/mod v3.1.0 "-" "$T/tricky-crlf-LICENSE"
   entry github.com/dual/mod v2.0.0 "Apache-2.0 OR BSD-2-Clause"
+  entry "Unicode CLDR locale data (internal/langcode)" 48.2.3 "Unicode-3.0"
   section npm
   entry dompurify 3.4.16 "(MPL-2.0 OR Apache-2.0)"
   entry victory-vendor 37.3.6 "MIT AND ISC"
@@ -84,7 +85,7 @@ awk '{ printf "%s \r\n", $0 }' "$T/tricky-LICENSE" > "$T/tricky-crlf-LICENSE"
 echo "permissive notices pass, including a text that tries to end its fence"
 exception "$T/pypdfium2.toml" py:pypdfium2 "BSD-3-Clause, Apache-2.0, dependency licenses" "$future"
 run 0 "$T/pypdfium2.toml" "$T/good.md"
-has "13 packages (5 go, 3 npm, 5 py), 1 accepted" "counts every entry once, none inside a fence"
+has "14 packages (6 go, 3 npm, 5 py), 1 accepted" "counts every entry once, none inside a fence"
 lacks "smuggled" "a fence is closed only by the run of backticks that opened it"
 same "$(grep -c '^`````$' "$T/good.md")" 4 "the generator picks a longer fence for such texts, CRLF or not"
 
@@ -115,7 +116,7 @@ has "names npm:not-shipped, which no image ships" "an unused entry warns"
 echo "an expired entry fails on its own, from its expiry date on"
 exception "$T/expired.toml" py:pypdfium2 "BSD-3-Clause, Apache-2.0, dependency licenses" "$future"
 exception "$T/expired.toml" go:github.com/good/mod "MIT" 2020-01-01
-run 1 "$T/expired.toml" "$T/good.md"; has "1 of 13 packages" "only the expired entry fails"
+run 1 "$T/expired.toml" "$T/good.md"; has "1 of 14 packages" "only the expired entry fails"
 has "go:github.com/good/mod  exception expired on 2020-01-01" "a past date"
 exception "$T/today.toml" py:pypdfium2 "BSD-3-Clause, Apache-2.0, dependency licenses" "$future"
 exception "$T/today.toml" go:github.com/good/mod "MIT" "$today"
@@ -193,12 +194,34 @@ esac
 SH
 chmod +x "$T/bin/go"
 set +e
-out="$(PATH="$T/bin:$PATH" FAKE_MOD_DIR="$T/mod" FAKE_GOROOT="$T/goroot" "$gen" go 2>&1)"; got=$?
+out="$(cd "$root" && PATH="$T/bin:$PATH" FAKE_MOD_DIR="$T/mod" FAKE_GOROOT="$T/goroot" "$gen" go 2>&1)"; got=$?
 set -e
 same "$got" 0 "a Go section renders"
 has "### Go standard library and runtime go1.0.0" "the standard library comes first"
+has_line '^### Unicode CLDR locale data (internal/langcode) [0-9][0-9.]*$' "then the CLDR data with its version"
+has "License: Unicode-3.0" "labelled Unicode-3.0, not MIT"
+has "UNICODE LICENSE V3" "with the Unicode license text"
 has "### example.com/mod v1.0.0" "then the modules"
 same "$(printf '%s\n' "$out" | grep -c '^License: MIT$')" 2 "with their labels"
+
+echo "data vendored into the main module is listed with its license"
+mkdir -p "$T/work/internal/pkg/data" "$T/work/internal/langcode"
+printf 'package langcode\n\nconst CLDRVersion = "1.0"\n' > "$T/work/internal/langcode/cldr_table.go"
+cp "$root/internal/langcode/LICENSE-CLDR" "$T/work/internal/langcode/LICENSE-CLDR"
+printf 'Some data\tv2\n' > "$T/work/internal/pkg/data/VENDORED"
+printf 'UNICODE LICENSE V3\nPermission is hereby granted, free of charge\n' > "$T/work/internal/pkg/data/LICENSE"
+set +e
+out="$(cd "$T/work" && PATH="$T/bin:$PATH" FAKE_MOD_DIR="$T/mod" FAKE_GOROOT="$T/goroot" "$gen" go 2>&1)"; got=$?
+set -e
+same "$got" 0 "a Go section with vendored data renders"
+has_line '^### Some data v2$' "the data gets an entry"
+has_line '^License: Unicode-3.0$' "labelled Unicode-3.0, not MIT"
+rm "$T/work/internal/pkg/data/LICENSE"
+set +e
+out="$(cd "$T/work" && PATH="$T/bin:$PATH" FAKE_MOD_DIR="$T/mod" FAKE_GOROOT="$T/goroot" "$gen" go 2>&1)"; got=$?
+set -e
+same "$got" 1 "vendored data without a license file fails the generator"
+has "no license file next to it" "and says why"
 set +e
 out="$(PATH="$T/bin:$PATH" FAKE_MOD_DIR="$T/missing" FAKE_GOROOT="$T/goroot" "$gen" go 2>&1)"; got=$?
 set -e

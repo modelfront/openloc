@@ -1,0 +1,346 @@
+paths:
+  /segmentation-profiles:
+    get:
+      operationId: listSegmentationProfiles
+      summary: List segmentation profiles
+      description: >-
+        The built-in profiles and the organization's own, by id. Each project and template names the
+        profile its uploads are split with.
+      tags:
+      - Segmentation
+      x-roles: &segReaders
+      - owner
+      - admin
+      - project_manager
+      - linguist
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: source_language
+        in: query
+        description: 'Keep the profiles that suit this language: those that list it or its base language, and those for any language.'
+        schema:
+          type: string
+          example: fr-CA
+      responses:
+        '200':
+          description: One page of profiles.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/SegmentationProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createSegmentationProfile
+      summary: Create a segmentation profile
+      description: >-
+        From a definition, or as a copy of another profile (`from_id`, a built-in or the
+        organization's). A built-in cannot be changed; copy it to make changes.
+      tags:
+      - Segmentation
+      x-roles: &segWriters
+      - owner
+      - admin
+      - project_manager
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SegmentationProfileInput'
+      responses:
+        '201':
+          description: The new profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentationProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /segmentation-profiles/{profileID}:
+    parameters: &segID
+    - $ref: '#/components/parameters/SegmentationProfileID'
+    get:
+      operationId: getSegmentationProfile
+      summary: Get a segmentation profile
+      tags:
+      - Segmentation
+      x-roles: *segReaders
+      responses:
+        '200':
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentationProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      operationId: replaceSegmentationProfile
+      summary: Replace a segmentation profile
+      description: >-
+        A full replace of the name, language and definition. Send the `updated_at` you read: if the
+        profile changed since, the answer is 409. A new language that a template using the profile
+        does not suit is 409 too: move the template to another profile first. Files already uploaded
+        keep their segments; projects and templates that use the profile keep it. A built-in is 409.
+      tags:
+      - Segmentation
+      x-roles: *segWriters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SegmentationProfileInput'
+      responses:
+        '200':
+          description: The profile as saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentationProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteSegmentationProfile
+      summary: Delete a segmentation profile
+      description: >-
+        Files already uploaded keep their segments. Projects that use the profile lose it: an upload
+        to them is 400 until another profile is picked for them, in the app or over MCP. A built-in,
+        or a profile a template uses, is 409.
+      tags:
+      - Segmentation
+      x-roles: *segWriters
+      responses:
+        '204':
+          description: Deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /segmentation-profiles/{profileID}/srx:
+    parameters: *segID
+    get:
+      operationId: exportSegmentationSRX
+      summary: Download as SRX
+      description: The profile as an SRX 2.0 file, which other translation tools read.
+      tags:
+      - Segmentation
+      x-roles: *segReaders
+      responses:
+        '200':
+          description: The SRX file.
+          content:
+            application/xml:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  parameters:
+    SegmentationProfileID:
+      name: profileID
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    SegmentationRule:
+      type: object
+      description: >-
+        Decides a position between two characters: `before` must match the text that ends there and
+        `after` the text that starts there. Patterns are RE2 regular expressions (no look-around or
+        back-references); an empty pattern matches anything.
+      required:
+      - before
+      - after
+      - break
+      properties:
+        before:
+          type: string
+          example: '[.!?]'
+        after:
+          type: string
+          example: '\s+\p{Lu}'
+        break:
+          type: boolean
+          description: True breaks there; false keeps the text whole (an exception).
+    SegmentationDefinition:
+      type: object
+      required:
+      - mode
+      - rules
+      - abbreviations
+      - number_abbreviations
+      properties:
+        mode:
+          type: string
+          description: '`sentence` splits each block into sentences; `paragraph` keeps each block one segment.'
+          example: sentence
+        rules:
+          type: array
+          description: Tried in order; the first that matches a position decides it.
+          items:
+            $ref: '#/components/schemas/SegmentationRule'
+        abbreviations:
+          type: array
+          description: Words after which a full stop never ends a sentence, without the full stop. Case-sensitive.
+          items:
+            type: string
+          example: [Dr, e.g]
+        number_abbreviations:
+          type: array
+          description: Words that are abbreviations only before a number, as in "p. 12".
+          items:
+            type: string
+          example: ["No", p]
+    SegmentationProfile:
+      type: object
+      required:
+      - id
+      - name
+      - builtin_key
+      - source_languages
+      - builtin
+      - description
+      - based_on_id
+      - definition
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: English – legal
+        builtin_key:
+          type: string
+          nullable: true
+          description: The built-in and its version, such as `builtin:en@1`; null on the organization's profiles.
+        source_languages:
+          type: array
+          items:
+            type: string
+          description: The languages the profile suits, each with its regional variants; empty when it suits any language.
+          example: [en, de]
+        builtin:
+          type: boolean
+          description: Built-ins are read-only.
+        description:
+          type: string
+        based_on_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The profile this one was copied from.
+        definition:
+          $ref: '#/components/schemas/SegmentationDefinition'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SegmentationProfileInput:
+      type: object
+      required:
+      - name
+      - source_languages
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: English – legal
+        source_languages:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+          description: Language codes; an empty list suits any language.
+          example: [en, de]
+        definition:
+          $ref: '#/components/schemas/SegmentationDefinition'
+        from_id:
+          type: integer
+          format: int64
+          description: On create, copy this profile's definition when `definition` is left out.
+        updated_at:
+          type: string
+          format: date-time
+          description: Required on replace; the `updated_at` you read.

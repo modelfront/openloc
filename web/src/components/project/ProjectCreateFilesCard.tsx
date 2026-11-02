@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Columns3 } from 'lucide-react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteFile, listFiles } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
@@ -8,11 +8,18 @@ import { useUploadQueue } from '../../hooks/useUploadQueue'
 import { Button } from '@/components/ui/button'
 import { CheckboxField } from '@/components/ui/checkbox-field'
 import { DeleteButton } from '@/components/ui/delete-button'
+import { VirtualDataTable } from '@/components/ui/virtual-data-table'
+import type { ColumnDef } from '@/components/ui/data-table'
 import { SOURCE_FILE_ACCEPT } from '@/lib/source-file-formats'
 import type { FileRecord } from '@/api'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditXLSXColumnsDialog } from './files/EditXLSXColumnsDialog'
 import { UploadLayoutQuestion } from './files/XLSXLayoutDialog'
+
+const FILES_PAGE = 100
+const ROW_HEIGHT = 36
+const HEADER_HEIGHT = 34
+const MAX_VISIBLE_ROWS = 8
 
 interface Props {
   /** The draft the files belong to; null until the form has been saved once. */
@@ -35,12 +42,17 @@ export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyz
   const inputRef = useRef<HTMLInputElement>(null)
   const [columnsTarget, setColumnsTarget] = useState<FileRecord | null>(null)
 
-  const { data: filesPage } = useQuery({
-    queryKey: queryKeys.files.byProject(draftId ?? 0),
-    queryFn: () => listFiles(draftId!),
+  // The server sends the files a page at a time; the list loads the next page
+  // as it is scrolled to its end.
+  const { data: filePages, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: queryKeys.files.pages(draftId ?? 0),
+    queryFn: ({ pageParam }) => listFiles(draftId!, { limit: FILES_PAGE, cursor: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: last => (last.has_more ? last.cursor : undefined),
     enabled: draftId != null,
   })
-  const files = filesPage?.data ?? []
+  const files = useMemo(() => filePages?.pages.flatMap(p => p.data) ?? [], [filePages])
+  const total = filePages?.pages[0]?.total ?? 0
 
   const { progress, uploading, start, layoutQuestion, answerLayout } = useUploadQueue(projectId => {
     queryClient.invalidateQueries({ queryKey: queryKeys.files.byProject(projectId) })
@@ -62,9 +74,58 @@ export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyz
     invalidateKeys: draftId != null ? [queryKeys.files.byProject(draftId)] : [],
   })
 
+  const { isPending: removePending, mutate: removeFile } = removeMut
+  const columns = useMemo<ColumnDef<FileRecord>[]>(() => [
+    {
+      id: 'name',
+      header: 'File',
+      cell: ({ row: { original: f } }) => (
+        <span className="truncate block" data-testid={`create-file-${f.id}`}>
+          {f.name} <span className="text-xs text-gray-400">({f.segment_count} segments)</span>
+        </span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 64,
+      cell: ({ row: { original: f } }) => (
+        <span className="flex items-center justify-end gap-0.5">
+          {f.format === 'xlsx' && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={uploading}
+                    onClick={() => setColumnsTarget(f)}
+                    aria-label={`Excel columns of ${f.name}`}
+                    data-testid={`create-file-xlsx-columns-${f.id}`}
+                  >
+                    <Columns3 />
+                  </Button>
+                }
+              />
+              <TooltipContent>Excel columns</TooltipContent>
+            </Tooltip>
+          )}
+          <DeleteButton
+            size="icon-xs"
+            type="button"
+            aria-label={`Remove ${f.name}`}
+            disabled={uploading || removePending}
+            onClick={() => removeFile(f.id)}
+          />
+        </span>
+      ),
+    },
+  ], [uploading, removePending, removeFile])
+
   return (
     <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 p-4">
-      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Files (optional)</h3>
+      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{total > 0 ? `Files (${total})` : 'Files (optional)'}</h3>
       <div
         onDragEnter={e => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); setDragging(true) } }}
         onDragOver={e => { if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault() }}
@@ -107,42 +168,20 @@ export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyz
 
       {files.length > 0 && (
         <TooltipProvider delay={200}>
-          <ul className="mt-3 space-y-1" data-testid="create-file-list">
-            {files.map(f => (
-              <li key={f.id} className="flex items-center justify-between text-sm bg-muted rounded px-2 py-1" data-testid={`create-file-${f.id}`}>
-                <span className="truncate">{f.name} <span className="text-xs text-gray-400">({f.segment_count} segments)</span></span>
-                <span className="ml-2 flex shrink-0 items-center gap-0.5">
-                  {f.format === 'xlsx' && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            disabled={uploading}
-                            onClick={() => setColumnsTarget(f)}
-                            aria-label={`Excel columns of ${f.name}`}
-                            data-testid={`create-file-xlsx-columns-${f.id}`}
-                          >
-                            <Columns3 />
-                          </Button>
-                        }
-                      />
-                      <TooltipContent>Excel columns</TooltipContent>
-                    </Tooltip>
-                  )}
-                  <DeleteButton
-                    size="icon-xs"
-                    type="button"
-                    aria-label={`Remove ${f.name}`}
-                    disabled={uploading || removeMut.isPending}
-                    onClick={() => removeMut.mutate(f.id)}
-                  />
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div
+            className="mt-3 flex flex-col"
+            // As tall as its rows, up to MAX_VISIBLE_ROWS; then it scrolls.
+            style={{ height: HEADER_HEIGHT + Math.min(files.length, MAX_VISIBLE_ROWS) * ROW_HEIGHT }}
+            data-testid="create-file-list"
+          >
+            <VirtualDataTable
+              columns={columns}
+              data={files}
+              estimateSize={ROW_HEIGHT}
+              onLoadMore={hasNextPage ? () => { void fetchNextPage() } : undefined}
+              isLoadingMore={isFetchingNextPage}
+            />
+          </div>
         </TooltipProvider>
       )}
 

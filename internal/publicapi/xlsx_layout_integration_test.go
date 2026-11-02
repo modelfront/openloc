@@ -45,6 +45,7 @@ func TestIntegrationV1_UploadXLSXWithLayout(t *testing.T) {
 
 	rec := f.client.do(http.MethodPost, "/api/v1/projects", map[string]any{
 		"name": "Catalog", "source_language": "en", "target_languages": []string{"fr", "de"},
+		"workflow_id": f.ids["workflowID"],
 	}, key)
 	wantStatus(t, rec, http.StatusCreated)
 	p := testutil.DecodeData[publicapi.Project](t, rec)

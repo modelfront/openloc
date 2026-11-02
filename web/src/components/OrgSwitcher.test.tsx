@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { OrgSwitcher } from './OrgSwitcher'
 
@@ -43,6 +44,27 @@ describe('OrgSwitcher', () => {
     fireEvent.mouseMove(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(await screen.findByRole('menu')).toBeInTheDocument()
+  })
+
+  it('stays open when the click follows the hover that opened it', async () => {
+    const trigger = await renderSwitcher()
+    // A real click moves the pointer onto the trigger first: the hover opens
+    // the menu, then the press reaches a trigger that is already open.
+    fireEvent.mouseMove(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+  })
+
+  it('closes on a press when the menu was not opened by the hover', async () => {
+    const trigger = await renderSwitcher()
+    // A keyboard press opens and closes it without any mouse movement.
+    trigger.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('stays closed when it slides under a still cursor', async () => {

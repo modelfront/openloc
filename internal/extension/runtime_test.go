@@ -247,3 +247,26 @@ func TestInvoke_ErrorCarriesVendorStatus(t *testing.T) {
 		}
 	}
 }
+
+// A vendor that never answered is told apart from an extension refusing on
+// its own (both have no vendor status), so the caller can report an outage
+// and show a refusal to the user.
+func TestInvoke_ErrorMarksAnUnreachableVendor(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	client, url := srv.Client(), srv.URL
+	srv.Close() // nothing listens any more
+
+	p := mockPackage(t)
+	err := NewRuntime(client, nil).Invoke(context.Background(), predictCall(p, "tok", url, extsdk.PredictRow{ID: "1", Target: "x"}), nil)
+	var ce *CallError
+	if !errors.As(err, &ce) || !ce.VendorUnreachable || ce.VendorStatus != 0 {
+		t.Fatalf("err = %#v, want a CallError with VendorUnreachable and no status", err)
+	}
+
+	answered := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer answered.Close()
+	err = NewRuntime(answered.Client(), nil).Invoke(context.Background(), predictCall(p, "tok", answered.URL, extsdk.PredictRow{ID: "1", Target: "x"}), nil)
+	if !errors.As(err, &ce) || ce.VendorUnreachable {
+		t.Fatalf("err = %#v, a vendor that answered is not unreachable", err)
+	}
+}

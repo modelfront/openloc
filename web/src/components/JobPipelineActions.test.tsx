@@ -55,11 +55,17 @@
 //     fails. Drop the stop_requested_at gate → "Stopping…" test fails.
 //   - Drop `writable` from the Pre-translate / Clear / Re-run AI step gates →
 //     the "failed job" and "canEdit=false" tests fail.
+//   - Gate Clear on `step_order === 0` → "first human step after automated
+//     ones" fails; drop the window → "past the first human or hybrid step"
+//     fails.
+//   - Gate Clear on `total > untranslated` instead of `clearable_all`, or hide
+//     it when nothing is clearable → the "only segments with text are locked"
+//     and "every segment is empty" tests fail.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { JobPipelineActions } from './JobPipelineActions'
+import { JobPipelineActions, NOTHING_TO_CLEAR_REASON } from './JobPipelineActions'
 import { makeJob as makeJobFixture, makeJobCounts } from '@/test/fixtures/job'
 import { queryKeys } from '../lib/query-keys'
 import type { Job } from '../api'
@@ -109,8 +115,8 @@ function renderWithJob(job: Job, extra: Partial<React.ComponentProps<typeof JobP
   return { ...view, qc }
 }
 
-// Re-run AI step and Clear both wait on the role query. A test that asserts
-// one of them is absent has to wait for the role first, otherwise it passes
+// Re-run AI step waits on the role query. A test that asserts
+// it is absent has to wait for the role first, otherwise it passes
 // before the role has arrived.
 async function waitForRole(qc: QueryClient) {
   await waitFor(() => expect(qc.getQueryState(queryKeys.auth.me)?.status).toBe('success'))
@@ -184,10 +190,10 @@ describe('JobPipelineActions gating', () => {
     expect(screen.queryByTestId('run-ai-step-btn')).toBeNull()
   })
 
-  it('hides all buttons when not in first workflow step (inFirstStep=false override)', () => {
+  it('hides all buttons past the first step and the clear window (editor overrides)', () => {
     const { container } = renderWithJob(
       makeJob({ counts: makeJobCounts({ untranslated: 5, pre_translated: 2, total: 10 }) }),
-      { inFirstStep: false },
+      { inFirstStep: false, inClearWindow: false },
     )
     expect(container.firstChild).toBeNull()
   })
@@ -245,7 +251,7 @@ describe('JobPipelineActions gating', () => {
   it('Stop is enabled while running, and every other visible button is disabled', async () => {
     renderWithJob(
       makeJob({
-        counts: makeJobCounts({ untranslated: 5, pre_translated: 2, total: 10 }),
+        counts: makeJobCounts({ untranslated: 5, pre_translated: 2, total: 10, clearable_non_confirmed: 2, clearable_all: 2 }),
         pipeline_status: 'in_progress',
         current_step: 'Translating 5 / 10',
         workflow_step: { id: 1, step_name: 'translation', step_order: 0, status: 'in_progress', is_last_step: true, is_ai_step: false, deadline: null },
@@ -256,7 +262,6 @@ describe('JobPipelineActions gating', () => {
     expect(stopBtn).toHaveTextContent('Stop')
     expect(screen.queryByTestId('stop-job-spinner')).toBeNull()
     expect(screen.getByTestId('pretranslate-btn')).toBeDisabled()
-    // Clear waits on the getMe role query, so it appears a tick later.
     expect(await screen.findByTestId('clear-translations-btn')).toBeDisabled()
 
     await userEvent.click(stopBtn)
@@ -374,26 +379,50 @@ describe('JobPipelineActions gating', () => {
     expect(parentClick).not.toHaveBeenCalled()
   })
 
-  it('shows Clear button when admin AND something is clearable (total > untranslated)', async () => {
+  it('enables Clear for an admin when something is clearable', async () => {
     const { findByTestId } = renderWithJob(
-      makeJob({ counts: makeJobCounts({ untranslated: 2, pre_translated: 3, total: 5 }) }),
+      makeJob({ counts: makeJobCounts({ untranslated: 2, pre_translated: 3, total: 5, clearable_non_confirmed: 3, clearable_all: 3 }) }),
     )
-    expect(await findByTestId('clear-translations-btn')).toBeTruthy()
+    expect(await findByTestId('clear-translations-btn')).toBeEnabled()
   })
 
-  it('hides Clear when the only state is fully untranslated (nothing to clear)', async () => {
-    const { qc } = renderWithJob(makeJob({ counts: makeJobCounts({ untranslated: 5, total: 5 }) }))
+  it('keeps Clear in place but disabled, with the reason on hover, when every segment is empty', async () => {
+    renderWithJob(makeJob({ counts: makeJobCounts({ untranslated: 5, total: 5 }) }))
+    const clear = await screen.findByTestId('clear-translations-btn')
+    // Disabled but still hoverable, so the reason can show.
+    expect(clear).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.hover(clear)
+    expect(await screen.findByText(NOTHING_TO_CLEAR_REASON)).toBeInTheDocument()
+  })
+
+  it('offers Clear but not Pre-translate on the first human step after automated ones', async () => {
+    const counts = makeJobCounts({ untranslated: 2, total: 5, clearable_non_confirmed: 3, clearable_all: 3 })
+    const step = { id: 1, step_name: 'Translation', step_order: 2, status: 'in_progress', is_last_step: false, is_ai_step: false, deadline: null }
+    renderWithJob(makeJob({ counts, workflow_step: step, last_clear_step_order: 2 }))
+    expect(await screen.findByTestId('clear-translations-btn')).toBeEnabled()
+    expect(screen.queryByTestId('pretranslate-btn')).toBeNull()
+  })
+
+  it('hides Clear past the first human or hybrid step', async () => {
+    const counts = makeJobCounts({ untranslated: 2, total: 5, clearable_non_confirmed: 3, clearable_all: 3 })
+    const step = { id: 1, step_name: 'Review', step_order: 3, status: 'in_progress', is_last_step: true, is_ai_step: false, deadline: null }
+    const { qc } = renderWithJob(makeJob({ counts, workflow_step: step, last_clear_step_order: 2 }))
     await waitForRole(qc)
     expect(screen.queryByTestId('clear-translations-btn')).toBeNull()
   })
 
-  it('hides Clear for non-admin members even when clearable rows exist', async () => {
-    mockGetMe.mockResolvedValueOnce({ role: 'member' })
+  it('disables Clear when the only segments with text are locked', async () => {
+    renderWithJob(makeJob({ counts: makeJobCounts({ untranslated: 3, approved: 2, total: 5, clearable_all: 0 }) }))
+    expect(await screen.findByTestId('clear-translations-btn')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('offers Clear to a linguist who may edit the task', async () => {
+    mockGetMe.mockResolvedValue({ role: 'linguist' })
     const { qc } = renderWithJob(
-      makeJob({ counts: makeJobCounts({ untranslated: 2, pre_translated: 3, total: 5 }) }),
+      makeJob({ counts: makeJobCounts({ untranslated: 2, pre_translated: 3, total: 5, clearable_non_confirmed: 3, clearable_all: 3 }) }),
     )
     await waitForRole(qc)
-    expect(screen.queryByTestId('clear-translations-btn')).toBeNull()
+    expect(screen.getByTestId('clear-translations-btn')).toBeEnabled()
   })
 
   it('without stopPropagationOnClick, click bubbles to parent (default for CAT editor toolbar)', () => {

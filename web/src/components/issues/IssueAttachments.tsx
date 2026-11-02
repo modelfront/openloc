@@ -4,11 +4,12 @@ import { toast } from 'sonner'
 import { fetchIssueAttachment, type IssueAttachment, type IssueScope } from '@/api'
 import { triggerDownload } from '@/api/download'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { formatFileSize } from '@/lib/file-size'
 
 /**
- * The files of an issue or a comment: images as thumbnails that open full size,
- * every other file as a download. Files need the session, so they are fetched
+ * The files of an issue or a comment: images as thumbnails that open full size
+ * in a dialog over the page, every other file as a download. Files need the session, so they are fetched
  * with auth.
  */
 export function IssueAttachments({ scope, issueId, files }: { scope: IssueScope; issueId: number; files: IssueAttachment[] }) {
@@ -32,8 +33,9 @@ export function IssueAttachments({ scope, issueId, files }: { scope: IssueScope;
 }
 
 export function IssueImage({ scope, issueId, file }: { scope: IssueScope; issueId: number; file: IssueAttachment }) {
-  const [url, setUrl] = useState<string | null>(null)
+  const [image, setImage] = useState<{ blob: Blob; url: string } | null>(null)
   const [failed, setFailed] = useState(false)
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -42,7 +44,7 @@ export function IssueImage({ scope, issueId, file }: { scope: IssueScope; issueI
       .then(blob => {
         if (cancelled) return
         objectUrl = URL.createObjectURL(blob)
-        setUrl(objectUrl)
+        setImage({ blob, url: objectUrl })
       })
       .catch(() => { if (!cancelled) setFailed(true) })
     return () => {
@@ -52,11 +54,29 @@ export function IssueImage({ scope, issueId, file }: { scope: IssueScope; issueI
   }, [scope, issueId, file.id])
 
   if (failed) return <p className="text-xs text-muted-foreground">{file.filename} could not be loaded.</p>
-  if (!url) return <div className="h-24 w-40 animate-pulse rounded border border-border bg-muted" />
+  if (!image) return <div className="h-24 w-40 animate-pulse rounded border border-border bg-muted" />
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block" title={file.filename} data-testid="issue-image">
-      <img src={url} alt={file.filename} className="max-h-48 max-w-full rounded border border-border" />
-    </a>
+    <>
+      {/* eslint-disable-next-line no-restricted-syntax -- a launcher: the thumbnail itself opens the viewer */}
+      <button type="button" onClick={() => setOpen(true)} className="inline-block max-w-full cursor-zoom-in rounded"
+        title={file.filename} aria-label={`Open ${file.filename}`} data-testid="issue-image">
+        <img src={image.url} alt={file.filename} className="max-h-48 max-w-full rounded border border-border" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-[min(90vw,72rem)]" aria-describedby={undefined} data-testid="issue-image-viewer">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-8">{file.filename}</DialogTitle>
+          </DialogHeader>
+          <img src={image.url} alt={file.filename} className="mx-auto max-h-[75vh] max-w-full object-contain" />
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => triggerDownload(image.blob, file.filename)}>
+              <Download />
+              Download
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

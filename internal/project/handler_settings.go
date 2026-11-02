@@ -22,21 +22,28 @@ import (
 // the JSON shape the frontend reads.
 type ProjectSettings struct {
 	db.Project
-	FuzzyThreshold        float32 `json:"fuzzy_threshold"`
-	MtOnUpload            bool    `json:"mt_on_upload"`
-	TmOnUpload            bool    `json:"tm_on_upload"`
-	QaProfileID           *int64  `json:"qa_profile_id"`
-	MTRouterID            *int64  `json:"mt_router_id"`
-	MTRouterName          *string `json:"mt_router_name"`
-	SublanguagePenaltyPct int32   `json:"sublanguage_penalty_pct"`
-	NearExactPenaltyPct   int32   `json:"near_exact_penalty_pct"`
-	TMLookupOrder         string  `json:"tm_lookup_order"`
-	AutoComplete          bool    `json:"auto_complete"`
-	InlineHTML            bool    `json:"inline_html"`
+	FuzzyThreshold float32 `json:"fuzzy_threshold"`
+	MtOnUpload     bool    `json:"mt_on_upload"`
+	TmOnUpload     bool    `json:"tm_on_upload"`
+	QaProfileID    *int64  `json:"qa_profile_id"`
+	// SegmentationProfileID is nil after its profile is deleted; uploads
+	// then wait until another is picked.
+	SegmentationProfileID   *int64  `json:"segmentation_profile_id"`
+	SegmentationProfileName *string `json:"segmentation_profile_name"`
+	MTRouterID              *int64  `json:"mt_router_id"`
+	MTRouterName            *string `json:"mt_router_name"`
+	SublanguagePenaltyPct   int32   `json:"sublanguage_penalty_pct"`
+	NearExactPenaltyPct     int32   `json:"near_exact_penalty_pct"`
+	TMLookupOrder           string  `json:"tm_lookup_order"`
+	AutoComplete            bool    `json:"auto_complete"`
+	InlineHTML              bool    `json:"inline_html"`
+	LinguistTerms           string  `json:"linguist_terms"`
 	// Library workflow the steps were copied from; nil
 	// for an inline workflow. The name resolves even for a retired library row.
 	WorkflowID   *int64  `json:"workflow_id"`
 	WorkflowName *string `json:"workflow_name"`
+	// WorkflowEdited: the steps were changed after the workflow was applied.
+	WorkflowEdited bool `json:"workflow_edited"`
 }
 
 // HandleUpdateSettings — PATCH /api/projects/{projectID}/settings.
@@ -61,9 +68,12 @@ func (h *Handler) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		NearExactPenaltyPct   *int32          `json:"near_exact_penalty_pct"`
 		AutoComplete          *bool           `json:"auto_complete"`
 		InlineHTML            *bool           `json:"inline_html"`
+		LinguistTerms         *string         `json:"linguist_terms"`
 		TMLookupOrder         *string         `json:"tm_lookup_order"`
 		TMProfileID           json.RawMessage `json:"tm_profile_id"`
 		MTRouterID            json.RawMessage `json:"mt_router_id"`
+		// Absent or null keeps the current profile.
+		SegmentationProfileID *int64 `json:"segmentation_profile_id"`
 	}
 	if err := httputil.Decode(r, &req); err != nil {
 		httputil.BadRequest(w, "invalid request body")
@@ -78,7 +88,9 @@ func (h *Handler) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		NearExactPenaltyPct:   req.NearExactPenaltyPct,
 		AutoComplete:          req.AutoComplete,
 		InlineHTML:            req.InlineHTML,
+		LinguistTerms:         req.LinguistTerms,
 		TMLookupOrder:         req.TMLookupOrder,
+		SegmentationProfileID: req.SegmentationProfileID,
 	}
 	if len(req.QAProfileID) > 0 {
 		var n int64
@@ -134,20 +146,24 @@ func WriteServiceError(w http.ResponseWriter, err error, verb, resource string) 
 
 func (h *Handler) newProjectSettings(ctx context.Context, tenantID int64, project db.Project, p db.SettingsProfile) ProjectSettings {
 	return ProjectSettings{
-		Project:               project,
-		FuzzyThreshold:        p.FuzzyThreshold,
-		MtOnUpload:            p.MtOnUpload,
-		TmOnUpload:            p.TmOnUpload,
-		QaProfileID:           p.QaProfileID,
-		SublanguagePenaltyPct: p.SublanguagePenaltyPct,
-		NearExactPenaltyPct:   p.NearExactPenaltyPct,
-		AutoComplete:          p.AutoComplete,
-		InlineHTML:            p.InlineHtml,
-		TMLookupOrder:         p.TmLookupOrder,
-		WorkflowID:            p.WorkflowID,
-		WorkflowName:          settings.WorkflowName(ctx, h.queries, tenantID, p.WorkflowID),
-		MTRouterID:            p.MtRouterID,
-		MTRouterName:          settings.MTRouterName(ctx, h.queries, tenantID, p.MtRouterID),
+		Project:                 project,
+		FuzzyThreshold:          p.FuzzyThreshold,
+		MtOnUpload:              p.MtOnUpload,
+		TmOnUpload:              p.TmOnUpload,
+		QaProfileID:             p.QaProfileID,
+		SegmentationProfileID:   p.SegmentationProfileID,
+		SegmentationProfileName: settings.SegmentationProfileName(ctx, h.queries, tenantID, p.SegmentationProfileID),
+		SublanguagePenaltyPct:   p.SublanguagePenaltyPct,
+		NearExactPenaltyPct:     p.NearExactPenaltyPct,
+		AutoComplete:            p.AutoComplete,
+		InlineHTML:              p.InlineHtml,
+		LinguistTerms:           p.LinguistTerms,
+		TMLookupOrder:           p.TmLookupOrder,
+		WorkflowID:              p.WorkflowID,
+		WorkflowName:            settings.WorkflowName(ctx, h.queries, tenantID, p.WorkflowID),
+		WorkflowEdited:          p.WorkflowEdited,
+		MTRouterID:              p.MtRouterID,
+		MTRouterName:            settings.MTRouterName(ctx, h.queries, tenantID, p.MtRouterID),
 	}
 }
 

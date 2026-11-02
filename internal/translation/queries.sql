@@ -55,22 +55,24 @@ LEFT JOIN users u ON u.id = t.edited_by
 WHERE t.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL;
 
 -- name: ListTranslationsByFile :many
--- Returns all translations for a file+language. Not paginated by design: loaded
--- in lockstep with segments for the CATEditor. The UNIQUE(segment_id, target_language)
--- constraint provides a composite index for this query pattern.
+-- Internal: every translation of a file in one language, for server-side work
+-- over the whole file. The UNIQUE(segment_id, target_language) constraint
+-- provides a composite index for this query pattern.
 SELECT t.* FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListTranslationsByFileTenant :many
--- Tenant-scoped: returns translations only if file belongs to caller's tenant.
+-- Tenant-scoped: returns translations only if file belongs to caller's tenant,
+-- at most @row_limit of them.
 SELECT t.* FROM translations t
 JOIN segments s ON s.id = t.segment_id
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.file_id = $1 AND t.target_language = $2 AND p.tenant_id = $3 AND p.deleted_at IS NULL
-ORDER BY s.position;
+WHERE s.file_id = @file_id AND t.target_language = @target_language AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
+ORDER BY s.position, s.sub_position
+LIMIT @row_limit::int;
 
 -- name: UpdateTranslationMT :one
 -- The MT output is written to active_text; provenance (engine, kind) flows through
@@ -248,7 +250,7 @@ RETURNING t.id;
 UPDATE translations
 SET locked = false, updated_at = now()
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = @file_id)
-  AND target_language = @target_language
+  AND translations.target_language = @target_language
   AND id = ANY(@ids::bigint[])
   AND locked
 RETURNING id;
@@ -266,7 +268,7 @@ WHERE s.file_id = @file_id
   AND t.status = 'needs_review'
   AND coalesce(t.active_text, '') <> ''
   AND NOT t.locked
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: LockApproveTranslations :many
 -- Locks the rows of @ids in the file + target language and approves them:
@@ -507,7 +509,7 @@ SET status = 'needs_review',
     step_edited = false,
     updated_at = now()
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = @file_id)
-  AND target_language = @target_language
+  AND translations.target_language = @target_language
   AND locked = false
   AND active_text IS NOT NULL
   AND (@scope_all::bool OR status NOT IN ('approved', 'auto_approved'))
@@ -669,35 +671,43 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = @file_id AND t.target_language = @target_language
   AND t.active_text IS NULL AND t.locked = false
   AND (sqlc.narg('ids')::bigint[] IS NULL OR t.id = ANY(sqlc.narg('ids')::bigint[]))
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListSegmentSourcesByFile :many
--- Every segment's source text for a file, in document order. The TM
+-- Every source text of one job (file + language), in document order. The TM
 -- phase builds a per-segment neighbor-context map from this (neighbors by
 -- array-adjacency, so gaps in `position` don't matter) to detect 101%
--- (in-context exact) matches. Source-only — no translation join.
-SELECT id, "position", source_text
-FROM segments
-WHERE file_id = $1
-ORDER BY "position";
+-- (in-context exact) matches. A job's rows are the segments with a
+-- translation in its language, so the pieces of a split are neighbours.
+SELECT s.id, s."position", s.source_text
+FROM segments s
+JOIN translations t ON t.segment_id = s.id AND t.target_language = @target_language
+WHERE s.file_id = @file_id
+ORDER BY s."position", s.sub_position;
 
 -- name: GetSegmentNeighborSources :one
--- The source text of the segments immediately before/after the given
--- segment in document order (nearest lower/higher position) within the same
--- file; NULL at the document boundaries. Equivalent to array-adjacency over
--- position, matching the lookup side (ListSegmentSourcesByFile). Used at TM
--- write-back time to compute the 101% context-match hashes stored on the
--- entry (last-write-wins context).
+-- The source text of the job rows immediately before/after the given segment
+-- in document order within the same file and language; '' at the document
+-- boundaries. Equivalent to array-adjacency over (position, sub_position),
+-- matching the lookup side (ListSegmentSourcesByFile). Used at TM write-back
+-- time to compute the 101% context-match hashes stored on the entry
+-- (last-write-wins context).
 -- Boundaries COALESCE to '' (non-null) so a document-start/end segment hashes
 -- the empty string on both write and lookup sides; a genuinely-missing segment
 -- surfaces as a query error the caller maps to "no context" (stores NULL).
 SELECT
   COALESCE((SELECT prev.source_text FROM segments prev
-     WHERE prev.file_id = s.file_id AND prev."position" < s."position"
-     ORDER BY prev."position" DESC LIMIT 1), '')::text AS prev_source,
+     WHERE prev.file_id = s.file_id
+       AND (prev."position", prev.sub_position) < (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations pt
+                   WHERE pt.segment_id = prev.id AND pt.target_language = @target_language)
+     ORDER BY prev."position" DESC, prev.sub_position DESC LIMIT 1), '')::text AS prev_source,
   COALESCE((SELECT nxt.source_text FROM segments nxt
-     WHERE nxt.file_id = s.file_id AND nxt."position" > s."position"
-     ORDER BY nxt."position" ASC LIMIT 1), '')::text AS next_source
+     WHERE nxt.file_id = s.file_id
+       AND (nxt."position", nxt.sub_position) > (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations nt
+                   WHERE nt.segment_id = nxt.id AND nt.target_language = @target_language)
+     ORDER BY nxt."position" ASC, nxt.sub_position ASC LIMIT 1), '')::text AS next_source
 FROM segments s
 WHERE s.id = @segment_id;
 
@@ -726,7 +736,7 @@ WHERE s.file_id = @file_id
   AND t.edited_by IS NULL
   AND t.locked = false
   AND (sqlc.narg('ids')::bigint[] IS NULL OR t.id = ANY(sqlc.narg('ids')::bigint[]))
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListPreTranslatedByFile :many
 -- Rows of one target language the Predict phase should score: MT/TM-filled,
@@ -756,20 +766,22 @@ WHERE s.file_id = @file_id
     (t.origin IS NOT NULL AND t.edited_by IS NULL)
     OR (@review_all::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
   )
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListApprovedForExport :many
+-- Every row of one job, in document order. The pieces of a split carry the
+-- original key they rebuild (export_key), with their gap and chip base.
 SELECT t.id, t.segment_id, t.target_language, s.source_text, s.segment_key,
-       t.active_text, t.active_rich_text, t.status, s.source_rich_text
+       t.active_text, t.active_rich_text, t.status, s.source_rich_text,
+       s.export_key, s.gap_before, s.chip_base
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListAllForBilingualExport :many
--- Bilingual XLIFF export: EVERY segment of the file (LEFT JOIN, so
--- untranslated ones appear too) with its source rich text, the translation
--- for the requested language, its lock and status, and its pre-translation
+-- Bilingual XLIFF export: every row of the job (file + language), untranslated
+-- ones too, with its source rich text, the translation, its lock and status, and its pre-translation
 -- lineage (origin + TM score).
 -- For a TM pre-translation, match_* is the TM unit that was matched, taken
 -- from the latest `tm` history event. It is NULL when that unit or its
@@ -780,7 +792,7 @@ SELECT s.id AS segment_id, s.segment_key, s.source_text, s.source_rich_text, s.p
        t.status, t.locked, t.origin, t.tm_match_percent,
        mtu.source_text AS match_source_text, mtu.target_text AS match_target_text
 FROM segments s
-LEFT JOIN translations t ON t.segment_id = s.id AND t.target_language = @target_language
+JOIN translations t ON t.segment_id = s.id AND t.target_language = @target_language
 LEFT JOIN LATERAL (
     SELECT h.tm_entry_id
     FROM translation_history h
@@ -794,7 +806,7 @@ LEFT JOIN translation_memory mtu ON mtu.id = m.tm_entry_id
     AND EXISTS (SELECT 1 FROM tm_collections c
                 WHERE c.id = mtu.tm_id AND c.tenant_id = @tenant_id AND c.deleted_at IS NULL)
 WHERE s.file_id = @file_id
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListApprovedForTM :many
 -- All human-approved translations for a file + language, for TM write-back.
@@ -811,7 +823,7 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
   AND t.status = 'approved' AND t.active_text IS NOT NULL
   AND t.confirmed_via = 'user'
-ORDER BY s.position;
+ORDER BY s.position, s.sub_position;
 
 -- name: ListApprovedForTMByIDs :many
 -- The listed translations of the tenant that may go to the TM, with what the
@@ -827,7 +839,7 @@ JOIN projects p ON p.id = f.project_id
 WHERE t.id = ANY(@ids::bigint[]) AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
   AND t.status = 'approved' AND t.active_text IS NOT NULL
   AND t.confirmed_via = 'user'
-ORDER BY s.file_id, t.target_language, s.position;
+ORDER BY s.file_id, t.target_language, s.position, s.sub_position;
 
 -- name: GetJobAnalysis :many
 -- Bands compute from the new `origin` column (sticky
@@ -941,7 +953,7 @@ WITH numbered AS (
         length(s.source_text) AS chars,
         ROW_NUMBER() OVER (
             PARTITION BY t.target_language, s.source_text
-            ORDER BY s.file_id, s.position
+            ORDER BY s.file_id, s.position, s.sub_position
         ) AS rn
     FROM translations t
     JOIN segments s ON s.id = t.segment_id
@@ -993,10 +1005,16 @@ INSERT INTO ai_usage_events (
 -- and an omitted cursor arrives as 0, so an exclusive `>` would silently skip
 -- the very first segment of every file. Callers advance by passing
 -- last_position + 1, which the backend returns as next_cursor.
+--
+-- A page holds @row_limit whole positions: the pieces of a split share their
+-- position, so a page never ends between them and may hold a few more rows
+-- than @row_limit. The page's last position comes from an ordered, limited
+-- scan of the matching positions, so a page reads only its own rows.
 SELECT
     t.id             AS translation_id,
     s.id             AS segment_id,
     s.position       AS position,
+    s.sub_position   AS sub_position,
     s.source_text    AS source_text,
     t.active_text    AS target_text,
     t.status         AS status,
@@ -1015,8 +1033,23 @@ WHERE s.file_id = sqlc.arg(file_id)::bigint
        OR s.source_text ILIKE '%' || sqlc.arg(query)::text || '%'
        OR coalesce(t.active_text, '') ILIKE '%' || sqlc.arg(query)::text || '%')
   AND s.position >= sqlc.arg(cursor)::int
-ORDER BY s.position
-LIMIT sqlc.arg(row_limit)::int;
+  AND s.position <= (
+    SELECT max(firsts.position) FROM (
+      SELECT ps.position
+      FROM segments ps
+      JOIN translations pt ON pt.segment_id = ps.id AND pt.target_language = sqlc.arg(target_language)::text
+      WHERE ps.file_id = sqlc.arg(file_id)::bigint
+        AND (sqlc.arg(status)::text = '' OR pt.status::text = sqlc.arg(status)::text)
+        AND (sqlc.arg(origin)::text = '' OR pt.origin::text = sqlc.arg(origin)::text)
+        AND (sqlc.arg(query)::text = ''
+             OR ps.source_text ILIKE '%' || sqlc.arg(query)::text || '%'
+             OR coalesce(pt.active_text, '') ILIKE '%' || sqlc.arg(query)::text || '%')
+        AND ps.position >= sqlc.arg(cursor)::int
+      GROUP BY ps.position
+      ORDER BY ps.position
+      LIMIT sqlc.arg(row_limit)::int
+    ) firsts)
+ORDER BY s.position, s.sub_position;
 
 -- name: CountJobSegmentsPage :one
 -- Total matching the same filters as ListJobSegmentsPage (cursor excluded), so

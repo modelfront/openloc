@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query'
 import {
   invalidateJobContext,
+  invalidateSegmentSaveContext,
   invalidateProjectStatus,
   invalidateTMContext,
   invalidateUpdatedTMs,
@@ -14,6 +15,8 @@ import {
 } from './query-invalidation'
 import { queryKeys } from './query-keys'
 import type { Translation } from '../api/projects'
+import type { EditorRef, EditorRow } from '../api/editor'
+import { indexLookup, type EditorIndexData, type IndexRow } from './editor-index'
 import type { TMEntriesPage, TMEntry } from '../api/tms'
 
 /** The cached TM entry pages under `key`; throws when nothing is cached there. */
@@ -97,6 +100,47 @@ describe('invalidateJobContext', () => {
     for (const key of UNTOUCHED_JOB_QUERIES) {
       expect(isInvalidated(qc, key), `${JSON.stringify(key)} should stay fresh`).toBe(false)
     }
+  })
+
+  // After a split or join the caller has just fetched the editor's index and
+  // its pages on screen: those stay as they are, the rest of the job's
+  // translations go stale as usual.
+  it('leaves the editor index and pages alone when the caller has just fetched them', () => {
+    const qc = new QueryClient()
+    const fresh = [queryKeys.job.editorIndex(JOB_ID), queryKeys.job.editorPage(JOB_ID, 0, '1,2')]
+    const stale = [queryKeys.job.translations(JOB_ID), queryKeys.job.editorRefs(JOB_ID)]
+    for (const key of [...fresh, ...stale]) qc.setQueryData(key, 'cached')
+
+    invalidateJobContext(qc, PROJECT_ID, JOB_ID, { editorRowsFresh: true })
+
+    for (const key of fresh) expect(isInvalidated(qc, key), `${JSON.stringify(key)} should stay fresh`).toBe(false)
+    for (const key of stale) expect(isInvalidated(qc, key), `${JSON.stringify(key)} should go stale`).toBe(true)
+  })
+})
+
+// A single-segment save patches its row into the cache: the job's whole
+// translation list, the previous-step chips, the QA report, the comments and
+// the leverage bar (patched by the save, and a full-job read on the server)
+// stay as they are; everything else invalidateJobContext covers goes stale.
+const SEGMENT_SAVE_KEPT: ReadonlyArray<readonly unknown[]> = [
+  queryKeys.job.translations(JOB_ID),
+  queryKeys.job.leverage(JOB_ID),
+  queryKeys.job.stepStatuses(JOB_ID),
+  queryKeys.job.qaReport(JOB_ID),
+  queryKeys.comments.allCounts,
+  queryKeys.comments.all,
+]
+
+describe('invalidateSegmentSaveContext', () => {
+  it('marks the job caches stale except the whole-job lists a segment save patches or leaves alone', () => {
+    const qc = new QueryClient()
+    for (const key of [...EXPECTED_JOB_INVALIDATIONS, ...UNTOUCHED_JOB_QUERIES]) qc.setQueryData(key, 'cached')
+
+    invalidateSegmentSaveContext(qc, PROJECT_ID, JOB_ID)
+
+    const kept = new Set(keySet(SEGMENT_SAVE_KEPT))
+    const stale = qc.getQueryCache().getAll().filter(q => q.state.isInvalidated).map(q => q.queryKey)
+    expect(keySet(stale)).toEqual(keySet(EXPECTED_JOB_INVALIDATIONS).filter(k => !kept.has(k)))
   })
 })
 
@@ -392,57 +436,69 @@ describe('advanceTranslationInCache', () => {
       ...extra,
     } as unknown as Translation
   }
+  const row = (t: Translation): EditorRow => ({ segment: { id: t.segment_id } as EditorRow['segment'], translation: t, previous_step_text: null, placeables: [] })
+  const indexRow = (id: number, extra: Partial<IndexRow> = {}): IndexRow => ({
+    segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 1, status: 'needs_review',
+    hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null, locked: false,
+    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, ...extra,
+  })
+  const jobId = 42
 
-  // The cache shape MUST mirror what `listJobTranslations` actually stores —
-  // it unwraps `r.data` so the cache holds `Translation[]` directly, NOT
-  // `{ data: Translation[] }`. A helper that checks for the wrong shape is a
-  // *silent no-op*, so these tests pin the real cache shape.
-  it('updates the matching row\'s updated_at + saved fields in the cache', () => {
+  // The cache shapes MUST mirror what the editor stores: a page holds
+  // EditorRow[], the index IndexRow[]. A helper that checks for the wrong
+  // shape is a *silent no-op*, so these tests pin the real shapes.
+  it('updates the matching row in whichever loaded page holds it', () => {
     const qc = new QueryClient()
-    const jobId = 42
-    qc.setQueryData<Translation[]>(queryKeys.job.translations(jobId), [
-      makeTr(1, 'T0', { active_text: 'original' }),
-    ])
+    qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 0, '1'), [row(makeTr(1, 'T0', { active_text: 'original' }))])
+    qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 1, '2'), [row(makeTr(2, 'X0', { active_text: 'other' }))])
 
-    const saved = makeTr(1, 'T1', { active_text: 'edited' })
-    advanceTranslationInCache(qc, jobId, saved)
+    advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'edited' }))
 
-    const cache = qc.getQueryData<Translation[]>(queryKeys.job.translations(jobId))
-    expect(cache?.[0].updated_at,
+    const page0 = qc.getQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 0, '1'))
+    expect(page0?.[0].translation?.updated_at,
       'cached row\'s updated_at must reflect the just-saved value, ' +
       'so the next isActive flip captures fresh baseline (not stale T0)').toBe('T1')
-    expect(cache?.[0].active_text).toBe('edited')
+    expect(page0?.[0].translation?.active_text).toBe('edited')
+    const page1 = qc.getQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 1, '2'))
+    expect(page1?.[0].translation?.updated_at, 'row 2 not touched').toBe('X0')
+    expect(page1?.[0].translation?.active_text, 'row 2 fields preserved').toBe('other')
   })
 
-  it('leaves untouched rows alone (no friendly fire)', () => {
+  it('moves the index row to the saved status, so counts and filters follow', () => {
     const qc = new QueryClient()
-    const jobId = 42
-    qc.setQueryData<Translation[]>(queryKeys.job.translations(jobId), [
-      makeTr(1, 'T0'),
-      makeTr(2, 'X0', { active_text: 'other' }),
+    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), { rows: [indexRow(1), indexRow(2)], repetitionStats: { segments: 0, words: 0, characters: 0 }, lookup: indexLookup([indexRow(1), indexRow(2)]) })
+
+    const before = qc.getQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId))!.lookup
+    advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'edited', step_edited: true, locked: true, qe_note: 'a long note' }))
+
+    const idx = qc.getQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId))!.rows
+    expect(idx[0]).toMatchObject({ status: 'approved', hasText: true, stepEdited: true, locked: true, qeNoteHead: 'a long' })
+    expect(idx[1]).toEqual(indexRow(2))
+    // A save moves no row, so the lookup keeps its identity.
+    expect(qc.getQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId))!.lookup).toBe(before)
+  })
+
+  it('updates the target of a cross-reference that points at the saved segment', () => {
+    const qc = new QueryClient()
+    qc.setQueryData<EditorRef[]>(queryKeys.job.editorRefs(jobId), [
+      { key: 'a', segment_id: 1, source: 'Dry', target: '' },
+      { key: 'b', segment_id: 2, source: 'Wet', target: 'Nass' },
     ])
+    advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'Trocken' }))
+    const refs = qc.getQueryData<EditorRef[]>(queryKeys.job.editorRefs(jobId))
+    expect(refs?.map(r => r.target)).toEqual(['Trocken', 'Nass'])
 
-    advanceTranslationInCache(qc, jobId, makeTr(1, 'T1'))
-
-    const cache = qc.getQueryData<Translation[]>(queryKeys.job.translations(jobId))
-    const row2 = cache!.find(r => r.id === 2)!
-    expect(row2?.updated_at, 'row 2 not touched').toBe('X0')
-    expect(row2.active_text, 'row 2 fields preserved').toBe('other')
+    // A save of a segment nothing references keeps the list's identity, so the
+    // map built from it does not re-render every visible row.
+    advanceTranslationInCache(qc, jobId, makeTr(3, 'T1', { active_text: 'other' }))
+    expect(qc.getQueryData(queryKeys.job.editorRefs(jobId))).toBe(refs)
   })
 
-  it('is a no-op when the cache has no entry for the job (no save-before-load races)', () => {
+  it('is a no-op when nothing is cached for the job (no save-before-load races)', () => {
     const qc = new QueryClient()
-    advanceTranslationInCache(qc, 42, makeTr(1, 'T1'))
-    expect(qc.getQueryData(queryKeys.job.translations(42))).toBeUndefined()
-  })
-
-  it('is a no-op when the cache shape is unexpected (defensive)', () => {
-    const qc = new QueryClient()
-    const jobId = 42
-    qc.setQueryData(queryKeys.job.translations(jobId), { data: 'not an array' })
     advanceTranslationInCache(qc, jobId, makeTr(1, 'T1'))
-    // The helper must NOT throw and must NOT mutate the unexpected shape.
-    expect(qc.getQueryData(queryKeys.job.translations(jobId))).toEqual({ data: 'not an array' })
+    expect(qc.getQueryData(queryKeys.job.editorIndex(jobId))).toBeUndefined()
+    expect(qc.getQueryData(queryKeys.job.editorRefs(jobId))).toBeUndefined()
   })
 })
 

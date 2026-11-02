@@ -14,15 +14,17 @@ function setup(onSubmit = vi.fn().mockResolvedValue(undefined)) {
 }
 
 describe('WorkflowNameDialog', () => {
-  it('refuses an empty or whitespace name inline and never calls onSubmit', async () => {
+  it('keeps Save disabled for an empty or whitespace name and never calls onSubmit', async () => {
     const user = userEvent.setup()
     const { onSubmit, onClose } = setup()
-    expect(screen.getByTestId('save-as-workflow-submit')).toBeEnabled()
-    await user.click(screen.getByTestId('save-as-workflow-submit'))
-    expect(await screen.findByText('Workflow name is required')).toBeInTheDocument()
+    const submit = () => screen.getByTestId('save-as-workflow-submit')
+    await waitFor(() => expect(submit()).toHaveAttribute('aria-disabled', 'true'))
+    await user.click(submit())
     await user.type(screen.getByTestId('save-as-workflow-name'), '   ')
-    await user.click(screen.getByTestId('save-as-workflow-submit'))
-    expect(screen.getByText('Workflow name is required')).toBeInTheDocument()
+    await user.tab()
+    expect(await screen.findByText('Workflow name is required')).toBeInTheDocument()
+    expect(submit()).toHaveAttribute('aria-disabled', 'true')
+    await user.click(submit())
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
   })

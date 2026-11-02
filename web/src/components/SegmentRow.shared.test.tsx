@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { OUTCOME_LABELS, STATUS_CHIP_COLORS, qeChipInfo, serializeEditor, termUnderlineClass } from './SegmentRow.shared'
+import { OUTCOME_LABELS, STATUS_CHIP_COLORS, plainTargetText, qeChipInfo, serializeEditor, termUnderlineClass } from './SegmentRow.shared'
 import type { SegmentEditorHandle } from './SegmentEditor'
 import type { TermLookupResult } from '../api'
 
@@ -124,5 +124,16 @@ describe('serializeEditor', () => {
 
   it('sends the plain text for a plain-text file', () => {
     expect(serializeEditor(bold, 'Hallo Welt', true).text).toBe('Hallo Welt')
+  })
+})
+
+describe('plainTargetText', () => {
+  it('flattens the stored rich text before the editor is there: no tag ids, escapes decoded', () => {
+    const stored = 'Schritt <ph id="1"/> auf https://example.com/?a=1&amp;b=2'
+    expect(plainTargetText(null, stored)).toBe('Schritt  auf https://example.com/?a=1&b=2')
+  })
+
+  it('reads the editor once it is there', () => {
+    expect(plainTargetText({ getText: () => 'from the editor' }, '<ph id="1"/>')).toBe('from the editor')
   })
 })

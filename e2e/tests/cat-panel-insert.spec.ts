@@ -24,6 +24,8 @@ const TMX = `<?xml version="1.0" encoding="UTF-8"?>
 
 const isDraftSave = (page: Page) =>
   page.waitForResponse((r) => r.request().method() === "PUT" && /\/translations\/\d+\/draft$/.test(r.url()));
+const isConfirm = (page: Page) =>
+  page.waitForResponse((r) => r.request().method() === "PUT" && /\/translations\/\d+$/.test(r.url()));
 
 test.describe("CAT editor — Resources panel insert", () => {
   // Each delete is registered right after its create, so a failure partway
@@ -67,7 +69,8 @@ test.describe("CAT editor — Resources panel insert", () => {
     await tmRow.getByText("Hello world").click();
     const card = sidebar.getByTestId("tm-match-card").filter({ hasText: "Hola, mundo" });
     await expect(card).toBeVisible({ timeout: 10000 });
-    const pct = (await card.innerText()).match(/(\d+)%/)?.[1];
+    // The shown percent: a docked card strikes out its text match before it.
+    const pct = (await card.getByTestId("tm-match-percent").innerText()).match(/(\d+)%/)?.[1];
     expect(pct, "the card shows a match %").toBeTruthy();
     expect(Number(pct)).toBeLessThan(100);
 
@@ -91,7 +94,7 @@ test.describe("CAT editor — Resources panel insert", () => {
     await keyRow.getByText("Thank you very much!").first().click();
     const keyCard = sidebar.getByTestId("tm-match-card").filter({ hasText: "Muchas gracias" });
     await expect(keyCard).toBeVisible({ timeout: 10000 });
-    const keyPct = (await keyCard.innerText()).match(/(\d+)%/)?.[1];
+    const keyPct = (await keyCard.getByTestId("tm-match-percent").innerText()).match(/(\d+)%/)?.[1];
     expect(Number(keyPct)).toBeLessThan(100);
     const keySave = isDraftSave(page);
     await page.keyboard.press(process.platform === "darwin" ? "Meta+1" : "Control+1");
@@ -129,9 +132,7 @@ test.describe("CAT editor — Resources panel insert", () => {
     await row.getByText("Save your work.").first().click();
     await segmentEditor(page).first().click();
     await page.keyboard.type("Guarde su trabajo.");
-    const confirm = page.waitForResponse(
-      (r) => r.request().method() === "PUT" && /\/translations\/\d+$/.test(r.url()),
-    );
+    const confirm = isConfirm(page);
     await page.keyboard.press("ControlOrMeta+Enter");
     expect((await confirm).status()).toBe(200);
     const headers = { Authorization: `Bearer ${job.token}` };
@@ -157,5 +158,60 @@ test.describe("CAT editor — Resources panel insert", () => {
     expect((await save).status()).toBe(200);
     await expect(sameRow.getByTitle(/101%/)).toHaveText("101%");
   });
-});
 
+  test("an exact TM match is approved when chosen; a fuzzy one stays a draft", async ({ page }) => {
+    // A job, a TM and two inserts.
+    test.slow();
+    await login(page);
+    const job = await createIsolatedCATJob(page, {
+      fileName: `panel-insert-exact-${RUN}.txt`,
+      content: "Hello, world\nThank you very much!\n",
+      targetLanguages: ["es"],
+    });
+    cleanups.push(() => deleteProjectViaAPI(page, job.projectId));
+    const tmId = await createTMViaAPI(page, `Panel insert exact TM ${RUN}`, { source: "en", targets: ["es"] });
+    cleanups.push(() => deleteTMViaAPI(page, tmId));
+    await importTMXViaAPI(page, tmId, TMX);
+    await setProjectTMsViaAPI(page, job.projectId, [
+      { tm_id: tmId, source_language: "en", target_language: "es", mode: "read_write", priority: 0 },
+    ]);
+
+    await job.navigateToEditor(/Hello, world/);
+    const sidebar = page.getByTestId("editor-sidebar");
+    const statuses = async () => {
+      const res = await page.request.get(`/api/files/${job.fileId}/translations?lang=es`, {
+        headers: { Authorization: `Bearer ${job.token}` },
+      });
+      expect(res.ok()).toBe(true);
+      const rows: { active_text?: string | null; status: string }[] = (await res.json()).data;
+      return Object.fromEntries(rows.map((t) => [t.active_text ?? "", t.status]));
+    };
+
+    // Exact: the insert saves the draft with its TM %, then confirms it.
+    const exactRow = page.locator('[data-segment-idx="0"]');
+    await exactRow.getByText("Hello, world").first().click();
+    const exactCard = sidebar.getByTestId("tm-match-card").filter({ hasText: "Hola, mundo" });
+    await expect(exactCard.getByTestId("tm-match-percent")).toHaveText("100%", { timeout: 10000 });
+    const exactDraft = isDraftSave(page);
+    const exactConfirm = isConfirm(page);
+    await exactCard.click();
+    expect((await exactDraft).status()).toBe(200);
+    expect((await exactConfirm).status()).toBe(200);
+    await expect(exactRow.getByRole("img", { name: "Approved" })).toBeVisible();
+    await expect(exactRow.getByTitle(/100%/)).toHaveText("100%");
+    // Choosing the match does not move on to the next segment.
+    await expect(exactRow.getByTestId("segment-editor")).toBeVisible();
+
+    // Fuzzy: a suggestion, so it stays a draft.
+    const fuzzyRow = page.locator('[data-segment-idx="1"]');
+    await fuzzyRow.getByText("Thank you very much!").first().click();
+    const fuzzyCard = sidebar.getByTestId("tm-match-card").filter({ hasText: "Muchas gracias" });
+    await expect(fuzzyCard).toBeVisible({ timeout: 10000 });
+    const fuzzyDraft = isDraftSave(page);
+    await fuzzyCard.click();
+    expect((await fuzzyDraft).status()).toBe(200);
+    await expect(fuzzyRow.getByRole("img", { name: "Draft" })).toBeVisible();
+
+    expect(await statuses()).toEqual({ "Hola, mundo": "approved", "Muchas gracias": "needs_review" });
+  });
+});

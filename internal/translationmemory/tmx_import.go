@@ -253,27 +253,14 @@ func sweepImportSpool(ctx context.Context) {
 }
 
 // insertTMEntriesOneByOne inserts a batch the multi-row INSERT refused, one
-// entry at a time, skipping (and counting in skipped) each one that fails.
-// firstIndex is the batch's position in the file, for the log.
+// entry at a time through the same INSERT — so each keeps the stamps the batch
+// would have given it — skipping (and counting in skipped) each one that
+// fails. firstIndex is the batch's position in the file, for the log.
 // Returns the entries inserted.
 func (s *Service) insertTMEntriesOneByOne(ctx context.Context, tmID int64, batch []tmx.Entry, firstIndex int, skipped *int32, importAttrs func(...slog.Attr) []slog.Attr) int {
 	inserted := 0
-	for i, e := range batch {
-		creator := e.Creator
-		if creator == "" {
-			creator = e.ChangeUser
-		}
-		if _, err := s.queries.InsertTM(ctx, db.InsertTMParams{
-			TmID:           tmID,
-			SourceLanguage: e.SourceLang,
-			TargetLanguage: e.TargetLang,
-			SourceText:     e.SourceText,
-			TargetText:     e.TargetText,
-			CreatedBy:      creator,
-			TuID:           e.TUId,
-			SourceRichText: e.SourceRichText, // "" → NULL via NULLIF in SQL
-			TargetRichText: e.TargetRichText,
-		}); err != nil {
+	for i := range batch {
+		if _, err := s.batchUpsertTM(ctx, tmID, batch[i:i+1]); err != nil {
 			*skipped++
 			if *skipped <= 10 { // log the first 10 individual errors only
 				logging.Warn(ctx, err, "TM import entry skipped", "tm-import-entry-skipped", importAttrs(logging.Label("entry_index", strconv.Itoa(firstIndex+i)))...)

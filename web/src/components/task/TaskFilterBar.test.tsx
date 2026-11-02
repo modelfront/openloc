@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('../../api', async importOriginal => ({
@@ -9,11 +9,7 @@ vi.mock('../../api', async importOriginal => ({
 }))
 
 import { TaskFilterBar } from './TaskFilterBar'
-
-function Where() {
-  const loc = useLocation()
-  return <p data-testid="where">{loc.search}</p>
-}
+import { Where } from '../../test/router'
 
 function renderBar(url = '/tasks') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

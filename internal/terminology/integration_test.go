@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/errtrack/errtracktest"
 	"openloc/internal/terminology"
 	"openloc/internal/testutil"
 )
@@ -1115,10 +1116,12 @@ func TestIntegrationTBXImportOtherLanguages(t *testing.T) {
 }
 
 // Uploading a non-TBX (or DCT-style) file must be rejected with an actionable
-// 400, not silently imported as 0 concepts.
+// 400, not silently imported as 0 concepts. It is the user's file, not our
+// fault, so error tracking hears nothing.
 func TestIntegrationTBXImportUnsupported(t *testing.T) {
 	pool, q, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()
+	notices := errtracktest.Install(t)
 	router := testutil.NewTestRouter(pool)
 	tenant := testutil.SeedTenant(t, q, "TestCorp")
 	user := testutil.SeedUser(t, q, tenant.ID, "user@test.com", "pass")
@@ -1153,6 +1156,9 @@ func TestIntegrationTBXImportUnsupported(t *testing.T) {
 	testutil.DecodeJSON(t, rec, &errResp)
 	if !bytes.Contains([]byte(errResp.Error.Message), []byte("TBX")) {
 		t.Errorf("expected an actionable 'not a TBX' message, got %q", errResp.Error.Message)
+	}
+	if notices.Len() != 0 {
+		t.Errorf("an unsupported file sent %d notices, want 0", notices.Len())
 	}
 }
 

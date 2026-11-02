@@ -22,6 +22,7 @@ ORDER BY ws.step_order;
 -- name: GetCurrentStepForJob :one
 SELECT jsa.*, ws.name AS step_name, ws.step_order, ws.role_required, ws.step_type,
        (ws.ai_router_id IS NOT NULL)::bool AS is_ai_step,
+       job_last_clear_step_order(jsa.job_id) AS last_clear_step_order,
        u.name AS assignee_name, u.email AS assignee_email
 FROM job_step_assignments jsa
 JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
@@ -114,6 +115,21 @@ WHERE jsa.job_id = j.id
   AND jsa.status IN ('pending', 'in_progress')
   AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
 
+-- name: ReseedWaitingStepAssignments :exec
+-- A workflow edit put a different step at this position: the tasks still
+-- waiting on it take the new step's default assignee, NULL included. Only
+-- pending tasks are touched; a position with any other task is locked and
+-- never changes its step. Tenant-scoped like ReassignInFlightStepAssignments.
+UPDATE job_step_assignments jsa
+SET assigned_to = sqlc.narg(assigned_to)
+FROM jobs j, files f, projects p
+WHERE jsa.job_id = j.id
+  AND f.id = j.file_id
+  AND p.id = f.project_id
+  AND jsa.workflow_step_id = @workflow_step_id
+  AND jsa.status = 'pending'
+  AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
+
 -- name: SetJobCurrentStep :exec
 UPDATE jobs SET current_step_id = $2 WHERE id = $1;
 
@@ -165,7 +181,8 @@ SELECT count(*) FROM job_step_assignments WHERE workflow_step_id = $1;
 -- the same rule as taskedit's edit guard and the editor's currentTask, so the
 -- matrix cell, Open and the job row agree. Completed-workflow jobs
 -- (current_step_id NULL) still surface a step assignment to carry/edit a
--- deadline. `step_order` backs first-step-only gating (Apply TM/MT);
+-- deadline. `step_order` backs first-step-only gating (Apply TM/MT) and,
+-- with `last_clear_step_order`, the clear gate;
 -- `step_assignment_id` + `deadline` back the inline deadline editor; `is_ai_step`
 -- gates the manager QE+APE re-run button.
 SELECT DISTINCT ON (jsa.job_id)
@@ -175,7 +192,8 @@ SELECT DISTINCT ON (jsa.job_id)
        (ws.ai_router_id IS NOT NULL)::bool AS is_ai_step,
        (SELECT COUNT(*) FROM workflow_steps ws2
         WHERE ws2.settings_profile_id = ws.settings_profile_id
-          AND ws2.step_order > ws.step_order) = 0 AS is_last_step
+          AND ws2.step_order > ws.step_order) = 0 AS is_last_step,
+       (SELECT project_last_clear_step_order(@project_id::bigint))::int AS last_clear_step_order
 FROM job_step_assignments jsa
 JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
 JOIN jobs j ON j.id = jsa.job_id
@@ -220,11 +238,21 @@ WHERE jsa.assigned_to = @user_id
   AND j.current_step_id = jsa.id
 ORDER BY jsa.started_at DESC;
 
--- name: CountStartedAssignmentsForStep :one
--- Assignments on a step that a job has already reached (anything but
--- pending). A step nobody reached may still be swapped or removed by a
--- workflow edit; a reached one may not.
-SELECT count(*) FROM job_step_assignments WHERE workflow_step_id = $1 AND status <> 'pending';
+-- name: ListReachedStepsForProfile :many
+-- The steps of a settings profile that a job has reached at least once, with
+-- how many jobs reached each. A task counts once it is past pending, or while
+-- pending with a round on record: a reject resets the steps it skips back
+-- over, and a clear resets a finished workflow, and both keep the rounds.
+-- A reached step keeps its place in a workflow edit.
+-- Served by idx_jsa_reached (partial, covering job_id), so it reads only the
+-- reached tasks; the tenant check is on the profile.
+SELECT jsa.workflow_step_id, count(DISTINCT jsa.job_id)::int AS jobs
+FROM job_step_assignments jsa
+JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
+JOIN settings_profiles sp ON sp.id = ws.settings_profile_id
+WHERE sp.id = @settings_profile_id AND sp.tenant_id = @tenant_id
+  AND (jsa.status <> 'pending' OR jsa.round > 0)
+GROUP BY jsa.workflow_step_id;
 
 -- name: ListJobsForSettingsProfile :many
 -- Jobs whose step assignments hang off a profile's steps — the jobs a

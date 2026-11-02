@@ -119,3 +119,27 @@ func TestIntegrationSetTermAssignments_AtomicRollback(t *testing.T) {
 		t.Errorf("after failed PUT: expected original term base %d preserved, got %d", tb.ID, after.Data.TermAssignments[0].TermBaseID)
 	}
 }
+
+// A term-base row sent without a mode gets Read and Write, as the settings
+// page creates it: Write is what lets the editor's quick-add add terms.
+func TestIntegrationTermAssignmentDefaultsToReadWrite(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+	router := testutil.NewTestRouter(pool)
+	tenant := testutil.SeedTenant(t, q, "DefaultModeCorp")
+	user := testutil.SeedUser(t, q, tenant.ID, "mode@test.com", "pass")
+	project := testutil.SeedProject(t, q, tenant.ID, "Mode Project", "en", []string{"fr"})
+	tb := testutil.SeedTermBase(t, q, tenant.ID, "Main", "en", "fr")
+
+	rec := testutil.DoRequest(t, router, "PUT", fmt.Sprintf("/api/projects/%d/terminology", project.ID), map[string]any{
+		"assignments": []map[string]any{{"term_base_id": tb.ID, "source_language": "en", "target_language": "fr", "priority": 0}},
+	}, user.ID, tenant.ID)
+	testutil.AssertStatus(t, rec, http.StatusOK)
+	rows, err := q.ListSettingsTermAssignments(testutil.Ctx(), project.SettingsProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Mode != "read_write" {
+		t.Fatalf("assignments = %+v, want one with mode read_write", rows)
+	}
+}

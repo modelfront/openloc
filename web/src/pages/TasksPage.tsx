@@ -17,7 +17,8 @@ import { parseTaskFilters } from '../lib/task-filters'
 import { isAdminRole } from '../lib/roles'
 import { deadlineChipProps, type DeadlineBand } from '../lib/deadline'
 import { isAIStepRunning } from '../lib/project-logic'
-import { editorPath, EDITOR_LINK_TARGET, openEditorTab } from '../lib/editor-link'
+import { editorPath, openEditorTab } from '../lib/editor-link'
+import { NEW_TAB_ATTRS } from '../lib/new-tab'
 import { useRefreshOnReturn } from '../hooks/useRefreshOnReturn'
 import { cn } from '@/lib/utils'
 import { Chip, chipTextClass } from '@/components/ui/chip'
@@ -137,7 +138,7 @@ export default function TasksPage() {
                     // handler must not open a second tab on top of it.
                     <Link
                       to={path}
-                      {...EDITOR_LINK_TARGET}
+                      {...NEW_TAB_ATTRS}
                       onClick={e => { e.stopPropagation(); refreshOnReturn() }}
                       className="flex min-w-0 group-hover:underline"
                       data-testid={`task-open-${t.job_id}`}

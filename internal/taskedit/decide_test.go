@@ -91,3 +91,26 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestInClearWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		st   State
+		want bool
+	}{
+		{"no workflow", State{}, true},
+		{"nothing started", State{HasWorkflow: true, LastClearStepOrder: 2}, true},
+		{"active automated step before the first human step", State{ActiveID: 1, ActiveStepOrder: 1, LastClearStepOrder: 2}, true},
+		{"active first human step", State{ActiveID: 1, ActiveStepOrder: 2, LastClearStepOrder: 2}, true},
+		{"active step after it", State{ActiveID: 1, ActiveStepOrder: 3, LastClearStepOrder: 2}, false},
+		{"completed first human step", State{LastCompletedID: 1, LastCompletedOrder: 2, LastClearStepOrder: 2}, true},
+		{"completed step after it", State{LastCompletedID: 1, LastCompletedOrder: 3, LastClearStepOrder: 2}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.st.inClearWindow(); got != c.want {
+				t.Fatalf("inClearWindow() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

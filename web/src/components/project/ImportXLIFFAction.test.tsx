@@ -58,7 +58,6 @@ describe('ImportXLIFFAction', () => {
     expect(mockReimportXLIFF).toHaveBeenCalledWith(42, expect.any(File), { lang: 'de', force: false })
     const keys = invalidate.mock.calls.map(c => (c[0] as { queryKey: unknown[] }).queryKey)
     expect(keys).toContainEqual(['job-translations', 9])
-    expect(keys).toContainEqual(['segments', 42])
     expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 

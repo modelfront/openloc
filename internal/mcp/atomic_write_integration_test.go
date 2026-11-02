@@ -26,6 +26,7 @@ func TestIntegrationMCPFailedCreateSavesNothing(t *testing.T) {
 		return testutil.CountRows(t, f.pool, "SELECT count(*) FROM settings_profiles WHERE tenant_id = $1", f.tenantA.ID)
 	}
 
+	wf := testutil.LibraryWorkflow(t, f.q, f.tenantA.ID)
 	cases := []struct {
 		name  string
 		tool  string
@@ -43,12 +44,12 @@ func TestIntegrationMCPFailedCreateSavesNothing(t *testing.T) {
 			"CreateAIPromptLanguageAddition",
 			func() int { return testutil.CountAIPromptsNamed(t, f.q, f.tenantA.ID, "Half prompt") }},
 		{"project", "openloc_create_project",
-			map[string]any{"name": "Half project", "source_language": "en", "target_languages": []string{"de"}},
+			map[string]any{"name": "Half project", "source_language": "en", "target_languages": []string{"de"}, "workflow_id": wf},
 			"InsertProjectEvent",
 			func() int { return projectsNamed(t, f, f.tenantA.ID, "Half project") }},
 		{"project with a customer", "openloc_create_project",
 			map[string]any{"name": "Half customer project", "source_language": "en", "target_languages": []string{"de"},
-				"customer_id": customer.ID},
+				"customer_id": customer.ID, "workflow_id": wf},
 			"SetProjectLabel",
 			func() int { return projectsNamed(t, f, f.tenantA.ID, "Half customer project") }},
 	}

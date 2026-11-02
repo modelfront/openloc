@@ -262,8 +262,9 @@ func TestIntegrationBulkClear_Selection(t *testing.T) {
 	}
 }
 
-// Clear on a selection has the job clear's gates: refused outside the first
-// workflow step and while a pipeline run holds the job — and writes nothing.
+// Clear on a selection has the job clear's gates: refused past the first human
+// or hybrid workflow step and while a pipeline run holds the job — and writes
+// nothing.
 func TestIntegrationBulkClear_Gates(t *testing.T) {
 	t.Run("not first step", func(t *testing.T) {
 		f := newBulkFixture(t)

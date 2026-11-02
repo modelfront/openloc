@@ -36,17 +36,49 @@ WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL;
 -- name: ListQARules :many
 SELECT * FROM qa_rules
 WHERE profile_id = $1
-ORDER BY check_type;
+ORDER BY check_type, id;
 
 -- name: UpsertQARule :one
+-- Built-in check types only: a regex rule has no natural key and is written by
+-- CreateQARegexRule / UpdateQARegexRule.
 INSERT INTO qa_rules (profile_id, check_type, enabled, severity, config)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (profile_id, check_type)
+ON CONFLICT (profile_id, check_type) WHERE check_type <> 'regex'
 DO UPDATE SET enabled = EXCLUDED.enabled, severity = EXCLUDED.severity, config = EXCLUDED.config
 RETURNING *;
 
 -- name: DeleteQARule :exec
 DELETE FROM qa_rules WHERE id = $1;
+
+-- name: CreateQARegexRule :one
+-- Internal: caller must have tenant-verified the profile (GetQAProfile).
+INSERT INTO qa_rules (profile_id, check_type, enabled, severity, config)
+VALUES (@profile_id, 'regex', @enabled, @severity, @config)
+RETURNING *;
+
+-- name: UpdateQARegexRule :one
+UPDATE qa_rules r
+SET enabled = @enabled, severity = @severity, config = @config
+FROM qa_profiles p
+WHERE r.id = @id AND r.profile_id = @profile_id AND r.check_type = 'regex'
+  AND p.id = r.profile_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL
+RETURNING r.*;
+
+-- name: DeleteQARegexRule :execrows
+-- A rule is a child row of its profile, so it is deleted outright.
+DELETE FROM qa_rules r
+USING qa_profiles p
+WHERE r.id = @id AND r.profile_id = @profile_id AND r.check_type = 'regex'
+  AND p.id = r.profile_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
+
+-- name: CountQARegexRules :one
+-- Internal: caller must have tenant-verified the profile (GetQAProfile).
+SELECT count(*) FROM qa_rules WHERE profile_id = $1 AND check_type = 'regex';
+
+-- name: DeleteQARulesForProfile :exec
+-- Internal: caller must have tenant-verified the profile (GetQAProfile). Used
+-- by an import that replaces every rule of a profile.
+DELETE FROM qa_rules WHERE profile_id = $1;
 
 -- ============================================================
 -- QA Results
@@ -132,7 +164,7 @@ JOIN segments s ON s.id = t.segment_id
 JOIN files f ON f.id = s.file_id
 LEFT JOIN users u ON u.id = qr.ignored_by
 WHERE f.id = @file_id AND t.target_language = @target_language
-ORDER BY s.position, qr.severity, qr.check_type;
+ORDER BY s.position, s.sub_position, qr.severity, qr.check_type;
 
 -- name: ListTranslationIDsWithQAResults :many
 -- Internal: caller must have tenant-verified the job (GetJobTenant) and pass
@@ -198,17 +230,18 @@ ORDER BY ranked.source_text, ranked.translation_id;
 
 -- name: ListTranslationsForQAPage :many
 -- Internal: caller must have tenant-verified the job (GetJobTenant).
--- One page of the job's rows in segment order. Positions can repeat within a
--- file, so the page key is (position, segment id).
-SELECT t.id AS translation_id, s.id AS segment_id, s.position, s.source_text,
+-- One page of the job's rows in segment order. A position holds a row and the
+-- pieces of its split, whose ids need not follow their order, so the page key
+-- is the whole sort key (position, sub-position, segment id).
+SELECT t.id AS translation_id, s.id AS segment_id, s.position, s.sub_position, s.source_text,
        COALESCE(t.active_text, '') AS target_text,
        COALESCE(s.source_rich_text, '') AS source_rich_text,
        COALESCE(t.active_rich_text, '') AS target_rich_text
 FROM segments s
 JOIN translations t ON t.segment_id = s.id AND t.target_language = @target_language
 WHERE s.file_id = @file_id
-  AND (s.position, s.id) > (@after_position::int, @after_segment_id::bigint)
-ORDER BY s.position, s.id
+  AND (s.position, s.sub_position, s.id) > (@after_position::int, @after_sub_position::int, @after_segment_id::bigint)
+ORDER BY s.position, s.sub_position, s.id
 LIMIT @page_size;
 
 -- name: UpsertQAResults :exec

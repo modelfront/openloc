@@ -25,9 +25,13 @@ type jobCheckRequest struct {
 	IncludeLocked bool `json:"include_locked"`
 }
 
+// segmentMatches carries the target that was checked and its source, so the
+// review can show them without the client holding the whole file.
 type segmentMatches struct {
 	TranslationID int64   `json:"translation_id"`
 	Matches       []Match `json:"matches"`
+	Text          string  `json:"text"`
+	SourceText    string  `json:"source_text"`
 }
 
 // HandleCheckJob checks a caller-supplied set of a job's translations.
@@ -149,7 +153,9 @@ func (h *Handler) HandleCheckJob(w http.ResponseWriter, r *http.Request) {
 		if len(kept) == 0 {
 			continue
 		}
-		results = append(results, segmentMatches{TranslationID: res.ID, Matches: kept})
+		results = append(results, segmentMatches{
+			TranslationID: res.ID, Matches: kept, Text: byID[res.ID], SourceText: byRowID[res.ID].SourceText,
+		})
 	}
 
 	httputil.Data(w, map[string]any{

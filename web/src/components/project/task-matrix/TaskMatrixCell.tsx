@@ -1,6 +1,6 @@
 // One task-matrix cell (the Expand view): one job's task for one step. It
-// shows who has it, when it is due and how many words; the background carries
-// the state and turns blue when selected.
+// shows who has it, where it stands and how many words; the background
+// carries the state and turns blue when selected.
 
 import { memo } from 'react'
 
@@ -11,9 +11,9 @@ import {
   type MatrixCell,
   type MatrixColumn,
 } from '@/lib/task-matrix'
-import { chipStripeClass, chipSurfaceClass, chipTextClass } from '@/components/ui/chip'
+import { chipStripeClass, chipSurfaceClass } from '@/components/ui/chip'
 import { CountMeta } from '@/components/ui/count-meta'
-import { CommentNote, ErrorTip, SentBackNote, TaskAssignee, TaskDue } from './task-cell-parts'
+import { CommentNote, SentBackNote, TaskAssignee, TaskStatus } from './task-cell-parts'
 
 interface Props {
   cell: MatrixCell
@@ -64,21 +64,11 @@ function TaskMatrixCellImpl({ cell, column, selection, onSelect }: Props) {
         </div>
 
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <TaskDue cell={cell} column={column} />
+          <TaskStatus cell={cell} column={column} />
           <CountMeta items={[{ count: cell.words, noun: 'word' }]} className="ml-auto shrink-0 text-gray-500 dark:text-gray-400" />
         </div>
 
-        {cell.errors.length > 0 ? (
-          <ErrorTip errors={cell.errors}>
-            <span className={cn('truncate font-medium', chipTextClass('red'))} data-testid="task-cell-error">
-              {cell.errors[0]}
-            </span>
-          </ErrorTip>
-        ) : cell.sentBack > 0 ? (
-          <SentBackNote cell={cell} />
-        ) : (
-          <CommentNote cell={cell} />
-        )}
+        {cell.sentBack > 0 ? <SentBackNote cell={cell} /> : <CommentNote cell={cell} />}
       </div>
     </td>
   )

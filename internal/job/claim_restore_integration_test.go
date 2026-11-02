@@ -34,7 +34,7 @@ func newClaimRaceFixture(t *testing.T, fake *fakePipeline) claimRaceFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fx.pool.Exec(ctx, `UPDATE jobs SET current_step = 'Pre-translation complete' WHERE id = $1`, fx.jobID); err != nil {
+	if _, err := fx.pool.Exec(ctx, `UPDATE jobs SET current_step = 'Pre-translation complete', translated_count = 404, total_count = 404 WHERE id = $1`, fx.jobID); err != nil {
 		t.Fatal(err)
 	}
 	return claimRaceFixture{detachFixture: fx, ctx: ctx, loaded: loaded}
@@ -54,6 +54,10 @@ func (fx claimRaceFixture) expectRejected(t *testing.T, err error, message strin
 	}
 	if post.Status != "in_progress" || post.CurrentStep != "Pre-translation complete" {
 		t.Fatalf("job left as %s / %q, want the finished run's in_progress / \"Pre-translation complete\"", post.Status, post.CurrentStep)
+	}
+	// The claim cleared the progress counts; nothing ran, so they come back.
+	if post.TranslatedCount == nil || *post.TranslatedCount != 404 || post.TotalCount == nil || *post.TotalCount != 404 {
+		t.Fatalf("job left with counts %v / %v, want the finished run's 404 / 404", deref(post.TranslatedCount), deref(post.TotalCount))
 	}
 }
 

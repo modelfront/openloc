@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login, authHeaders, getSeedProjectId, createProjectViaAPI, deleteProjectViaAPI, selectTargetLanguages, setDeadline } from "./helpers";
+import { login, authHeaders, getSeedProjectId, createProjectViaAPI, createTMViaAPI, deleteProjectViaAPI, standardWorkflowId, selectTargetLanguages, setDeadline } from "./helpers";
 
 /**
  * Project as Core Entity — E2E tests
@@ -75,7 +75,7 @@ test.describe("Project settings", () => {
 
     // Workflow steps from seed (Translation + Review) live
     // on the Workflow tab. The seed project is based on
-    // the "Standard" library workflow, and are shown read-only.
+    // the "Standard" library workflow.
     await page.getByRole("link", { name: /^workflow$/i }).click();
     await expect(page.getByTestId("use-workflow-select")).toContainText("Standard");
     await expect(page.getByTestId("workflow-step-badge-0")).toContainText("Translation");
@@ -199,6 +199,15 @@ test.describe("Project settings", () => {
     await expect(page.getByRole("button", { name: /save as template/i })).toHaveCount(0);
   });
 
+  // Case-sensitive on purpose: the picker label is sentence case.
+  test("the terminology picker reads 'Add term base'", async ({ page }) => {
+    await page.getByRole("link", { name: /demo project/i }).click();
+    await page.getByRole("link", { name: /settings/i }).click();
+
+    await expect(page.getByRole("heading", { name: "Terminology" })).toBeVisible();
+    await expect(page.getByTestId("resource-select")).toHaveText("Add term base");
+  });
+
   test("settings and workflow tabs show an error, not an endless loader, when the project is gone", async ({ page }) => {
     const projectId = await createProjectViaAPI(page, `Vanishing ${Date.now()}`);
     await deleteProjectViaAPI(page, projectId);
@@ -216,17 +225,15 @@ test.describe("Project settings", () => {
     ).toBeVisible();
   });
 
-  // Deadlines are the one thing editable on the Workflow tab, where the
-  // steps themselves are library-only: they are
-  // scheduling, not part of the workflow's identity.
   // Both the step's own date and a per-language override must survive the
   // round trip through the save mappers and the settings read.
-  test("step deadlines, step-level and per-language, survive the autosave round trip", async ({ page }) => {
-    // A project, two date pickers, an autosave and a reload: about 9 s under suite load.
+  test("step deadlines, step-level and per-language, survive the save round trip", async ({ page }) => {
+    // A project, two date pickers, a save through its preview and a reload: about 9 s under suite load.
     test.slow();
     const projectId = await createProjectViaAPI(page, `Deadline round trip ${Date.now()}`);
     projectIds.push(projectId);
     await page.goto(`/projects/${projectId}/workflow`);
+    await page.getByTestId("workflow-steps-edit").click();
     await expect(page.getByTestId("workflow-deadline-input-0")).toBeVisible();
 
     // One language pulled earlier than the step's own date, as an override row.
@@ -238,20 +245,16 @@ test.describe("Project settings", () => {
       [lang],
     );
     await setDeadline(page, page.getByTestId("workflow-deadline-override-input-0-0"), "2026-09-01T09:00");
+    await setDeadline(page, page.getByTestId("workflow-deadline-input-0"), "2026-09-03T17:00");
 
-    // No Save button — each edit autosaves a moment after it settles, so the
-    // override above may save on its own while the step's date is still being
-    // picked. Wait for the save whose body carries the step's date, not for
-    // whichever PUT comes first.
+    // Nothing saves on its own: Save changes shows the preview, the
+    // confirmation saves.
+    await page.getByTestId("workflow-steps-save").click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("This save changes assignees and deadlines only.");
     const [resp] = await Promise.all([
-      page.waitForResponse(
-        r =>
-          r.url().includes(`/projects/${projectId}/workflow-steps`) &&
-          r.request().method() === "PUT" &&
-          Boolean(r.request().postDataJSON()?.steps?.[0]?.deadline),
-        { timeout: 10000 },
-      ),
-      setDeadline(page, page.getByTestId("workflow-deadline-input-0"), "2026-09-03T17:00"),
+      page.waitForResponse(r => r.url().includes(`/projects/${projectId}/workflow-steps`) && r.request().method() === "PUT"),
+      dialog.getByTestId("workflow-steps-confirm").click(),
     ]);
     expect(resp.ok()).toBe(true);
     const steps = (await resp.json()).data;
@@ -261,15 +264,15 @@ test.describe("Project settings", () => {
       "the per-language date was dropped by the save mapper",
     ).toEqual([{ target_language: lang, deadline: expect.any(String) }]);
 
-    // Full loop: reload, so the READ mapper must map the saved deadline
-    // back into the field.
+    // Full loop: reload, so the READ mapper must map the saved deadlines back
+    // into the read-only view.
     await page.reload();
     await expect(
-      page.getByTestId("workflow-deadline-input-0"),
+      page.getByTestId("workflow-deadline-0"),
       "deadline was dropped by the settings read mapper",
     ).toHaveAttribute("data-value", new Date("2026-09-03T17:00").toISOString());
     await page.getByTestId("workflow-deadline-langs-toggle-0").click();
-    await expect(page.getByTestId("workflow-deadline-override-input-0-0")).toHaveAttribute(
+    await expect(page.getByTestId("workflow-deadline-override-value-0-0")).toHaveAttribute(
       "data-value",
       new Date("2026-09-01T09:00").toISOString(),
     );
@@ -295,7 +298,7 @@ test.describe("TM row target-overlap warning", () => {
       const created = await page.request.post("/api/projects", {
         headers,
         data: {
-          name: `E2E overlap ${Date.now()}`, source_language: "en", target_languages: ["ja"],
+          name: `E2E overlap ${Date.now()}`, source_language: "en", target_languages: ["ja"], workflow_id: await standardWorkflowId(page),
           tm_assignments: [{ tm_id: tmId, mode: "read_write", priority: 0 }],
         },
       });
@@ -340,7 +343,7 @@ test.describe("TM rows drag-to-reorder", () => {
       const created = await page.request.post("/api/projects", {
         headers,
         data: {
-          name: `E2E reorder ${stamp}`, source_language: "en", target_languages: ["es"],
+          name: `E2E reorder ${stamp}`, source_language: "en", target_languages: ["es"], workflow_id: await standardWorkflowId(page),
           tm_assignments: [{ tm_id: tm1, mode: "read_write", priority: 0 }, { tm_id: tm2, mode: "read", priority: 1 }],
         },
       });
@@ -415,6 +418,98 @@ test.describe("TM rows drag-to-reorder", () => {
     } finally {
       if (projectId) await page.request.delete(`/api/projects/${projectId}`, { headers }).catch(() => {});
       if (tm2) await page.request.delete(`/api/tms/${tm2}`, { headers }).catch(() => {});
+    }
+  });
+});
+
+// Where the target codes, the +4 chip and the content of a TM languages cell
+// sit. A code's line count comes from a Range over its characters, so a code
+// the browser broke after its hyphen counts as two lines. Runs in the page.
+function measureLangs(el: Element, codes: string[]) {
+  const chars: { node: Text; offset: number }[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n as Text;
+    for (let i = 0; i < t.data.length; i++) chars.push({ node: t, offset: i });
+  }
+  const text = chars.map(c => c.node.data[c.offset]).join("").toLowerCase();
+  const tops = (rects: DOMRect[]) => new Set(rects.filter(r => r.width > 0).map(r => Math.round(r.top)));
+  const shown = codes
+    .map(code => ({ code, at: text.indexOf(code.toLowerCase()) }))
+    .filter(c => c.at >= 0)
+    .sort((a, b) => a.at - b.at)
+    .map(({ code, at }) => {
+      const range = document.createRange();
+      range.setStart(chars[at].node, chars[at].offset);
+      const end = chars[at + code.length - 1];
+      range.setEnd(end.node, end.offset + 1);
+      return { code, rects: Array.from(range.getClientRects()) };
+    });
+  const last = shown[shown.length - 1].rects.at(-1)!;
+  const chip = Array.from(el.querySelectorAll("*"))
+    .find(n => n.children.length === 0 && n.textContent === "+4")!
+    .getBoundingClientRect();
+  const chipMiddle = chip.top + chip.height / 2;
+  return {
+    splitCodes: shown.filter(c => tops(c.rects).size !== 1).map(c => c.code),
+    lines: new Set(shown.flatMap(c => [...tops(c.rects)])).size,
+    chipOnLastLine: chipMiddle > last.top && chipMiddle < last.bottom,
+    chipLeft: chip.left,
+    lastCodeRight: last.right,
+    contentRight: Math.max(...Array.from(el.querySelectorAll("*"), n => n.getBoundingClientRect().right)),
+    cellRight: el.getBoundingClientRect().right,
+  };
+}
+
+// A TM that declares many locales keeps its language list inside the
+// Languages column: it wraps between codes, never inside one, the +N chip
+// stays after the last shown target, and nothing runs under the Read and
+// Write checkboxes. Where a line breaks depends on the column width, so it is
+// checked across window widths. Real layout: jsdom cannot measure it.
+test.describe("TM row with many target languages", () => {
+  let headers: Record<string, string> = {};
+  let projectId: number | null = null;
+  let tmId: number | null = null;
+
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+    headers = await authHeaders(page);
+  });
+
+  test.afterEach(async ({ request }) => {
+    if (projectId) await request.delete(`/api/projects/${projectId}`, { headers }).catch(() => {});
+    if (tmId) await request.delete(`/api/tms/${tmId}`, { headers }).catch(() => {});
+    projectId = null;
+    tmId = null;
+  });
+
+  test("the language list wraps between codes inside its column, +N chip last", async ({ page }) => {
+    test.setTimeout(30_000);
+    const targets = ["fr-CA", "fr-FR", "it-IT", "de-DE", "es-419", "pt-BR", "pt-PT", "nl-NL", "sv-SE"];
+    await createTMViaAPI(page, `E2E wide TM ${Date.now()}`, { targets, onCreated: id => { tmId = id; } });
+    projectId = await createProjectViaAPI(page, `E2E wide TM ${Date.now()}`, {
+      target_languages: ["de-DE"],
+      tm_assignments: [{ tm_id: tmId, mode: "read_write", priority: 0 }],
+    });
+
+    await page.goto(`/projects/${projectId}/files`);
+    await page.getByRole("link", { name: /settings/i }).click();
+    const cell = page.getByTestId(`tm-assignment-langs-${tmId}`);
+    // Five targets, then a +4 chip for the rest.
+    await expect(cell).toContainText(/es-419/i);
+    await expect(cell).toContainText("+4");
+    const read = page.getByTestId(`tm-assignment-read-${tmId}`);
+
+    for (let width = 1024; width <= 1280; width += 8) {
+      await page.setViewportSize({ width, height: 900 });
+      const m = await cell.evaluate(measureLangs, targets);
+      const at = `at ${width}px`;
+      expect(m.splitCodes, `no code is split over two lines ${at}`).toEqual([]);
+      expect(m.lines, `the list wraps ${at}`).toBeGreaterThan(1);
+      expect(m.chipOnLastLine, `+4 is on the last code's line ${at}`).toBe(true);
+      expect(m.chipLeft, `+4 comes after the last code ${at}`).toBeGreaterThanOrEqual(m.lastCodeRight - 0.5);
+      expect(m.contentRight, `languages end inside their column ${at}`).toBeLessThanOrEqual(m.cellRight + 0.5);
+      expect(m.contentRight, `languages end before the Read checkbox ${at}`).toBeLessThan((await read.boundingBox())!.x);
     }
   });
 });

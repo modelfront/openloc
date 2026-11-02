@@ -3,7 +3,7 @@ title: "A tour of the interface"
 summary: "The left menu, the top bar, notifications, themes and the account menu."
 order: 30
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - web/src/App.tsx
   - web/src/components/layout/NavRail.tsx
@@ -50,11 +50,12 @@ At the top of the left menu is the name **OpenLoc**; click it to return to your 
 | **Terminology** | Term bases and their terms. |
 | **Labels** | How projects are classified: Customer, Domain, and any label your organization adds. |
 | **Templates** | Saved project settings for reuse. |
-| **Workflows** | Reusable workflows and the step library they are built from. The page has two tabs, **Workflows** and **Steps**. |
+| **Workflows** | Reusable workflows and the step library they are built from. The page has two tabs, **Templates** and **Steps**. |
 | **MT** | Machine translation: routers, engines and prompts. |
 | **AI** | Quality estimation and post-editing setup, in three tabs: **Routers** (which AI engine reviews each target language), **Engines** and **Prompts**. |
 | **Integrations** | Connections to content systems. |
 | **QA profiles** | Rule sets for automatic quality checks. |
+| **File configurations** | How uploaded files are handled. Its **Segmentation profiles** tab decides where they are split into segments; each project and template picks one. See [Segmentation profiles](/docs/guides/segmentation). |
 | **Dashboards** | Live charts you build with **New chart** or the AI assistant. Three tabs: **Organization dashboards**, **My dashboards** and **Pinned**. |
 
 If you are a linguist, your menu holds one entry: **Tasks**. Every other address sends you back to it. The [Roles and permissions](/docs/reference/roles-and-permissions) page lists exactly what each role can do.
@@ -81,9 +82,9 @@ Next to the bell is a small sun, moon or monitor icon. Click it to cycle through
 
 The last control shows your name. Click it to open the account menu. The top of the menu shows your name, your email address and the organization you are working in right now. Below that:
 
-- **Settings** — your profile, email notifications, appearance and connected apps.
+- **Settings** — your profile, email notifications and appearance.
 - **Organization settings** — the **Organization** page, in three tabs: **Members** (members and invites, the tab it opens on), **Settings** (registration, notification rules and analysis weights) and **Vendors** (external linguists you invite). Owners and admins see all three. Project managers see this entry too, and it opens **Vendors** only.
-- **AI settings** — under **Providers**, the organization's AI provider credentials (owners and admins manage them, project managers see them read-only); under **Connect an AI tool** and **Access keys**, connecting your own AI tools (everyone).
+- **AI settings** — under **Providers**, the organization's AI provider credentials (owners and admins manage them, project managers see them read-only); under **Connect an AI tool** (with your connected apps) and **Access keys**, connecting your own AI tools (everyone).
 - **Learn** — the guided tours your role can take. It shows only when the Playground is on. See [The Playground and guided tours](/docs/getting-started/demo-and-tours).
 - **Docs** — these documentation pages. Every role sees the same pages.
 - **API** — documentation for connecting your own systems to OpenLoc with an access key. One sidebar holds the guides and every endpoint, and one search covers both. Every role sees it.

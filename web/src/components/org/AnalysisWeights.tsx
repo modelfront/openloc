@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button } from '@/components/ui/button'
+import { Button, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QueryBoundary } from '@/components/layout/QueryBoundary'
 import { SettingsCard } from '@/components/layout/SettingsCard'
@@ -57,6 +57,7 @@ function AnalysisWeightsSection() {
     >
       <QueryBoundary query={weightsQuery} what="analysis weights">{saved => {
         const weights = draft ?? saved
+        const changed = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved)
         return (<>
           <div className="space-y-3">
             {WEIGHT_BANDS.map(({ band, label, description }) => {
@@ -84,7 +85,11 @@ function AnalysisWeightsSection() {
             })}
           </div>
           <div className="mt-4 flex justify-end">
-            <Button onClick={() => save.mutate(weights)} disabled={save.isPending} size="sm">
+            <Button
+              onClick={() => save.mutate(weights)}
+              disabled={save.isPending || !changed}
+              disabledReason={changed ? undefined : NOTHING_CHANGED_REASON}
+            >
               {save.isPending ? 'Saving…' : 'Save weights'}
             </Button>
           </div>

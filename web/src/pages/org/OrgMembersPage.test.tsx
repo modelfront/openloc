@@ -75,3 +75,20 @@ describe('OrgMembersPage pending invites', () => {
     expect(screen.getByTestId(`org-invite-resend-${first.id}`)).toBeEnabled()
   })
 })
+
+describe('OrgMembersPage invite form', () => {
+  it('keeps Send invite disabled until the email is valid, and says why', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const email = await screen.findByPlaceholderText('colleague@company.com')
+    const submit = () => screen.getByRole('button', { name: 'Send invite' })
+    await waitFor(() => expect(submit()).toHaveAttribute('aria-disabled', 'true'))
+    await user.type(email, 'not-an-email')
+    await user.hover(submit())
+    expect(await screen.findByText('Enter a valid email address first.')).toBeInTheDocument()
+    await user.clear(email)
+    await user.type(email, 'new@example.com')
+    await waitFor(() => expect(submit()).not.toHaveAttribute('aria-disabled'))
+    expect(submit()).toBeEnabled()
+  })
+})

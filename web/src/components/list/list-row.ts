@@ -43,3 +43,10 @@ export const listCardHeaderClass = 'flex max-md:flex-wrap items-center justify-b
  * nothing.
  */
 export const listCardTitleClass = 'flex max-md:flex-wrap items-center gap-y-1 min-w-0 max-md:min-w-48 flex-1'
+
+/**
+ * The header band of a table or of a group of rows: muted background, small
+ * uppercase label.
+ */
+export const tableHeaderRowClass =
+  'bg-muted border-b border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'

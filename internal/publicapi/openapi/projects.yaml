@@ -187,7 +187,14 @@ components:
         workflow_id:
           type: integer
           format: int64
-          description: Copy this workflow onto the project. Overrides the template's workflow.
+          description: Copy this workflow onto the project. Overrides the template's workflow. Required unless template_id names a template that has a workflow; a project gets no default steps.
+        segmentation_profile_id:
+          type: integer
+          format: int64
+          description: >-
+            The segmentation profile uploads are split with; it must suit the source language. Left
+            out, the project takes the template's profile when it suits the language, else the
+            built-in profile for the language.
     ProjectUpdate:
       type: object
       properties:

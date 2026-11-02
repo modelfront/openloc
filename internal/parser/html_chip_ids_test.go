@@ -66,7 +66,7 @@ func TestHTMLFormattingOnlyRichTextOfABlock(t *testing.T) {
 // reads every chip by that numbering, so reordered links keep their own hrefs
 // even where a chip id would fit an element in the run's numbering.
 func TestHTMLStoredFormattingOnlyChipsKeepTheirElements(t *testing.T) {
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: legacyLinksText, RichText: legacyLinksRich}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: legacyLinksText, RichText: legacyLinksRich}}, nil)
 	stored := `<g id="2" ctype="x-html-a">Ye</g> y <g id="1" ctype="x-html-a">Equis</g>.`
 	out := reconstructHTML(t, p, legacyLinksSource, "seg:1", stored)
 	wantHTMLContains(t, out, `<p><a href="/y">Ye</a> y <a href="/x">Equis</a>.</p>`)
@@ -81,7 +81,7 @@ func TestHTMLStoredFormattingOnlyChipsKeepTheirElements(t *testing.T) {
 // way: chip ids, types and text decide, not the markup copy.
 func TestHTMLStoredChipsWithoutMarkupCopyKeepTheirElements(t *testing.T) {
 	bare := `N <g id="1" ctype="x-html-a">X</g> and <g id="2" ctype="x-html-a">Y</g>.`
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: legacyLinksText, RichText: bare}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: legacyLinksText, RichText: bare}}, nil)
 	stored := `<g id="2" ctype="x-html-a">Ye</g> y <g id="1" ctype="x-html-a">Equis</g>.`
 	wantHTMLContains(t, reconstructHTML(t, p, legacyLinksSource, "seg:1", stored), `<p><a href="/y">Ye</a> y <a href="/x">Equis</a>.</p>`)
 }
@@ -93,7 +93,7 @@ func TestHTMLStoredChipsWithoutMarkupCopyKeepTheirElements(t *testing.T) {
 func TestHTMLStoredWholeBlockTranslationReplacesTheBlock(t *testing.T) {
 	src := `<html><body><ul><li>Intro <a href="/a">A</a><ul><li>Sub</li></ul>Tail</li></ul></body></html>`
 	storedSource := `Intro <g id="1" ctype="x-html-a" original_markup="&lt;a href=&quot;/a&quot;&gt;">A</g>SubTail`
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Intro ASubTail", RichText: storedSource}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Intro ASubTail", RichText: storedSource}}, nil)
 	out := reconstructHTML(t, p, src, "seg:1", `Intro ES <g id="1" ctype="x-html-a">A</g> Sub ES Tail ES`)
 	wantHTMLContains(t, out, `<ul><li>Intro ES <a href="/a">A</a> Sub ES Tail ES</li></ul>`)
 	if strings.Count(out, `href="/a"`) != 1 || strings.Contains(out, ">Sub<") || strings.Contains(out, "Tail<") {
@@ -111,7 +111,7 @@ func TestHTMLRunNumberingStaysForCurrentTranslations(t *testing.T) {
 	current := `<g id="1" ctype="x-html-small">N</g> <g id="3" ctype="x-html-a">Ye</g> y <g id="2" ctype="x-html-a">Equis</g>.`
 	want := `<p><small>N</small> <a href="/y">Ye</a> y <a href="/x">Equis</a>.</p>`
 	for name, p := range map[string]Parser{
-		"stored run source": HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: segs[0].Text, RichText: segs[0].RichText}}),
+		"stored run source": HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: segs[0].Text, RichText: segs[0].RichText}}, nil),
 		"no stored source":  HTML{},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestHTMLRunNumberingStaysForCurrentTranslations(t *testing.T) {
 // one-paragraph block stored the same way as the run keeps the run.
 func TestHTMLStoredBlockWithoutChipsReplacesTheBlock(t *testing.T) {
 	src := `<html><body><blockquote><p>A</p><p>B</p></blockquote></body></html>`
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "AB"}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "AB"}}, nil)
 	out := reconstructHTML(t, p, src, "seg:1", "TA TB")
 	wantHTMLContains(t, out, `<blockquote>TA TB</blockquote>`)
 	if strings.Contains(out, "<p>B</p>") {
@@ -134,7 +134,7 @@ func TestHTMLStoredBlockWithoutChipsReplacesTheBlock(t *testing.T) {
 	}
 
 	single := `<html><body><blockquote><p>Hello</p></blockquote></body></html>`
-	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Hello"}})
+	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Hello"}}, nil)
 	wantHTMLContains(t, reconstructHTML(t, p, single, "seg:1", "Hola"), `<blockquote><p>Hola</p></blockquote>`)
 }
 
@@ -143,19 +143,19 @@ func TestHTMLStoredBlockWithoutChipsReplacesTheBlock(t *testing.T) {
 // which keeps its element and attributes, with or without chips.
 func TestHTMLStoredIndentedSingleParagraphKeepsIt(t *testing.T) {
 	src := "<html><body><table><tr><td>\n  <p class=\"note\">Hello</p>\n</td></tr></table></body></html>"
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "\n  Hello\n"}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "\n  Hello\n"}}, nil)
 	wantHTMLContains(t, reconstructHTML(t, p, src, "seg:1", "Hola"), "<td>\n  <p class=\"note\">Hola</p>\n</td>")
 
 	chips := "<html><body><table><tr><td>\n  <p class=\"note\"><small>N</small> <a href=\"/x\">X</a> and <a href=\"/y\">Y</a>.</p>\n</td></tr></table></body></html>"
 	stored := StoredSource{Text: "\n  N X and Y.\n", RichText: "\n  " + legacyLinksRich + "\n"}
-	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": stored})
+	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": stored}, nil)
 	out := reconstructHTML(t, p, chips, "seg:1", `<g id="2" ctype="x-html-a">Ye</g> y <g id="1" ctype="x-html-a">Equis</g>.`)
 	wantHTMLContains(t, out, "<td>\n  <p class=\"note\"><a href=\"/y\">Ye</a> y <a href=\"/x\">Equis</a>.</p>\n</td>")
 
 	// Line breaks inside the paragraph too: the stored source holds them raw,
 	// the run holds them collapsed, and it is still the same text.
 	wrapped := "<html><body><table><tr><td>\n  <p class=\"note\">Plug the WAN\n    cable in.</p>\n</td></tr></table></body></html>"
-	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "\n  Plug the WAN\n    cable in.\n"}})
+	p = HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "\n  Plug the WAN\n    cable in.\n"}}, nil)
 	wantHTMLContains(t, reconstructHTML(t, p, wrapped, "seg:1", "Conecte el cable WAN."), "<td>\n  <p class=\"note\">Conecte el cable WAN.</p>\n</td>")
 }
 
@@ -187,7 +187,7 @@ func TestHTMLStoredBlockWithTextOutsideTheRunReplacesTheBlock(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: c.text, RichText: c.rich}})
+			p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: c.text, RichText: c.rich}}, nil)
 			out := reconstructHTML(t, p, c.src, "seg:1", c.translated)
 			wantHTMLContains(t, out, c.want)
 			if strings.Contains(out, c.gone) {
@@ -206,7 +206,7 @@ func TestHTMLStoredChipOverUntranslatedElementKeepsIt(t *testing.T) {
 	if _, got, _ := formattingOnlyChips(units[0].block); got != stored {
 		t.Fatalf("formatting-only rich text = %q, want %q", got, stored)
 	}
-	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Use Acme Pro today.", RichText: stored}})
+	p := HTMLWithStoredSource(map[string]StoredSource{"seg:1": {Text: "Use Acme Pro today.", RichText: stored}}, nil)
 	out := reconstructHTML(t, p, src, "seg:1", `Usa <g id="1" ctype="x-html-span">Acme <g id="2" ctype="bold">Pro</g></g> hoy.`)
 	wantHTMLContains(t, out, `<p>Usa <span translate="no" class="brand">Acme <b>Pro</b></span> hoy.</p>`)
 }

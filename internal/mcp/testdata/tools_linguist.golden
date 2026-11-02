@@ -10,6 +10,7 @@ openloc_delete_custom_palette destructive
 openloc_download_source read
 openloc_export_file read
 openloc_export_job read
+openloc_export_segmentation_srx read
 openloc_find_replace_job write
 openloc_get_appearance read
 openloc_get_doc_page read
@@ -20,6 +21,7 @@ openloc_get_me read
 openloc_get_notification_preferences read
 openloc_get_qa_report read
 openloc_get_segment_history read
+openloc_get_segmentation_profile read
 openloc_get_tm_matches read
 openloc_ignore_qa_finding write
 openloc_list_comments read
@@ -27,11 +29,14 @@ openloc_list_docs read
 openloc_list_job_steps read
 openloc_list_my_tasks read
 openloc_list_notifications read
+openloc_list_segmentation_profiles read
 openloc_list_segments read
 openloc_lock_segment write
 openloc_lookup_term read
 openloc_mark_notifications_read write
 openloc_preview_mt read open-world
+openloc_preview_segmentation read
+openloc_read_uploaded_file read
 openloc_reimport_xliff write
 openloc_reject_step write open-world
 openloc_run_qa write

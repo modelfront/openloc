@@ -25,7 +25,6 @@ import (
 	"openloc/internal/seedid"
 	"openloc/internal/settings"
 	"openloc/internal/strdist"
-	"openloc/internal/systemworkflow"
 	"openloc/internal/terminology"
 	"openloc/internal/tmprofile"
 	"openloc/internal/translationmemory"
@@ -73,6 +72,8 @@ func main() {
 	healTerminology(ctx, q, tenantID, userID)
 
 	healQAProfile(ctx, q, tenantID)
+
+	healSegmentationProfile(ctx, q, pool, tenantID)
 
 	healTemplateAndProject(ctx, q, tenantID, userID)
 
@@ -334,9 +335,10 @@ func seedSecondOrg(ctx context.Context, q *db.Queries, userID int64) int64 {
 		}
 		log.Printf("✓ Second org created: %s (slug: %s, ID: %d)", tenant.Name, tenant.Slug, tenant.ID)
 	}
-	// Every org has the built-in Pre-translation workflow.
-	if err := systemworkflow.EnsurePretranslate(ctx, q, tenant.ID); err != nil {
-		log.Printf("⚠ Failed to ensure Acme's Pre-translation workflow: %v", err)
+	// Provisioned like a real org: the built-in Pre-translation workflow and
+	// the Default library workflow.
+	if err := auth.EnsureDefaultWorkflow(ctx, q, tenant.ID); err != nil {
+		log.Printf("⚠ Failed to provision Acme's workflows: %v", err)
 	}
 	if err := q.CreateMembership(ctx, db.CreateMembershipParams{UserID: userID, TenantID: tenant.ID, Role: "admin"}); err != nil {
 		log.Printf("⚠ Failed to create Acme membership: %v", err)
@@ -820,7 +822,7 @@ func healTemplateTermAssignments(ctx context.Context, q *db.Queries, template db
 				TermBaseID:        g.ID,
 				SourceLanguage:    g.SourceLanguage,
 				TargetLanguage:    tgt,
-				Mode:              "read",
+				Mode:              "read_write",
 				Priority:          1,
 			})
 			if err != nil {
@@ -833,12 +835,12 @@ func healTemplateTermAssignments(ctx context.Context, q *db.Queries, template db
 }
 
 func createTemplateWithAssignments(ctx context.Context, q *db.Queries, tenantID, engineID, tmID int64) {
-	profile, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{
+	profile, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{
 		TenantID:       tenantID,
 		FuzzyThreshold: 0.50,
 		MtOnUpload:     true,
 		TmOnUpload:     true,
-	})
+	}, "")
 	if err != nil {
 		log.Fatalf("Failed to create settings profile for template: %v", err)
 	}
@@ -878,7 +880,7 @@ func createTemplateWithAssignments(ctx context.Context, q *db.Queries, tenantID,
 			q.CreateSettingsTermAssignment(ctx, db.CreateSettingsTermAssignmentParams{
 				SettingsProfileID: profile.ID, TermBaseID: gbID,
 				SourceLanguage: "en", TargetLanguage: lang,
-				Mode: "read", Priority: 1,
+				Mode: "read_write", Priority: 1,
 			})
 		}
 		log.Printf("  ✓ Template assignments: en → %s (MT + Term Base)", lang)
@@ -887,12 +889,12 @@ func createTemplateWithAssignments(ctx context.Context, q *db.Queries, tenantID,
 }
 
 func createProject(ctx context.Context, q *db.Queries, tenantID, userID int64, templates []db.Template) {
-	profile, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{
+	profile, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{
 		TenantID:       tenantID,
 		FuzzyThreshold: 0.50,
 		MtOnUpload:     true,
 		TmOnUpload:     true,
-	})
+	}, "en")
 	if err != nil {
 		log.Fatalf("Failed to create settings profile for project: %v", err)
 	}
@@ -999,7 +1001,7 @@ func healProjectAssignments(ctx context.Context, q *db.Queries, project db.Proje
 				q.CreateSettingsTermAssignment(ctx, db.CreateSettingsTermAssignmentParams{
 					SettingsProfileID: spID, TermBaseID: gbID,
 					SourceLanguage: "en", TargetLanguage: lang,
-					Mode: "read", Priority: 1,
+					Mode: "read_write", Priority: 1,
 				})
 			}
 		}
@@ -1166,6 +1168,10 @@ func healQAProfile(ctx context.Context, q *db.Queries, tenantID int64) {
 	}{
 		{"tag_checks", "error", `{"missing":true,"extra":true,"unclosed":true,"unopened":true}`},
 		{"number_consistency", "error", "{}"},
+		{"number_format", "warning", `{"mode":"allow","languages":[{"language":"de-ch","decimal":".","group":"'"}]}`},
+		{"date_consistency", "warning", "{}"},
+		{"time_consistency", "warning", "{}"},
+		{"unit_conversion", "warning", "{}"},
 		{"empty_target", "error", "{}"},
 		{"terminology", "warning", "{}"},
 		{"forbidden_terms", "error", "{}"},
@@ -1184,7 +1190,18 @@ func healQAProfile(ctx context.Context, q *db.Queries, tenantID int64) {
 			log.Printf("  ⚠ Failed to create QA rule %s: %v", c.checkType, err)
 		}
 	}
-	log.Printf("✓ QA Profile created: %s (ID: %d) with %d rules", profile.Name, profile.ID, len(checks))
+	// A custom regex rule: French wants a non-breaking space between a number
+	// and its unit.
+	if _, err := q.CreateQARegexRule(ctx, db.CreateQARegexRuleParams{
+		ProfileID: profile.ID,
+		Enabled:   true,
+		Severity:  "warning",
+		Config: []byte(`{"name":"Space before unit","mode":"target_must_not_match","pattern":"\\d (kg|g|cm|mm|m|km|%|€)",` +
+			`"message":"Use a non-breaking space between the number and the unit.","target_languages":["fr"],"ignore_case":false}`),
+	}); err != nil {
+		log.Printf("  ⚠ Failed to create QA regex rule: %v", err)
+	}
+	log.Printf("✓ QA Profile created: %s (ID: %d) with %d rules", profile.Name, profile.ID, len(checks)+1)
 }
 
 // healTemplateQAProfile ensures the existing template has a QA profile assigned.

@@ -156,7 +156,7 @@ test.describe("Generic XML upload", () => {
       await expect(refsSection).toBeVisible();
       await expect(refsSection).toContainText("{Eco}");
       await refsSection.getByText("{Eco}").click();
-      await expect(activeBox).toHaveText("Eco", { timeout: 5000 });
+      await expect(page.getByTestId("active-source-text")).toHaveText("Eco", { timeout: 5000 });
       // A jump that activates the row but leaves it off-screen is half a jump —
       // the whole point is that the linguist SEES the defining segment. The
       // active-row expansion + scroll compensation can move the ground

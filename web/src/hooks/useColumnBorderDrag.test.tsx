@@ -65,13 +65,17 @@ describe('useColumnBorderDrag', () => {
 
   it('a drag stops where the shrinking column reaches its minimum', () => {
     render(<Header />)
-    // Match | Status: Match is already at its 64px minimum.
-    fireEvent(screen.getByTestId('handle-3'), pointer('pointerdown', 500))
-    fireEvent(window, pointer('pointermove', 400))
-    expect(screen.getByTestId('widths').textContent).toBe('60,300,300,64,92,40')
-    // The other way, Status is at its minimum too.
+    // Translation | Match: Match is already at its 64px minimum.
+    fireEvent(screen.getByTestId('handle-2'), pointer('pointerdown', 500))
     fireEvent(window, pointer('pointermove', 600))
     expect(screen.getByTestId('widths').textContent).toBe('60,300,300,64,92,40')
+  })
+
+  it('a border beside Status moves the whole column: Translation and extras trade the width', () => {
+    render(<Header />)
+    fireEvent(screen.getByTestId('handle-3'), pointer('pointerdown', 500))
+    fireEvent(window, pointer('pointermove', 450))
+    expect(screen.getByTestId('widths').textContent).toBe('60,300,250,64,92,90')
   })
 
   it.each(['pointercancel', 'blur'])('%s ends the drag like pointerup', type => {

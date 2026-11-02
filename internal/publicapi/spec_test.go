@@ -1,7 +1,6 @@
 package publicapi
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 	"testing"
@@ -42,18 +41,6 @@ func operations(doc *openapi3.T) []struct {
 		return out[i].Path+out[i].Method < out[j].Path+out[j].Method
 	})
 	return out
-}
-
-// XRoles reads an operation's x-roles: the roles its route gate lets in.
-func XRoles(op *openapi3.Operation) []string {
-	raw, ok := op.Extensions["x-roles"]
-	if !ok {
-		return nil
-	}
-	b, _ := json.Marshal(raw)
-	var roles []string
-	_ = json.Unmarshal(b, &roles)
-	return roles
 }
 
 // Every operation is documented the same way, so a reader and the

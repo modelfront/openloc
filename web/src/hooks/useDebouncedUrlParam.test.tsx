@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, fireEvent } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { useDebouncedUrlParam } from './useDebouncedUrlParam'
 
-function Probe() {
-  const [value, setValue] = useDebouncedUrlParam('q', 300)
+function Probe({ delay = 300 }: { delay?: number }) {
+  const [value, setValue] = useDebouncedUrlParam('q', delay)
   const { search } = useLocation()
   const navigate = useNavigate()
   return (
@@ -16,10 +17,10 @@ function Probe() {
   )
 }
 
-function renderProbe(url: string) {
+function renderProbe(url: string, delay?: number) {
   render(
     <MemoryRouter initialEntries={[url]}>
-      <Probe />
+      <Probe delay={delay} />
     </MemoryRouter>,
   )
 }
@@ -50,6 +51,18 @@ describe('useDebouncedUrlParam', () => {
     act(() => { vi.advanceTimersByTime(300) })
     expect(screen.getByTestId('search')).toHaveTextContent('?step=Review')
     expect(screen.getByTestId('search')).not.toHaveTextContent('q=')
+  })
+
+  // The router applies each write as a transition, so with no delay the URL
+  // trails the input by a write or two while the keys keep coming.
+  it('keeps every key while its own writes are still reaching the URL', async () => {
+    const user = userEvent.setup()
+    renderProbe('/list', 0)
+
+    await user.type(screen.getByLabelText('search'), 'legal en-fr')
+
+    expect(screen.getByLabelText('search')).toHaveValue('legal en-fr')
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('?q=legal+en-fr'))
   })
 
   it('follows the URL when the param changes from outside', () => {

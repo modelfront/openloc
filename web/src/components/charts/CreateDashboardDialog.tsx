@@ -15,10 +15,11 @@ import { queryKeys } from '@/lib/query-keys'
 import { useMutationWithToast } from '@/hooks/use-mutation-with-toast'
 import { useScrollToError } from '@/hooks/useScrollToError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { ChoiceToggle } from '@/components/ui/choice-toggle'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 const schema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -36,8 +37,9 @@ export function CreateDashboardDialog({ open, onClose, personal, canShare }: {
 }) {
   const navigate = useNavigate()
   const startSide = personal ? 'mine' : 'shared'
-  const { register, control, handleSubmit, reset, setValue, formState: { errors } } = useForm<Values>({
+  const { register, control, handleSubmit, reset, setValue, formState: { errors, isValid } } = useForm<Values>({
     resolver: zodResolver(schema),
+    mode: 'onTouched',
     defaultValues: { name: '', side: startSide },
   })
   useScrollToError(errors)
@@ -91,13 +93,7 @@ export function CreateDashboardDialog({ open, onClose, personal, canShare }: {
             placeholder="Operations"
             autoFocus
             data-testid="dashboard-name"
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                e.stopPropagation()
-                submit()
-              }
-            }}
+            onKeyDown={submitOnEnter(submit)}
           />
         </FormField>
         {canShare && (
@@ -126,6 +122,8 @@ export function CreateDashboardDialog({ open, onClose, personal, canShare }: {
             type="button"
             onClick={submit}
             loading={createMut.isPending}
+            disabled={!isValid}
+            disabledReason={MISSING_REQUIRED_REASON}
             data-testid="create-dashboard-submit"
           >
             {createMut.isPending ? 'Creating…' : 'Create'}

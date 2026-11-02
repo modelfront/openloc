@@ -211,6 +211,8 @@ const (
 	TranslationHistoryKindApproved     TranslationHistoryKind = "approved"
 	TranslationHistoryKindAutoApproved TranslationHistoryKind = "auto_approved"
 	TranslationHistoryKindUnconfirmed  TranslationHistoryKind = "unconfirmed"
+	TranslationHistoryKindSplit        TranslationHistoryKind = "split"
+	TranslationHistoryKindJoined       TranslationHistoryKind = "joined"
 )
 
 func (e *TranslationHistoryKind) Scan(src interface{}) error {
@@ -650,6 +652,7 @@ type File struct {
 	OriginalName *string            `json:"original_name"`
 	InlineHtml   bool               `json:"inline_html"`
 	XlsxLayout   json.RawMessage    `json:"xlsx_layout"`
+	Segmentation json.RawMessage    `json:"-"`
 }
 
 type Invite struct {
@@ -726,6 +729,20 @@ type IssueComment struct {
 	Field      *string            `json:"field"`
 	FromValue  *string            `json:"from_value"`
 	ToValue    *string            `json:"to_value"`
+}
+
+type IssueSlackBlank struct {
+	IssueID  int64              `json:"issue_id"`
+	Channel  string             `json:"channel"`
+	Ts       string             `json:"ts"`
+	QueuedAt pgtype.Timestamptz `json:"queued_at"`
+}
+
+type IssueSlackMessage struct {
+	IssueID   int64              `json:"issue_id"`
+	Channel   string             `json:"channel"`
+	Ts        string             `json:"ts"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Job struct {
@@ -1123,6 +1140,11 @@ type Segment struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	WordCount      int32              `json:"word_count"`
 	SourceRichText *string            `json:"source_rich_text"`
+	TargetLanguage *string            `json:"target_language"`
+	SubPosition    int32              `json:"sub_position"`
+	ExportKey      *string            `json:"export_key"`
+	GapBefore      *string            `json:"gap_before"`
+	ChipBase       int32              `json:"chip_base"`
 }
 
 type SegmentComment struct {
@@ -1133,6 +1155,44 @@ type SegmentComment struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt     pgtype.Timestamptz `json:"deleted_at"`
+	FromSegment   *string            `json:"from_segment"`
+}
+
+type SegmentationBuiltinProfile struct {
+	ID             int64              `json:"id"`
+	BuiltinKey     string             `json:"builtin_key"`
+	Name           string             `json:"name"`
+	SourceLanguage string             `json:"source_language"`
+	Description    string             `json:"description"`
+	Definition     []byte             `json:"definition"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type SegmentationProfile struct {
+	ID              int64              `json:"id"`
+	TenantID        int64              `json:"tenant_id"`
+	Name            string             `json:"name"`
+	Definition      []byte             `json:"definition"`
+	BasedOn         *int64             `json:"based_on"`
+	CreatedBy       *int64             `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	SourceLanguages []string           `json:"source_languages"`
+}
+
+type SegmentationProfileCatalog struct {
+	ID              int64              `json:"id"`
+	TenantID        *int64             `json:"tenant_id"`
+	BuiltinKey      *string            `json:"builtin_key"`
+	Name            string             `json:"name"`
+	SourceLanguages []string           `json:"source_languages"`
+	Description     string             `json:"description"`
+	Definition      []byte             `json:"definition"`
+	BasedOn         *int64             `json:"based_on"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type SettingsProfile struct {
@@ -1152,6 +1212,9 @@ type SettingsProfile struct {
 	MtRouterID            *int64             `json:"mt_router_id"`
 	TmLookupOrder         string             `json:"tm_lookup_order"`
 	InlineHtml            bool               `json:"inline_html"`
+	WorkflowEdited        bool               `json:"workflow_edited"`
+	SegmentationProfileID *int64             `json:"segmentation_profile_id"`
+	LinguistTerms         string             `json:"linguist_terms"`
 }
 
 type SettingsTerminologyAssignment struct {

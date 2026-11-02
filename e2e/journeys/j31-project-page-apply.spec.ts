@@ -130,31 +130,36 @@ test.describe.serial("J31 — Apply TM/MT from project page", () => {
     await selectTheJob(page);
 
     await (await openBulkPretranslate(page, "tm")).click();
-    await expect(page.getByText(/Apply TM: 1 job\(s\) done/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Apply TM: 1 job\(s\) queued/)).toBeVisible({ timeout: 30_000 });
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
 
-    // Wait out any transient running state from the TM fan-out, then MT.
-    await expect(page.getByTestId("bulk-pretranslate-btn")).toBeEnabled({ timeout: 30_000 });
-    await (await openBulkPretranslate(page, "mt")).click();
-    await expect(page.getByText(/Apply MT: 1 job\(s\) done/)).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
-
-    // The toast alone does not prove MT wrote anything. The mock engine
-    // prefixes its output with the target language, so every segment of the
-    // job must now carry "[FR] ".
-    const headers = {
+    // The queued TM run finishes on the worker: wait until the job no longer
+    // reads as running (the page's isPipelineRunning), or MT would skip it.
+    const authHeaders = {
       Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("token"))}`,
     };
-    const jobsResp = await page.request.get(`${API}/api/projects/${projectId}/jobs`, { headers });
+    await expect.poll(async () => {
+      const r = await page.request.get(`${API}/api/projects/${projectId}/jobs`, { headers: authHeaders });
+      const [j] = (await r.json()).data as Array<{ pipeline_status: string; current_step: string | null }>;
+      const live = j.pipeline_status === "queued" || j.pipeline_status === "in_progress";
+      return live && !(j.current_step ?? "").toLowerCase().endsWith("complete") ? "running" : "idle";
+    }, { message: "the queued TM run must finish before Apply MT", timeout: 30_000 }).toBe("idle");
+    await expect(page.getByTestId("bulk-pretranslate-btn")).toBeEnabled({ timeout: 30_000 });
+    await (await openBulkPretranslate(page, "mt")).click();
+    await expect(page.getByText(/Apply MT: 1 job\(s\) queued/)).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
+
+    // The toast says the run is queued, not done. The mock engine prefixes
+    // its output with the target language, so once the worker has run every
+    // segment of the job carries "[FR] ".
+    const jobsResp = await page.request.get(`${API}/api/projects/${projectId}/jobs`, { headers: authHeaders });
     expect(jobsResp.ok(), "list project jobs").toBe(true);
     const jobs = (await jobsResp.json()).data as Array<{ id: number }>;
     expect(jobs, "the project has exactly one job").toHaveLength(1);
-    const transResp = await page.request.get(`${API}/api/jobs/${jobs[0].id}/translations`, { headers });
-    expect(transResp.ok(), "list job translations").toBe(true);
-    const translations = (await transResp.json()).data as Array<{ active_text: string | null }>;
-    expect(translations.length, "the job has at least one segment").toBeGreaterThanOrEqual(1);
-    for (const t of translations) {
-      expect(t.active_text, "Apply MT must fill every segment with the mock engine's [FR] output").toMatch(/^\[FR\] /);
-    }
+    await expect.poll(async () => {
+      const transResp = await page.request.get(`${API}/api/jobs/${jobs[0].id}/translations`, { headers: authHeaders });
+      const translations = (await transResp.json()).data as Array<{ active_text: string | null }>;
+      return translations.length > 0 && translations.every(t => /^\[FR\] /.test(t.active_text ?? ""));
+    }, { message: "Apply MT must fill every segment with the mock engine's [FR] output", timeout: 30_000 }).toBe(true);
   });
 });

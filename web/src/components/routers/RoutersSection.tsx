@@ -32,6 +32,7 @@ import { chipSurfaceClass } from '@/components/ui/chip'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { Input } from '@/components/ui/input'
 import { AddItemButton } from '@/components/list/AddItemButton'
 import { listRowClass } from '@/components/list/list-row'
@@ -231,7 +232,7 @@ export function RoutersSection<R extends RouterLike, I>({
       title={adapter.title}
       info={adapter.info}
       action={canWrite && (
-        <Button size="sm" onClick={() => setDialog({ open: true, initial: undefined })} data-testid={`${p}-add`}>New {adapter.noun}</Button>
+        <CreateButton onClick={() => setDialog({ open: true, initial: undefined })} data-testid={`${p}-add`}>New {adapter.noun}</CreateButton>
       )}
       data-testid={`${p}s-section`}
     >

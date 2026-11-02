@@ -45,4 +45,53 @@ export interface ReportSummary {
 export interface ReportDTO {
   summary: ReportSummary;
   results: ResultDTO[];
+  /**
+   * ProfileAssigned is false when the job's project has no QA profile, so a
+   * QA run cannot start.
+   */
+  profile_assigned: boolean;
+}
+/**
+ * RegexRuleConfig is the stored config of a regex rule. Pattern is matched
+ * against the target, or against the source in source_must_not_match mode;
+ * SourcePattern is used only by source_match_target_not. Text is matched as the
+ * editor shows it: each inline tag is its label (<1>, </1>, {1}).
+ */
+export interface RegexRuleConfig {
+  name: string;
+  mode: string;
+  pattern: string;
+  source_pattern?: string;
+  message: string;
+  target_languages: string[];
+  ignore_case: boolean;
+}
+/**
+ * NumberFormatConfig is the config of the number_format rule. Mode "allow"
+ * (the default) accepts the source number's separators or the target
+ * language's; "require" accepts only the target language's. While the rule is
+ * on, Languages replace a language's CLDR separators wherever the Numbers group
+ * reads a number; while it is off they are kept but not used.
+ */
+export interface NumberFormatConfig {
+  mode: string;
+  languages?: NumberFormatLanguage[];
+}
+/**
+ * NumberFormatLanguage is how one language writes numbers. A bare language
+ * ("es") covers all its locales, a locale ("es-mx") only itself.
+ */
+export interface NumberFormatLanguage {
+  language: string;
+  decimal: string; // "." or ","
+  group: string; // ",", ".", " ", "'" or "" for none
+}
+/**
+ * PlaceablesConfig picks which placeables the placeables rule compares. A
+ * field left out of a stored config is on.
+ */
+export interface PlaceablesConfig {
+  urls_emails: boolean;
+  codes: boolean;
+  variables: boolean;
 }

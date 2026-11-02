@@ -3,6 +3,7 @@ package publicapi_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"openloc/internal/publicapi"
@@ -25,7 +26,7 @@ func TestIntegrationV1_CreateRefusesCustomerFields(t *testing.T) {
 	before := countProjects()
 
 	for _, field := range []string{"client", "customer_id", "domain"} {
-		body := map[string]any{"name": "With " + field, "source_language": "en", "target_languages": []string{"de"}}
+		body := map[string]any{"name": "With " + field, "source_language": "en", "target_languages": []string{"de"}, "workflow_id": f.ids["workflowID"]}
 		if field == "customer_id" {
 			body[field] = f.project.ID
 		} else {
@@ -48,6 +49,7 @@ func TestIntegrationV1_ProjectJobsArePaged(t *testing.T) {
 
 	rec := f.client.do(http.MethodPost, "/api/v1/projects", map[string]any{
 		"name": "Three targets", "source_language": "en", "target_languages": []string{"de", "fr", "it"},
+		"workflow_id": f.ids["workflowID"],
 	}, key)
 	wantStatus(t, rec, http.StatusCreated)
 	p := testutil.DecodeData[publicapi.Project](t, rec)
@@ -116,4 +118,25 @@ func TestIntegrationV1_ProjectJobPagesCarrySteps(t *testing.T) {
 	if len(next) != 1 || next[0].ID != second.ID || next[0].WorkflowStep != nil {
 		t.Fatalf("second page = %+v, want job %d with no step", next, second.ID)
 	}
+}
+
+// A project needs a workflow: create without workflow_id or a template that
+// brings steps is refused and makes no project.
+func TestIntegrationV1_CreateNeedsAWorkflow(t *testing.T) {
+	q, router, cleanup := newRouter(t)
+	defer cleanup()
+	f := newFixture(t, q, router, "CreateWorkflow")
+	key := f.key(t, "owner")
+	standard := testutil.LibraryWorkflow(t, q, f.tenant.ID)
+
+	body := map[string]any{"name": "No workflow", "source_language": "en", "target_languages": []string{"de"}}
+	rec := f.client.do(http.MethodPost, "/api/v1/projects", body, key)
+	wantStatus(t, rec, http.StatusBadRequest)
+	if !strings.Contains(rec.Body.String(), "workflow_id is required") {
+		t.Errorf("want \"workflow_id is required\", got %s", rec.Body.String())
+	}
+
+	body["name"], body["workflow_id"] = "With workflow", standard
+	rec = f.client.do(http.MethodPost, "/api/v1/projects", body, key)
+	wantStatus(t, rec, http.StatusCreated)
 }

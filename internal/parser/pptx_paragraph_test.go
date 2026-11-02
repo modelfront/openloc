@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	pt "openloc/internal/parser/pptxtest"
+	"openloc/internal/segmentation"
 )
 
 // PowerPoint splits text into runs for spell-check marks and language tags.
@@ -176,7 +177,11 @@ func TestPPTXParagraph_SentencesMatchOtherFormats(t *testing.T) {
 	var want []string
 	for _, text := range texts {
 		paras = append(paras, pt.P(pt.R("", text)))
-		for _, r := range SplitSentences(text, nil) {
+		ranges, err := segmentation.Conservative().Split(text, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range ranges {
 			want = append(want, text[r.Start:r.End])
 		}
 	}

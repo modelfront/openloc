@@ -8,6 +8,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/honeybadger-io/honeybadger-go"
+
 	"openloc/internal/auth"
 	"openloc/internal/errtrack"
 	"openloc/internal/httputil"
@@ -305,4 +307,19 @@ func attachIdentityHandler(deps Deps, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// useCoreMiddleware installs the middleware every request passes, in an order
+// that is load-bearing; the router and its tests share it.
+//
+// requestObservability sits inside Recoverer and outside honeybadger.Handler,
+// so a panic is reported exactly once; it replaces chi's middleware.Logger,
+// which would log a second, unstructured line. The compressor sits OUTSIDE
+// requestObservability: it hides the writer it wraps, so inside it a handler's
+// error could not reach the request log.
+func useCoreMiddleware(r chi.Router) {
+	r.Use(middleware.Recoverer)
+	r.Use(httputil.Compress())
+	r.Use(requestObservability)
+	r.Use(honeybadger.Handler)
 }

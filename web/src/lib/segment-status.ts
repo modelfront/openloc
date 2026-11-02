@@ -37,30 +37,39 @@ export function deriveDisplayStatus(
   t: Translation | undefined | null,
   opts?: { predictedBeforeStep?: boolean },
 ): DisplayStatus {
-  if (!t) return 'untranslated'
-  if (t.status === 'approved') return 'approved'
-  if (t.status === 'auto_approved') return 'auto_approved'
+  return deriveStatus(t && {
+    status: t.status,
+    hasText: !!t.active_text,
+    stepEdited: !!t.step_edited,
+    predicted: !!t.predict_outcome?.valid,
+  }, opts)
+}
+
+/** What the display status is derived from; the editor index carries exactly this. */
+export interface StatusFacts {
+  status: string
+  hasText: boolean
+  stepEdited: boolean
+  /** The row carries an AI verdict. */
+  predicted: boolean
+}
+
+/** deriveDisplayStatus over the facts alone; null means no translation row. */
+export function deriveStatus(
+  f: StatusFacts | undefined | null,
+  opts?: { predictedBeforeStep?: boolean },
+): DisplayStatus {
+  if (!f) return 'untranslated'
+  if (f.status === 'approved') return 'approved'
+  if (f.status === 'auto_approved') return 'auto_approved'
   // Only 'needs_review' remains as a raw value; everything below derives.
-  if (!t.active_text) return 'untranslated'
-  const predictedThisStep = !!t.predict_outcome?.valid && !opts?.predictedBeforeStep
-  if (!t.step_edited && !predictedThisStep) return 'pre_translated'
+  if (!f.hasText) return 'untranslated'
+  const predictedThisStep = f.predicted && !opts?.predictedBeforeStep
+  if (!f.stepEdited && !predictedThisStep) return 'pre_translated'
   return 'needs_review'
 }
 
-/**
- * Which derived statuses get a visible badge in the grid's Status column.
- *
- * untranslated / pre_translated are "default" states — the cell stays EMPTY
- * so the column only draws attention to rows that progressed: Draft
- * (human-edited / predict-rejected), Auto-approved, Approved. Where the
- * translation CAME FROM (MT / TM / File) is the Match column's job, so a
- * pretranslated row isn't unlabeled — its provenance chip lives next door.
- */
-export function showStatusChip(s: DisplayStatus): boolean {
-  return s === 'approved' || s === 'auto_approved' || s === 'needs_review'
-}
-
-/** Status-column chip text for a segment the assistant confirmed. */
+/** Status-column icon name for a segment the assistant confirmed. */
 export const ASSISTANT_CONFIRMED_LABEL = 'Confirmed by assistant'
 
 /**
@@ -68,11 +77,12 @@ export const ASSISTANT_CONFIRMED_LABEL = 'Confirmed by assistant'
  * stays out of translation memory until a person confirms it, which resets
  * the marker — so the editor labels it.
  */
-export function isAssistantConfirmed(t: Translation | undefined | null): boolean {
+export function isAssistantConfirmed(t: { status: string; confirmed_via?: string } | undefined | null): boolean {
   return t?.status === 'approved' && t.confirmed_via === 'assistant'
 }
 
 export type MatchChip =
+  | 'tm_repetition_source' // N%→ TM match that is also a repetition source
   | 'repetition_source' // →R  first occurrence; confirming auto-propagates
   | 'repetition'        // ⇢R  same source appears earlier in the file
   | 'tm'                // N%  TM match with percent
@@ -84,19 +94,22 @@ export type MatchChip =
  * The Match column shows exactly ONE provenance chip per row (mutually
  * exclusive by design — locks and QA dots stack separately). Priority:
  *
- *   repetition source > repetition > TM % > APE > MT > File
+ *   TM repetition source > repetition source > repetition > TM % > APE > MT > File
  *
- * Repetition chips win because they change confirm behavior (propagation);
- * within origin lineage, `ape` outranks `mt` because it's the more specific
- * transformation (APE rewrote the MT output — the chip says so; rendering
- * "MT" there would hide the post-edit).
+ * Repetition chips win because they change confirm behavior (propagation),
+ * except over a repetition source's TM %: that is a quality signal, so the
+ * row keeps it and adds the arrow. A later repetition never shows its TM %,
+ * because propagation replaces its text but keeps its origin. Within origin
+ * lineage, `ape` outranks `mt` because it's the more specific transformation
+ * (APE rewrote the MT output — the chip says so; rendering "MT" there would
+ * hide the post-edit).
  */
 export function deriveMatchChip(args: {
   isRepetitionSource?: boolean
   isRepetition?: boolean
   origin: string // '' when no automation lineage
 }): MatchChip | null {
-  if (args.isRepetitionSource) return 'repetition_source'
+  if (args.isRepetitionSource) return args.origin === 'tm' ? 'tm_repetition_source' : 'repetition_source'
   if (args.isRepetition) return 'repetition'
   switch (args.origin) {
     case 'tm':          return 'tm'

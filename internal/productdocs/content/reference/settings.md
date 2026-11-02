@@ -3,15 +3,17 @@ title: "Settings"
 summary: "Personal, organization and AI settings, and where each option lives."
 order: 50
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - web/src/pages/SettingsPage.tsx
   - web/src/pages/org/**
   - web/src/pages/AISettingsPage.tsx
   - web/src/components/SettingsEditor.tsx
   - web/src/components/settings/TMProfilePicker.tsx
+  - web/src/components/settings/FileConfigurationsSection.tsx
+  - web/src/lib/asset-links.ts
   - web/src/components/settings/AppearanceSection.tsx
-  - web/src/components/settings/ConnectedAppsSection.tsx
+  - web/src/components/ai/ConnectedAppsList.tsx
   - web/src/components/org/RegistrationSettings.tsx
   - web/src/components/org/NotificationRules.tsx
   - web/src/components/org/AnalysisWeights.tsx
@@ -56,7 +58,6 @@ Account menu → **Settings**. Every role has this page. The options apply to yo
 | **Email notifications** | **Task assignment**, **Step rejection**, **Workflow completion**, **Deadline approaching** | Untick to stop the email for that event. In-app notifications still arrive. See [Notifications](/docs/guides/notifications). |
 | **Appearance** | **Light**, **Dark**, **System** | The theme. System follows your computer. |
 | | **Dark palette**, **Light palette** | The colour set for each theme. Click one to select it. **New palette** creates your own; each palette has a button to clone it, and the ones you made also have buttons to edit or delete them. Palettes are saved to your account and follow you across organizations. |
-| **Connected apps** | AI assistants you authorized to act as you | Shows the app name, **Read-only** or **Read and write**, and last use. **Disconnect** stops its access at once. |
 
 There is no password field here. To set a new password, use **Forgot password?** on the sign-in page.
 
@@ -83,7 +84,7 @@ Account menu → **AI settings**. Every role can open the page, but each section
 | Section | Who | What it holds |
 |---|---|---|
 | **Providers** | Owners and admins; project managers see it read-only | The organization's connections to AI providers and the keys that authenticate there. Keys are stored encrypted and checked when saved. A key marked **Use for chat** powers the built-in assistant. Engines on the **AI** page and on the **MT** page each name a key from here. Removing a key is allowed even while engines use it — they are marked **No key** until you point them at another one (see [Machine translation](/docs/guides/machine-translation#add-a-provider-key-owner-or-admin)). Providers this deployment supplies itself show **No key required**. |
-| **Connect an AI tool** | Everyone | The **MCP server address** with a copy button, for AI tools that support MCP. **Open Claude connectors** and **Open ChatGPT plugins** open the page in those two tools where you paste it. The tool then signs in as you. See [Connect external AI tools](/docs/guides/mcp). |
+| **Connect an AI tool** | Everyone | The **MCP server address** with a copy button, for AI tools that support MCP. **Open Claude connectors** and **Open ChatGPT plugins** open the page in those two tools where you paste it. The tool then signs in as you. Under it, **Connected apps** lists the tools you connected, with **Read-only** or **Read and write** and last use; **Disconnect** stops one at once. See [Connect external AI tools](/docs/guides/mcp). |
 | **Access keys** | Everyone, for their own keys | Access keys for tools that cannot sign in and for your own scripts, over MCP or the API. Each has a **Name**, an **Expires** value (**30 days** to **1 year**) and an **Access** level (**Read only** or **Read and write**). A **Read only** key can look but not change anything, over MCP or the API. The key acts as you, with your permissions, in this organization only. It is shown once, right after **Create access key**, and only a signed-in person can create one — a key cannot create another key. See [Connect external AI tools](/docs/guides/mcp). |
 
 ## Where each project option lives
@@ -100,16 +101,20 @@ A project carries its own settings on its **Settings** tab and its workflow step
 | Apply **translation memory** on start or upload | — | ✓ | ✓ | Managers |
 | Fill in **machine translation** on start or upload | — | ✓ | ✓ | Managers |
 | **QA profile** (in the **Quality assurance** block) | Defined on the **QA profiles** page | Chosen | Chosen | Managers |
+| **Segmentation profile** (in the **File configurations** block): how files uploaded afterwards are split into segments; required, and only profiles that suit the source language are offered. See [Segmentation profiles](/docs/guides/segmentation) | Defined under **File configurations** → **Segmentation profiles** | Chosen | Chosen | Managers |
 | **Strings contain HTML** (under auto-complete). On by default: tags in JSON, PO, TXT and Excel strings become protected tags, and a translation may hold only the source's tags. Off: strings are plain text, with no tags, no tag check, and export exactly as typed. Each file keeps the mode it was uploaded with, so a change applies to new uploads only | — | ✓ | ✓ | Managers |
+| **Linguists can add terms** (in the **Terminology** block, above the term-base rows): **No**, **Yes, saved as pending** (the default) or **Yes, saved as approved**. Decides whether linguists may add terms from the editor, and the status their terms get. Managers always can, and pick the status themselves. The picker is locked until a term-base row has **Write** ticked. See [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating) | — | ✓ | ✓ | Managers |
 | **Translation memory** rows and match scoring (**Fuzzy match threshold**, **Language-variant mismatch penalty**, **Near-exact penalty**, **TM lookup order**; see [Several memories](/docs/concepts/tm-matching#several-memories)) | TMs live on the **Translation memories** page | ✓ | ✓ | Managers |
 | **TM profile**: a shared TM setup to follow, or **From scratch** for a list this project keeps alone | Profiles are created on the **Translation memories** page | Followed | Followed | Managers |
 | **Machine translation**: the **MT router** that picks the engine per target language, or empty for no machine translation | Routers and engines live on the **MT** page | ✓ | ✓ | Managers |
-| **Terminology** rows | Term bases live on the **Terminology** page | ✓ | ✓ | Managers |
-| **Workflow**: the **Workflow** / **Raw MT** toggle on the **Workflow** tab. **Workflow** takes the steps of a library workflow; **Raw MT** is one automated **Pre-translation** step that fills in machine translation and completes itself (a project chooses it in the **New project** form and keeps it) | Workflows and steps are built on the **Workflows** page; **Raw MT** is built in | Copied | Copied | Managers |
+| **Terminology** rows. Terms added from the editor go only to a term base with **Write** ticked | Term bases live on the **Terminology** page | ✓ | ✓ | Managers |
+| **Workflow**: the **Workflow** / **Raw MT** toggle on the **Workflow** tab. **Workflow** takes the steps of a library workflow; **Raw MT** is one automated **Pre-translation** step that fills in machine translation and completes itself (a project chooses it in the **New project** form and keeps it). A project needs one of the two; a template may have neither | Workflows and steps are built on the **Workflows** page; **Raw MT** is built in | Copied, optional | Copied, required | Managers |
 | **Analysis weights**, **Notification rules** | ✓ | — | — | Owners and admins |
 | Email notification mute, theme, palettes | — | — | — | Each member, for themselves |
 
-On the **New project** form the **Translation memory** and **Machine translation** blocks start unanswered: the **TM profile** dropdown and the **MT router** are empty, and each *on start or upload* switch is ticked but locked. Choosing a TM profile or **From scratch** unlocks the translation memory switch and shows the memory list and the match scoring fields; choosing an **MT router** unlocks the machine translation switch. On the form, the project's **Settings** tab and the template editor, a warning icon beside **MT router** lists the target languages the chosen router has no engine for; see [Machine translation](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template). A saved project or template always shows what it has, with both switches editable. Under **Raw MT**, the machine translation switch stays on and locked (“Always on with Raw MT.”), and the project cannot be created until it has an **MT router**. See [Create a project](/docs/guides/projects-and-files#create-a-project).
+On a project or template, every asset it uses links to where it lives, in a new tab. A translation memory or term base name in its row is a link. The **TM profile**, **MT router**, **QA profile**, **Segmentation profile** and **Workflow** dropdowns each end with an open icon (hover for "Open QA profile" and so on). The MT router link opens the **MT** page with that router's card highlighted. The QA profile link opens the **QA profiles** page with that profile highlighted and its rules expanded. The workflow link opens the **Workflows** page with that workflow's **Edit workflow** dialog open; a built-in workflow has no icon.
+
+On the **New project** form the **Workflow** dropdown starts empty, and **Create project** points at it, framed red, until you pick a workflow or **Raw MT**. **Save as template** works with or without one. The **Translation memory** and **Machine translation** blocks start unanswered: the **TM profile** dropdown and the **MT router** are empty, and each *on start or upload* switch is ticked but locked. Choosing a TM profile or **From scratch** unlocks the translation memory switch and shows the memory list and the match scoring fields; choosing an **MT router** unlocks the machine translation switch. On the form, the project's **Settings** tab and the template editor, a warning icon beside **MT router** lists the target languages the chosen router has no engine for; see [Machine translation](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template). A saved project or template always shows what it has, with both switches editable. Under **Raw MT**, the machine translation switch stays on and locked (“Always on with Raw MT.”), and the project cannot be created until it has an **MT router**. See [Create a project](/docs/guides/projects-and-files#create-a-project).
 
 ### How settings move between template and project
 

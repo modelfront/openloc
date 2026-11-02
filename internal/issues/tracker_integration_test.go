@@ -156,9 +156,8 @@ func decodePlatformDetail(t *testing.T, rec *httptest.ResponseRecorder) issues.P
 // and only to a support team member; nothing assigns an issue by itself.
 func TestIntegrationIssue_OnlySupportTeamAssigns(t *testing.T) {
 	f := newFixture(t)
-	const secondOperator = "ops2@test.com"
-	f.router, f.outbox = testutil.NewTestRouterWithIssues(f.pool, f.store, []string{operatorEmail, secondOperator})
-	second := testutil.SeedUserWithRole(t, f.q, f.opsTenant.ID, secondOperator, "pw", "admin")
+	f.router, f.outbox = testutil.NewTestRouterWithIssues(f.pool, f.store, []string{operatorEmail, operator2Email})
+	second := f.operator2
 	issue := f.report(t, "Assign me")
 
 	for name, req := range map[string]struct {
@@ -229,7 +228,7 @@ func TestIntegrationIssue_OnlySupportTeamAssigns(t *testing.T) {
 	for _, a := range team.Data {
 		emails = append(emails, a.Email)
 	}
-	want := []string{operatorEmail, secondOperator}
+	want := []string{operatorEmail, operator2Email}
 	slices.Sort(emails)
 	slices.Sort(want)
 	if !slices.Equal(emails, want) {

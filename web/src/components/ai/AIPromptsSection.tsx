@@ -11,6 +11,7 @@ import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import { LoadFailed } from '@/components/layout/LoadFailed'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { ListSection } from '@/components/layout/SectionHeader'
 import { listRowClass } from '@/components/list/list-row'
 import { rowButtonProps } from '@/components/list/row-button'
@@ -73,7 +74,7 @@ export function AIPromptsSection({ canWrite, purpose, guide }: {
   return (
     <ListSection
       action={canWrite && (
-        <Button size="sm" onClick={() => navigate(`${base}/new`)} data-testid="ai-prompt-add">New prompt</Button>
+        <CreateButton onClick={() => navigate(`${base}/new`)} data-testid="ai-prompt-add">New prompt</CreateButton>
       )}
       data-testid="ai-prompts-section"
     >

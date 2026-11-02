@@ -6,14 +6,15 @@ import { toast } from 'sonner'
 import { createTermBase, getMe, listLanguages, type TermBase } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { Combobox } from '@/components/ui/combobox'
 import { langPickerProps, toLangOptions } from './lang-options'
+import { submitOnEnter } from '@/lib/submit-on-enter'
 
 const termBaseSchema = z.object({
-  name: z.string().min(1, 'Term base name is required'),
+  name: z.string().trim().min(1, 'Term base name is required'),
   srcLang: z.string().min(1, 'Source language is required'),
 })
 type TermBaseFormValues = z.infer<typeof termBaseSchema>
@@ -21,7 +22,7 @@ type TermBaseFormValues = z.infer<typeof termBaseSchema>
 interface Props {
   open: boolean
   onClose: () => void
-  /** Called with the new Term base id after a successful create. */
+  /** Called with the new term base id after a successful create. */
   onCreated: (id: number) => void
   /** Pre-fill source language (e.g. from the assignment row being edited). */
   initialSrcLang?: string
@@ -30,7 +31,7 @@ interface Props {
 }
 
 /**
- * Modal dialog to create a new Term base without leaving the current page.
+ * Modal dialog to create a new term base without leaving the current page.
  * Opened from the "Create new…" action of the term-base pickers in AssignmentSection. Pre-fills source/target
  * languages from the row context so the user doesn't re-type them.
  */
@@ -44,9 +45,10 @@ export function CreateTermBaseDialog({ open, onClose, onCreated, initialSrcLang 
     handleSubmit,
     control,
     reset,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<TermBaseFormValues>({
     resolver: zodResolver(termBaseSchema),
+    mode: 'onTouched',
     defaultValues: { name: '', srcLang: initialSrcLang },
     values: { name: '', srcLang: initialSrcLang },
   })
@@ -81,7 +83,7 @@ export function CreateTermBaseDialog({ open, onClose, onCreated, initialSrcLang 
       onCreated(tb.id)
     },
     onError: (err: Error) => {
-      toast.error(`Failed to create Term base: ${err.message}`)
+      toast.error(`Failed to create term base: ${err.message}`)
     },
   })
 
@@ -101,13 +103,7 @@ export function CreateTermBaseDialog({ open, onClose, onCreated, initialSrcLang 
           <DialogTitle>Create term base</DialogTitle>
         </DialogHeader>
         <div
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              e.stopPropagation()
-              submit()
-            }
-          }}
+          onKeyDown={submitOnEnter(submit)}
         >
           <FormField label="Name" error={errors.name?.message} required>
             <Input
@@ -144,7 +140,8 @@ export function CreateTermBaseDialog({ open, onClose, onCreated, initialSrcLang 
             <Button
               type="button"
               onClick={() => submit()}
-              disabled={createMut.isPending}
+              disabled={createMut.isPending || !isValid}
+              disabledReason={isValid ? undefined : MISSING_REQUIRED_REASON}
             >
               {createMut.isPending ? 'Creating...' : 'Create'}
             </Button>

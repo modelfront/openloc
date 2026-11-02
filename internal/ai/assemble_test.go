@@ -275,6 +275,15 @@ func TestPreviewContextMatchesSelectedFields(t *testing.T) {
 				if _, ok := matches[0]["score"]; !ok {
 					t.Fatalf("the preview match should show its score: %s", raw)
 				}
+				var terms []map[string]any
+				if err := json.Unmarshal(content["terms"], &terms); err != nil || len(terms) != 1 {
+					t.Fatalf("terms should be a one-item list: %s", raw)
+				}
+				for _, k := range []string{"definition", "domain", "notes"} {
+					if _, ok := terms[0][k]; !ok {
+						t.Fatalf("the preview term should show its %s: %s", k, raw)
+					}
+				}
 			}
 		}
 	}

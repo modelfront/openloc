@@ -47,3 +47,22 @@ func TestIntegrationChatMessagesReturnToolCallsAsJSON(t *testing.T) {
 		t.Errorf("user message should have no tool_calls, got %+v", env.Data[0].ToolCalls)
 	}
 }
+
+// The first event names the conversation, which already holds the user's
+// message: a browser whose stream breaks before `done` can still ask again
+// in the same conversation.
+func TestIntegrationChatStreamStartsWithItsConversation(t *testing.T) {
+	f := newChatFixture(t, []*chat.Turn{{Text: "Hello.", StopReason: "end_turn"}})
+	rec := f.do(t, "POST", "/api/chat", `{"message":"hi"}`, f.ownerA, f.tenantA.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	events := sseEvents(t, rec.Body.String())
+	if len(events) == 0 || events[0].Name != "start" {
+		t.Fatalf("first event = %+v, want start", events)
+	}
+	startID, _ := events[0].Data["conversation_id"].(float64)
+	if done := turnOf(events).conversationID; done == 0 || int64(startID) != done {
+		t.Fatalf("start conversation_id = %v, done = %d", startID, done)
+	}
+}

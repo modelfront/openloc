@@ -6,6 +6,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { tableHeaderRowClass } from '@/components/list/list-row'
 
 interface VirtualDataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
@@ -99,7 +100,7 @@ export function VirtualDataTable<TData, TValue>({
             {table.getHeaderGroups().map(headerGroup => (
               <tr
                 key={headerGroup.id}
-                className="bg-muted border-b border-gray-200 dark:border-gray-800 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+                className={tableHeaderRowClass}
               >
                 {headerGroup.headers.map(header => (
                   <th key={header.id} className="px-3 py-2 text-left font-medium">

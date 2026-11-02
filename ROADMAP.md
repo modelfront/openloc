@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-10-19
+Updated: 2026-10-21
 
 This page shows what we work on now and what comes next. It is not a commitment: there are no dates, and the order can change. We build first what our Early Access Program participants need most.
 
@@ -16,12 +16,11 @@ Each line carries the area it belongs to.
 - `editor` Mark a QA finding as a false positive so it stops showing
 - `editor` Date, time and author on translation memory matches in the Resources tab
 - `editor` A fuzzy matches view that shows what differs
-- `editor` Split and join segments
 - `editor` Track changes: see what changed since the previous workflow step
 - `editor` Comments from the source file shown next to the segment
 - `files` Protect text that follows a pattern, such as `{name}` or `[1]`, as a tag
 - `files` Excel: choose which columns hold the source and the target text
-- `files` Segmentation rules you can adjust, with shorter segments by default
+- `files` Choose the segmentation profile per file
 - `files` PowerPoint: chart text and slide masters
 - `files` Markdown: formatting and links protected as tags
 - `memory` Search and filters on the translation memory and term base lists
@@ -56,7 +55,6 @@ The list grows as we go. Items are added as teams ask for them and move up as we
 The ones worth knowing about before you plan around them. Each is real, reproducible and on our list.
 
 - `editor` Applying a fuzzy match from the Resources tab drops its match label.
-- `editor` Segmentation often leaves several sentences in one segment, and the rules cannot be changed yet.
 - `files` Bilingual XLIFF export writes auto-approved segments as final, and statuses from files made in other tools are not kept on import.
 - `memory` Japanese and Chinese terms are found only when they are separated by spaces.
 - `qa` The QA number check does not report a dropped decimal point (25.16 becomes 2516).

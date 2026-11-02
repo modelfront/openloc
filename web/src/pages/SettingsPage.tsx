@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Button } from '@/components/ui/button'
+import { Button, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { CheckboxField } from '@/components/ui/checkbox-field'
@@ -13,7 +13,6 @@ import { SettingsCard } from '@/components/layout/SettingsCard'
 import { useScrollToError } from '../hooks/useScrollToError'
 import { getMe, updateMe, getNotificationPreferences, updateNotificationPreferences, type NotificationPreferences } from '../api'
 import { AppearanceSection } from '../components/settings/AppearanceSection'
-import { ConnectedAppsSection } from '../components/settings/ConnectedAppsSection'
 import { toast } from 'sonner'
 import { errorText } from '@/lib/error-text'
 
@@ -34,7 +33,7 @@ export default function SettingsPage() {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: { name: '' },
@@ -82,8 +81,12 @@ export default function SettingsPage() {
           </FormField>
           <Button
             type="submit"
-            disabled={isSubmitting || impersonating}
-            disabledReason={impersonating ? "The profile can't be changed while you are logged in as an organization." : undefined}
+            disabled={isSubmitting || impersonating || !isDirty}
+            disabledReason={
+              impersonating ? "The profile can't be changed while you are logged in as an organization."
+                : !isDirty ? NOTHING_CHANGED_REASON
+                  : undefined
+            }
           >
             {isSubmitting ? 'Saving...' : 'Save changes'}
           </Button>
@@ -95,10 +98,6 @@ export default function SettingsPage() {
 
       {/* Appearance */}
       <AppearanceSection />
-
-      <div data-guide="settings.connected_apps">
-        <ConnectedAppsSection />
-      </div>
 
     </PageContainer>
   )

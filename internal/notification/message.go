@@ -26,21 +26,16 @@ const fromName = "OpenLoc"
 // servers enforce. The body is quoted-printable for the same limit.
 //
 // An email of a thread refers to the thread's id in In-Reply-To and
-// References, and the thread's root carries it as its Message-ID, so mail
-// apps such as Gmail group the thread's emails (they also need one subject).
+// References, so mail apps such as Gmail group the thread's emails (they also
+// need one subject).
 func buildMIME(from, to, subject, htmlBody string, thread emaillayout.Thread) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("From: " + fromName + " <" + from + ">\r\n")
 	b.WriteString("To: " + to + "\r\n")
 	b.WriteString(foldHeader("Subject", encodeSubject(subject)))
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
-	threadID := threadMessageID(thread.ID, from)
-	if thread.Root && threadID != "" {
-		b.WriteString("Message-ID: " + threadID + "\r\n")
-	} else {
-		b.WriteString("Message-ID: <" + rand.Text() + "@" + domainOf(from) + ">\r\n")
-	}
-	if threadID != "" && !thread.Root {
+	b.WriteString("Message-ID: <" + rand.Text() + "@" + domainOf(from) + ">\r\n")
+	if threadID := threadMessageID(thread.ID, from); threadID != "" {
 		b.WriteString("In-Reply-To: " + threadID + "\r\n")
 		b.WriteString("References: " + threadID + "\r\n")
 	}

@@ -17,10 +17,7 @@ func TestIntegrationIssue_EmailsUseSharedLayout(t *testing.T) {
 	f := newFixture(t)
 	issue := f.report(t, "Export <b>does</b> nothing")
 	console := fmt.Sprintf(`<a href="http://localhost:5173/platform/issues/%d" style="display: inline-block;`, issue.ID)
-
-	assertEmail(t, "new issue", newestBody(t, f.outbox, operatorEmail),
-		emaillayout.HeaderMarker, ">Organization</td>", ">Acme Org</td>", "rep@test.com", ">Description</div>",
-		console, ">Open the issue</a>")
+	f.assignTo(t, issue.ID, f.operator.ID)
 
 	rec := f.asOperator(t, http.MethodPost, platformPath(issue.ID, "/status"),
 		map[string]string{"status": "needs_info", "note": "Which file format?"})
@@ -35,8 +32,18 @@ func TestIntegrationIssue_EmailsUseSharedLayout(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("reply: %d %s", rec.Code, rec.Body.String())
 	}
-	assertEmail(t, "reply", newestBody(t, f.outbox, operatorEmail),
-		emaillayout.HeaderMarker, ">Reply</div>", "A DOCX file.", ">Reporter</td>", console, ">Open the issue</a>")
+	assertEmail(t, "reply to the assignee", newestBody(t, f.outbox, operatorEmail),
+		emaillayout.HeaderMarker, ">Reply</div>", "A DOCX file.", ">Organization</td>", console, ">Open the issue</a>")
+}
+
+// assignTo assigns the issue through the operator console, as the fixture's
+// operator.
+func (f *fixture) assignTo(t *testing.T, issueID, userID int64) {
+	t.Helper()
+	rec := f.asOperator(t, http.MethodPatch, platformPath(issueID, ""), map[string]any{"assignee_id": userID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func newestBody(t *testing.T, o *notification.Outbox, to string) string {
@@ -61,21 +68,24 @@ func assertEmail(t *testing.T, name, body string, wants ...string) {
 }
 
 // Every email about one issue, to either side, has the same subject and the
-// same thread, and the new-issue email starts the thread, so mail apps keep
-// the issue's emails in one conversation.
+// same thread, so mail apps keep the issue's emails in one conversation.
 func TestIntegrationIssue_EmailsThreadPerIssue(t *testing.T) {
 	f := newFixture(t)
 	issue := f.report(t, "Export does nothing")
-	f.report(t, "Search is slow")
+	other := f.report(t, "Search is slow")
+	f.assignTo(t, issue.ID, f.operator.ID)
+	f.assignTo(t, other.ID, f.operator.ID)
 
 	rec := f.asOperator(t, http.MethodPost, platformPath(issue.ID, "/status"),
 		map[string]string{"status": "needs_info", "note": "Which file format?"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("needs info: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = f.asMember(t, issuePath(issue.ID, "/comments"), f.reporter.ID, f.tenant.ID, map[string]string{"body": "A DOCX file."})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("reply: %d %s", rec.Code, rec.Body.String())
+	for _, id := range []int64{issue.ID, other.ID} {
+		rec = f.asMember(t, issuePath(id, "/comments"), f.reporter.ID, f.tenant.ID, map[string]string{"body": "A DOCX file."})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("reply: %d %s", rec.Code, rec.Body.String())
+		}
 	}
 	decodeDetail(t, f.operatorMultipart(t, platformPath(issue.ID, "/comments"), map[string]string{"body": "Thanks, looking."}))
 
@@ -94,32 +104,26 @@ func TestIntegrationIssue_EmailsThreadPerIssue(t *testing.T) {
 		}
 	}
 	var ops []notification.OutboxEmail
+	var otherThread string
 	for _, e := range f.outbox.For(operatorEmail) {
 		if strings.Contains(e.Subject, "Search is slow") {
-			if e.ThreadID == "" || e.ThreadID == thread {
-				t.Errorf("another issue's email %q has thread %q", e.Subject, e.ThreadID)
-			}
+			otherThread = e.ThreadID
 			continue
 		}
 		ops = append(ops, e)
 	}
-	if len(ops) != 2 {
-		t.Fatalf("operator emails about the issue = %d, want 2 (new issue, reply)", len(ops))
+	if len(ops) != 1 {
+		t.Fatalf("assignee emails about the issue = %d, want 1 (the reply)", len(ops))
 	}
-	for i := len(ops) - 1; i >= 0; i-- { // oldest first: the new issue sets the thread
-		check(operatorEmail, ops[i])
-	}
-	if !ops[1].ThreadRoot || ops[0].ThreadRoot {
-		t.Errorf("roots: new issue %v, reply %v; want only the new issue", ops[1].ThreadRoot, ops[0].ThreadRoot)
-	}
+	check(operatorEmail, ops[0])
 	reporter := f.outbox.For("rep@test.com")
 	if len(reporter) != 2 {
 		t.Fatalf("reporter emails = %d, want 2", len(reporter))
 	}
 	for _, e := range reporter {
 		check("rep@test.com", e)
-		if e.ThreadRoot {
-			t.Errorf("a reporter email claims to start the thread: %q", e.Subject)
-		}
+	}
+	if otherThread == "" || otherThread == thread {
+		t.Errorf("another issue's email has thread %q, want its own", otherThread)
 	}
 }

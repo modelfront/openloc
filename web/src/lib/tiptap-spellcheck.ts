@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
-import { plainOffsetToPm } from './pm-offset'
+import { plainOffsetToPm, pmPlainText } from './pm-offset'
 import { checkSpelling } from '../api/spellcheck'
 
 const spellcheckKey = new PluginKey('spellcheck')
@@ -207,7 +207,7 @@ export const SpellCheck = Extension.create<{
           const check = async () => {
             if (!options().enabled) return
 
-            const text = editorView.state.doc.textContent
+            const text = pmPlainText(editorView.state.doc)
             if (text === lastText || text.length < 2) return
             lastText = text
 
@@ -215,9 +215,9 @@ export const SpellCheck = Extension.create<{
               const matches: SpellMatch[] = await checkSpelling(text, options().language, options().jobId)
 
               // Build decorations from matches. LanguageTool reports plain-text
-              // offsets against the string we sent (doc.textContent), which
-              // excludes tag chips — so the mapping has to walk the document
-              // rather than assume `pos = offset + 1`.
+              // offsets against the string we sent (pmPlainText: breaks are
+              // '\n', tag chips are nothing) — so the mapping has to walk the
+              // document rather than assume `pos = offset + 1`.
               const decorations: Decoration[] = []
               const entries: SpellEntry[] = []
               const doc = editorView.state.doc

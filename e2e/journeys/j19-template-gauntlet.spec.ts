@@ -73,6 +73,7 @@ import {
   getMTRouterViaAPI,
   deleteMTRouterViaAPI,
   updateTemplateViaAPI,
+  standardWorkflow,
 } from "./helpers";
 
 const API = "";
@@ -82,6 +83,7 @@ const RUN_ID = Date.now();
 let templateId: number;
 let templateProfileId: number;
 let secondTemplateId: number; // template saved from project A's current settings
+let noWorkflowTemplateId: number; // A3b: created with no workflow
 let projectAId: number;       // created-with-template, then template edited
 let projectBId: number;       // created AFTER template mutation
 let projectNordicId: number;  // multi-locale fan-out (C7-C9)
@@ -145,7 +147,7 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
     const headers = await authHeader(page);
     const res = await page.request.post(`${API}/api/templates`, {
       headers,
-      data: { name: `J19 Primary ${RUN_ID}`, mt_on_upload: true, fuzzy_threshold: 0.85 },
+      data: { name: `J19 Primary ${RUN_ID}`, mt_on_upload: true, fuzzy_threshold: 0.85, workflow_id: (await standardWorkflow(page)).id },
     });
     expect(res.status(), "A1: well-formed template create must succeed").toBe(201);
     const body = await res.json();
@@ -164,17 +166,35 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
   test("A2: create with empty name returns 400", async ({ page }) => {
     await login(page);
     const headers = await authHeader(page);
-    const res = await page.request.post(`${API}/api/templates`, { headers, data: { name: "" } });
+    const res = await page.request.post(`${API}/api/templates`, {
+      headers, data: { name: "", workflow_id: (await standardWorkflow(page)).id },
+    });
     expect(res.status(), "A2: empty name must 400").toBe(400);
+    expect(await res.text(), "A2: refused for the name").toContain("name is required");
   });
 
   test("A3: create with whitespace-only name returns 400 (parity with mtengine A4)", async ({ page }) => {
     await login(page);
     const headers = await authHeader(page);
-    const res = await page.request.post(`${API}/api/templates`, { headers, data: { name: "   \t\n  " } });
+    const res = await page.request.post(`${API}/api/templates`, {
+      headers, data: { name: "   \t\n  ", workflow_id: (await standardWorkflow(page)).id },
+    });
     expect(res.status(),
       "A3: whitespace-only name must 400 (HandleCreate trims, like j17 mtengine A4).",
     ).toBe(400);
+    expect(await res.text(), "A3: refused for the name").toContain("name is required");
+  });
+
+  test("A3b: create without a workflow makes a template with no steps", async ({ page }) => {
+    await login(page);
+    const headers = await authHeader(page);
+    const res = await page.request.post(`${API}/api/templates`, { headers, data: { name: `J19 No-Workflow ${RUN_ID}` } });
+    const text = await res.text();
+    expect(res.status(), `A3b: create without a workflow: ${text.slice(0, 200)}`).toBe(201);
+    noWorkflowTemplateId = JSON.parse(text).data.id as number;
+    const steps = await page.request.get(`${API}/api/templates/${noWorkflowTemplateId}/workflow-steps`, { headers });
+    expect(steps.ok()).toBe(true);
+    expect((await steps.json()).data, "no default steps").toEqual([]);
   });
 
   test("A4: defaults — fuzzy threshold and upload phases default correctly", async ({ page }) => {
@@ -182,7 +202,7 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
     const headers = await authHeader(page);
     const res = await page.request.post(`${API}/api/templates`, {
       headers,
-      data: { name: `J19 Default-Probe ${RUN_ID}` },
+      data: { name: `J19 Default-Probe ${RUN_ID}`, workflow_id: (await standardWorkflow(page)).id },
     });
     expect(res.ok()).toBe(true);
     const body = await res.json();
@@ -712,6 +732,7 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
     const res = await page.request.post(`${API}/api/templates`, {
       headers, data: {
         name: `J19 SavedFromA ${RUN_ID}`,
+        workflow_id: (await standardWorkflow(page)).id,
         settings: {
           fuzzy_threshold: s.project.fuzzy_threshold, mt_on_upload: s.project.mt_on_upload, tm_on_upload: s.project.tm_on_upload,
           mt_router_id: s.project.mt_router_id,
@@ -764,9 +785,10 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
     await login(page);
     const headers = await authHeader(page);
     const res = await page.request.post(`${API}/api/templates`, {
-      headers, data: { name: "", settings: { fuzzy_threshold: 0.85 } },
+      headers, data: { name: "", settings: { fuzzy_threshold: 0.85 }, workflow_id: (await standardWorkflow(page)).id },
     });
     expect(res.status(), "D4: empty name must 400").toBe(400);
+    expect(await res.text(), "D4: refused for the name").toContain("name is required");
   });
 
   // ════════════════════════════════════════════════════════════════════════
@@ -786,6 +808,7 @@ test.describe.serial("J19 — Template CRUD Gauntlet", () => {
     if (templateId) await cleanup(() => deleteTemplateViaAPI(page, templateId));
     if (secondTemplateId) await cleanup(() => deleteTemplateViaAPI(page, secondTemplateId));
     if (thirdTemplateId) await cleanup(() => deleteTemplateViaAPI(page, thirdTemplateId));
+    if (noWorkflowTemplateId) await cleanup(() => deleteTemplateViaAPI(page, noWorkflowTemplateId));
 
     // Routers (nothing points at them once the profiles above are gone), then resources
     if (router1Id) await cleanup(() => deleteMTRouterViaAPI(page, router1Id!));

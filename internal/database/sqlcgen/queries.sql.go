@@ -362,7 +362,7 @@ func (q *Queries) CarryStepPredictions(ctx context.Context, assignmentID int64) 
 
 const claimFailedJobForRerun = `-- name: ClaimFailedJobForRerun :execrows
 UPDATE jobs SET status = 'queued', current_step = $1, error_message = NULL,
-       stop_requested_at = NULL, updated_at = now()
+       stop_requested_at = NULL, translated_count = NULL, total_count = NULL, updated_at = now()
 WHERE id = $2 AND status = 'failed'
 `
 
@@ -371,7 +371,8 @@ type ClaimFailedJobForRerunParams struct {
 	ID          int64  `json:"id"`
 }
 
-// Moves a failed job to queued for a Re-run of the automation that failed.
+// Moves a failed job to queued for a Re-run of the automation that failed,
+// without the failed run's progress counts.
 // 0 rows = the job is not failed, or a concurrent Re-run claimed it first
 // → 409. Tenant scoping happens in resolveJob before this by-ID write.
 func (q *Queries) ClaimFailedJobForRerun(ctx context.Context, arg ClaimFailedJobForRerunParams) (int64, error) {
@@ -384,19 +385,20 @@ func (q *Queries) ClaimFailedJobForRerun(ctx context.Context, arg ClaimFailedJob
 
 const claimJobPipeline = `-- name: ClaimJobPipeline :one
 WITH prev AS (
-    SELECT j.id, j.status, j.current_step, j.error_message, j.updated_at FROM jobs j
+    SELECT j.id, j.status, j.current_step, j.error_message, j.translated_count, j.total_count, j.updated_at FROM jobs j
     JOIN files f ON f.id = j.file_id
     JOIN projects p ON p.id = f.project_id
     WHERE j.id = $2 AND p.tenant_id = $3 AND p.deleted_at IS NULL
     FOR UPDATE OF j
 )
-UPDATE jobs SET status = 'in_progress', current_step = $1, error_message = NULL, stop_requested_at = NULL, updated_at = now()
+UPDATE jobs SET status = 'in_progress', current_step = $1, error_message = NULL, stop_requested_at = NULL,
+       translated_count = NULL, total_count = NULL, updated_at = now()
 FROM prev
 WHERE jobs.id = prev.id
   AND (NOT (prev.status IN ('queued', 'in_progress')
             AND lower(coalesce(prev.current_step, '')) NOT LIKE '%complete')
        OR prev.updated_at < now() - interval '30 minutes')
-RETURNING prev.status, prev.current_step, prev.error_message, prev.updated_at
+RETURNING prev.status, prev.current_step, prev.error_message, prev.translated_count, prev.total_count, prev.updated_at
 `
 
 type ClaimJobPipelineParams struct {
@@ -406,10 +408,12 @@ type ClaimJobPipelineParams struct {
 }
 
 type ClaimJobPipelineRow struct {
-	Status       string             `json:"status"`
-	CurrentStep  string             `json:"current_step"`
-	ErrorMessage *string            `json:"error_message"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	Status          string             `json:"status"`
+	CurrentStep     string             `json:"current_step"`
+	ErrorMessage    *string            `json:"error_message"`
+	TranslatedCount *int32             `json:"translated_count"`
+	TotalCount      *int32             `json:"total_count"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Atomic "not already running" guard + in_progress transition for the
@@ -417,7 +421,7 @@ type ClaimJobPipelineRow struct {
 // another run holds the job → 409. The running-state predicate is the SQL
 // twin of pipeline.IsPipelineRunning (translate.go) — keep the two in sync.
 // Clears error_message like UpdateJobStatus does (a new run makes any prior
-// failure stale). Tenant-scoped: a job outside the tenant claims nothing.
+// failure stale), and the progress counts like StartJobRun. Tenant-scoped: a job outside the tenant claims nothing.
 //
 // Returns the status, step, error_message and updated_at the claim replaced,
 // read under the row lock: a pre-flight rejection puts back exactly these,
@@ -436,9 +440,32 @@ func (q *Queries) ClaimJobPipeline(ctx context.Context, arg ClaimJobPipelinePara
 		&i.Status,
 		&i.CurrentStep,
 		&i.ErrorMessage,
+		&i.TranslatedCount,
+		&i.TotalCount,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const clearSegmentationProfileFromProjects = `-- name: ClearSegmentationProfileFromProjects :execrows
+UPDATE settings_profiles sp SET segmentation_profile_id = NULL
+WHERE sp.tenant_id = $1 AND sp.segmentation_profile_id = $2::bigint
+  AND EXISTS (SELECT 1 FROM projects p WHERE p.settings_profile_id = sp.id AND p.tenant_id = $1)
+`
+
+type ClearSegmentationProfileFromProjectsParams struct {
+	TenantID int64 `json:"tenant_id"`
+	ID       int64 `json:"id"`
+}
+
+// Takes a deleted profile off the tenant's projects: their next upload asks
+// for another profile.
+func (q *Queries) ClearSegmentationProfileFromProjects(ctx context.Context, arg ClearSegmentationProfileFromProjectsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearSegmentationProfileFromProjects, arg.TenantID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const clearStepEdited = `-- name: ClearStepEdited :exec
@@ -528,7 +555,7 @@ SET status = 'needs_review',
     step_edited = false,
     updated_at = now()
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = $1)
-  AND target_language = $2
+  AND translations.target_language = $2
   AND locked = false
   AND active_text IS NOT NULL
   AND ($3::bool OR status NOT IN ('approved', 'auto_approved'))
@@ -1156,6 +1183,46 @@ func (q *Queries) CountHeldClearableByProject(ctx context.Context, arg CountHeld
 	return column_1, err
 }
 
+const countJobRowsInside = `-- name: CountJobRowsInside :one
+SELECT count(*)::int FROM (
+  SELECT 1
+  FROM translations t
+  JOIN segments s ON s.id = t.segment_id
+  JOIN files f ON f.id = s.file_id
+  JOIN projects p ON p.id = f.project_id
+  WHERE s.file_id = $1 AND t.target_language = $2
+    AND p.tenant_id = $3 AND p.deleted_at IS NULL
+    AND s.position > $4::int AND s.position < $5::int
+  LIMIT $6::int
+) inside
+`
+
+type CountJobRowsInsideParams struct {
+	FileID         int64  `json:"file_id"`
+	TargetLanguage string `json:"target_language"`
+	TenantID       int64  `json:"tenant_id"`
+	FromPosition   int32  `json:"from_position"`
+	ToPosition     int32  `json:"to_position"`
+	RowCap         int32  `json:"row_cap"`
+}
+
+// Tenant-scoped: how many of the job's rows lie strictly between
+// @from_position and @to_position, counted up to @row_cap: a join only needs
+// to know whether that is more than the rows it names.
+func (q *Queries) CountJobRowsInside(ctx context.Context, arg CountJobRowsInsideParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countJobRowsInside,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.FromPosition,
+		arg.ToPosition,
+		arg.RowCap,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countJobSegmentsPage = `-- name: CountJobSegmentsPage :one
 SELECT count(*)
 FROM segments s
@@ -1518,51 +1585,42 @@ func (q *Queries) CountQAProfileReferences(ctx context.Context, qaProfileID *int
 	return count, err
 }
 
-const countRecentIssuesByReporter = `-- name: CountRecentIssuesByReporter :one
-SELECT count(*) FROM issues WHERE reporter_id = $1 AND created_at >= $2
+const countQARegexRules = `-- name: CountQARegexRules :one
+SELECT count(*) FROM qa_rules WHERE profile_id = $1 AND check_type = 'regex'
 `
 
-type CountRecentIssuesByReporterParams struct {
-	ReporterID int64              `json:"reporter_id"`
-	Since      pgtype.Timestamptz `json:"since"`
-}
-
-// The per-user rate limit: issues this user filed since @since, in any org.
-func (q *Queries) CountRecentIssuesByReporter(ctx context.Context, arg CountRecentIssuesByReporterParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countRecentIssuesByReporter, arg.ReporterID, arg.Since)
+// Internal: caller must have tenant-verified the profile (GetQAProfile).
+func (q *Queries) CountQARegexRules(ctx context.Context, profileID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countQARegexRules, profileID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const countRecentMemberComments = `-- name: CountRecentMemberComments :one
-SELECT count(*) FROM issue_comments
-WHERE author_id = $1 AND author_side = 'reporter' AND created_at >= $2
+const countSegmentationProfileUses = `-- name: CountSegmentationProfileUses :one
+SELECT
+    (SELECT count(*) FROM projects p JOIN settings_profiles sp ON sp.id = p.settings_profile_id
+     WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND sp.segmentation_profile_id = $2)::bigint AS projects,
+    (SELECT count(*) FROM templates t JOIN settings_profiles sp ON sp.id = t.settings_profile_id
+     WHERE t.tenant_id = $1 AND sp.segmentation_profile_id = $2)::bigint AS templates
 `
 
-type CountRecentMemberCommentsParams struct {
-	AuthorID *int64             `json:"author_id"`
-	Since    pgtype.Timestamptz `json:"since"`
+type CountSegmentationProfileUsesParams struct {
+	TenantID int64  `json:"tenant_id"`
+	ID       *int64 `json:"id"`
 }
 
-// The per-member comment limit: comments this user wrote on the org's side
-// since @since, in any org.
-func (q *Queries) CountRecentMemberComments(ctx context.Context, arg CountRecentMemberCommentsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countRecentMemberComments, arg.AuthorID, arg.Since)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CountSegmentationProfileUsesRow struct {
+	Projects  int64 `json:"projects"`
+	Templates int64 `json:"templates"`
 }
 
-const countSegmentsByFile = `-- name: CountSegmentsByFile :one
-SELECT count(*) FROM segments WHERE file_id = $1
-`
-
-func (q *Queries) CountSegmentsByFile(ctx context.Context, fileID int64) (int64, error) {
-	row := q.db.QueryRow(ctx, countSegmentsByFile, fileID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+// How many live projects and templates of the tenant name a profile.
+func (q *Queries) CountSegmentationProfileUses(ctx context.Context, arg CountSegmentationProfileUsesParams) (CountSegmentationProfileUsesRow, error) {
+	row := q.db.QueryRow(ctx, countSegmentationProfileUses, arg.TenantID, arg.ID)
+	var i CountSegmentationProfileUsesRow
+	err := row.Scan(&i.Projects, &i.Templates)
+	return i, err
 }
 
 const countSharedDashboards = `-- name: CountSharedDashboards :one
@@ -1573,20 +1631,6 @@ SELECT COUNT(*) FROM dashboards WHERE tenant_id = $1 AND owner_id IS NULL AND de
 // asking the user to guess.
 func (q *Queries) CountSharedDashboards(ctx context.Context, tenantID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countSharedDashboards, tenantID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countStartedAssignmentsForStep = `-- name: CountStartedAssignmentsForStep :one
-SELECT count(*) FROM job_step_assignments WHERE workflow_step_id = $1 AND status <> 'pending'
-`
-
-// Assignments on a step that a job has already reached (anything but
-// pending). A step nobody reached may still be swapped or removed by a
-// workflow edit; a reached one may not.
-func (q *Queries) CountStartedAssignmentsForStep(ctx context.Context, workflowStepID int64) (int64, error) {
-	row := q.db.QueryRow(ctx, countStartedAssignmentsForStep, workflowStepID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -1890,7 +1934,7 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, arg CountUnreadN
 const createAIComment = `-- name: CreateAIComment :one
 INSERT INTO segment_comments (translation_id, user_id, content)
 VALUES ($1, NULL, $2)
-RETURNING id, translation_id, user_id, content, created_at, updated_at, deleted_at
+RETURNING id, translation_id, user_id, content, created_at, updated_at, deleted_at, from_segment
 `
 
 type CreateAICommentParams struct {
@@ -1911,6 +1955,7 @@ func (q *Queries) CreateAIComment(ctx context.Context, arg CreateAICommentParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.FromSegment,
 	)
 	return i, err
 }
@@ -2301,7 +2346,7 @@ func (q *Queries) CreateChatConversation(ctx context.Context, arg CreateChatConv
 const createComment = `-- name: CreateComment :one
 INSERT INTO segment_comments (translation_id, user_id, content)
 VALUES ($1, $2, $3)
-RETURNING id, translation_id, user_id, content, created_at, updated_at, deleted_at
+RETURNING id, translation_id, user_id, content, created_at, updated_at, deleted_at, from_segment
 `
 
 type CreateCommentParams struct {
@@ -2321,6 +2366,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (S
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.FromSegment,
 	)
 	return i, err
 }
@@ -2487,9 +2533,9 @@ func (q *Queries) CreateDemoTenant(ctx context.Context, arg CreateDemoTenantPara
 }
 
 const createFile = `-- name: CreateFile :one
-INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout)
-VALUES ($1, $2, $3, $4, $5, COALESCE($6::bool, true), $7::jsonb)
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout
+INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation)
+VALUES ($1, $2, $3, $4, $5, COALESCE($6::bool, true), $7::jsonb, $8::jsonb)
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
 `
 
 type CreateFileParams struct {
@@ -2500,11 +2546,14 @@ type CreateFileParams struct {
 	SegmentCount int32      `json:"segment_count"`
 	InlineHtml   *bool      `json:"inline_html"`
 	XlsxLayout   []byte     `json:"xlsx_layout"`
+	Segmentation []byte     `json:"segmentation"`
 }
 
 // inline_html is nil-keeps-default (on): a struct literal that omits it must
 // not parse a file as plain text. xlsx_layout is NULL for every file but an
-// Excel workbook the uploader laid out (parser.XLSXLayout).
+// Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
+// the rule set the file was split with (segmentation.Snapshot); NULL means
+// the conservative built-in set.
 func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, error) {
 	row := q.db.QueryRow(ctx, createFile,
 		arg.ProjectID,
@@ -2514,6 +2563,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		arg.SegmentCount,
 		arg.InlineHtml,
 		arg.XlsxLayout,
+		arg.Segmentation,
 	)
 	var i File
 	err := row.Scan(
@@ -2528,6 +2578,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -2889,6 +2940,70 @@ func (q *Queries) CreateLabelValue(ctx context.Context, arg CreateLabelValuePara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const createLanguageSegment = `-- name: CreateLanguageSegment :one
+INSERT INTO segments (id, file_id, target_language, source_text, source_rich_text,
+                      segment_key, position, sub_position, context, word_count,
+                      export_key, gap_before, chip_base)
+OVERRIDING SYSTEM VALUE
+SELECT n.id, $1, $2::text, $3, $4,
+       $5::text || '@' || n.id, $6, $7, $8::text, $9,
+       $5::text, $10, $11
+FROM (SELECT nextval(pg_get_serial_sequence('segments', 'id')) AS id) n
+RETURNING id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text, target_language, sub_position, export_key, gap_before, chip_base
+`
+
+type CreateLanguageSegmentParams struct {
+	FileID         int64   `json:"file_id"`
+	TargetLanguage string  `json:"target_language"`
+	SourceText     string  `json:"source_text"`
+	SourceRichText *string `json:"source_rich_text"`
+	ExportKey      string  `json:"export_key"`
+	Position       int32   `json:"position"`
+	SubPosition    int32   `json:"sub_position"`
+	Context        string  `json:"context"`
+	WordCount      int32   `json:"word_count"`
+	GapBefore      *string `json:"gap_before"`
+	ChipBase       int32   `json:"chip_base"`
+}
+
+// Internal: a segment that exists only in one language's job, made by a split
+// or join; the caller has checked the job in the tenant. Its key is
+// "<export key>@<id>": unique in the file, and the same for the row's life, so
+// a bilingual XLIFF exported before a later split still finds it.
+func (q *Queries) CreateLanguageSegment(ctx context.Context, arg CreateLanguageSegmentParams) (Segment, error) {
+	row := q.db.QueryRow(ctx, createLanguageSegment,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.SourceText,
+		arg.SourceRichText,
+		arg.ExportKey,
+		arg.Position,
+		arg.SubPosition,
+		arg.Context,
+		arg.WordCount,
+		arg.GapBefore,
+		arg.ChipBase,
+	)
+	var i Segment
+	err := row.Scan(
+		&i.ID,
+		&i.FileID,
+		&i.SourceText,
+		&i.SegmentKey,
+		&i.Position,
+		&i.Context,
+		&i.CreatedAt,
+		&i.WordCount,
+		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
 	)
 	return i, err
 }
@@ -3357,10 +3472,43 @@ func (q *Queries) CreateQAProfile(ctx context.Context, arg CreateQAProfileParams
 	return i, err
 }
 
+const createQARegexRule = `-- name: CreateQARegexRule :one
+INSERT INTO qa_rules (profile_id, check_type, enabled, severity, config)
+VALUES ($1, 'regex', $2, $3, $4)
+RETURNING id, profile_id, check_type, enabled, severity, config
+`
+
+type CreateQARegexRuleParams struct {
+	ProfileID int64  `json:"profile_id"`
+	Enabled   bool   `json:"enabled"`
+	Severity  string `json:"severity"`
+	Config    []byte `json:"config"`
+}
+
+// Internal: caller must have tenant-verified the profile (GetQAProfile).
+func (q *Queries) CreateQARegexRule(ctx context.Context, arg CreateQARegexRuleParams) (QaRule, error) {
+	row := q.db.QueryRow(ctx, createQARegexRule,
+		arg.ProfileID,
+		arg.Enabled,
+		arg.Severity,
+		arg.Config,
+	)
+	var i QaRule
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.CheckType,
+		&i.Enabled,
+		&i.Severity,
+		&i.Config,
+	)
+	return i, err
+}
+
 const createSegment = `-- name: CreateSegment :one
 INSERT INTO segments (file_id, source_text, segment_key, position, context)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text
+RETURNING id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text, target_language, sub_position, export_key, gap_before, chip_base
 `
 
 type CreateSegmentParams struct {
@@ -3390,14 +3538,48 @@ func (q *Queries) CreateSegment(ctx context.Context, arg CreateSegmentParams) (S
 		&i.CreatedAt,
 		&i.WordCount,
 		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
 	)
 	return i, err
+}
+
+const createSegmentationProfile = `-- name: CreateSegmentationProfile :one
+INSERT INTO segmentation_profiles (tenant_id, name, source_languages, definition, based_on, created_by)
+VALUES ($1, $2, $3::text[], $4, $5, $6)
+RETURNING id
+`
+
+type CreateSegmentationProfileParams struct {
+	TenantID        int64    `json:"tenant_id"`
+	Name            string   `json:"name"`
+	SourceLanguages []string `json:"source_languages"`
+	Definition      []byte   `json:"definition"`
+	BasedOn         *int64   `json:"based_on"`
+	CreatedBy       *int64   `json:"created_by"`
+}
+
+func (q *Queries) CreateSegmentationProfile(ctx context.Context, arg CreateSegmentationProfileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createSegmentationProfile,
+		arg.TenantID,
+		arg.Name,
+		arg.SourceLanguages,
+		arg.Definition,
+		arg.BasedOn,
+		arg.CreatedBy,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createSettingsProfile = `-- name: CreateSettingsProfile :one
 
 INSERT INTO settings_profiles (tenant_id, fuzzy_threshold, mt_on_upload, tm_on_upload, qa_profile_id)
-VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html
+VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type CreateSettingsProfileParams struct {
@@ -3411,8 +3593,8 @@ type CreateSettingsProfileParams struct {
 // ============================================================
 // Settings Profile CRUD
 // ============================================================
-// Penalties, auto_complete and inline_html are deliberately absent: they take
-// the column defaults (1% / 1% / on / on). Adding them as params would make every existing
+// Penalties, auto_complete, inline_html and linguist_terms are deliberately
+// absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
 // struct-literal caller pass a silent zero value — 0 means "locales are
 // equivalent" (new projects would start auto-confirming sublanguage variants)
 // and false would switch auto-completion or HTML strings off. Callers that need non-defaults
@@ -3443,6 +3625,9 @@ func (q *Queries) CreateSettingsProfile(ctx context.Context, arg CreateSettingsP
 		&i.MtRouterID,
 		&i.TmLookupOrder,
 		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
 	)
 	return i, err
 }
@@ -4414,12 +4599,40 @@ func (q *Queries) DeleteIssueAttachmentBlobPurges(ctx context.Context, storageKe
 	return err
 }
 
+const deleteIssueSlackBlank = `-- name: DeleteIssueSlackBlank :exec
+DELETE FROM issue_slack_blanks WHERE issue_id = $1
+`
+
+// Internal: platform sweep across tenants. Called once the card is blanked.
+func (q *Queries) DeleteIssueSlackBlank(ctx context.Context, issueID int64) error {
+	_, err := q.db.Exec(ctx, deleteIssueSlackBlank, issueID)
+	return err
+}
+
 const deleteJob = `-- name: DeleteJob :exec
 DELETE FROM jobs WHERE id = $1
 `
 
 func (q *Queries) DeleteJob(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteJob, id)
+	return err
+}
+
+const deleteJobLanguageSegments = `-- name: DeleteJobLanguageSegments :exec
+DELETE FROM segments
+WHERE file_id = $1 AND target_language = $2
+`
+
+type DeleteJobLanguageSegmentsParams struct {
+	FileID         int64   `json:"file_id"`
+	TargetLanguage *string `json:"target_language"`
+}
+
+// Internal: the segments a split or join made for one file + target language.
+// The job delete runs it after resolving the job with GetJobTenant and after
+// DeleteJobTranslations, so their translations are already gone.
+func (q *Queries) DeleteJobLanguageSegments(ctx context.Context, arg DeleteJobLanguageSegmentsParams) error {
+	_, err := q.db.Exec(ctx, deleteJobLanguageSegments, arg.FileID, arg.TargetLanguage)
 	return err
 }
 
@@ -4463,7 +4676,7 @@ func (q *Queries) DeleteJobTenant(ctx context.Context, arg DeleteJobTenantParams
 const deleteJobTranslations = `-- name: DeleteJobTranslations :exec
 DELETE FROM translations
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = $1)
-  AND target_language = $2
+  AND translations.target_language = $2
 `
 
 type DeleteJobTranslationsParams struct {
@@ -4476,6 +4689,30 @@ type DeleteJobTranslationsParams struct {
 // a job row alone would leave translations orphaned.
 func (q *Queries) DeleteJobTranslations(ctx context.Context, arg DeleteJobTranslationsParams) error {
 	_, err := q.db.Exec(ctx, deleteJobTranslations, arg.FileID, arg.TargetLanguage)
+	return err
+}
+
+const deleteJoinedTranslations = `-- name: DeleteJoinedTranslations :exec
+DELETE FROM translations WHERE id = ANY($1::bigint[])
+`
+
+// Internal: the translations a join folded into another row, after their
+// comments and history moved there. Their QA results, step statuses and holds
+// go with them. One statement, so the job's stats are recounted once.
+func (q *Queries) DeleteJoinedTranslations(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, deleteJoinedTranslations, ids)
+	return err
+}
+
+const deleteLanguageSegments = `-- name: DeleteLanguageSegments :exec
+DELETE FROM segments WHERE id = ANY($1::bigint[]) AND target_language IS NOT NULL
+`
+
+// Internal: the language rows a split or join replaced, after their
+// translations moved off them; shared rows in @ids stay. One statement, so
+// the job's stats are recounted once.
+func (q *Queries) DeleteLanguageSegments(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, deleteLanguageSegments, ids)
 	return err
 }
 
@@ -4576,6 +4813,28 @@ func (q *Queries) DeleteProjectLabelsForValue(ctx context.Context, arg DeletePro
 	return err
 }
 
+const deleteQARegexRule = `-- name: DeleteQARegexRule :execrows
+DELETE FROM qa_rules r
+USING qa_profiles p
+WHERE r.id = $1 AND r.profile_id = $2 AND r.check_type = 'regex'
+  AND p.id = r.profile_id AND p.tenant_id = $3 AND p.deleted_at IS NULL
+`
+
+type DeleteQARegexRuleParams struct {
+	ID        int64 `json:"id"`
+	ProfileID int64 `json:"profile_id"`
+	TenantID  int64 `json:"tenant_id"`
+}
+
+// A rule is a child row of its profile, so it is deleted outright.
+func (q *Queries) DeleteQARegexRule(ctx context.Context, arg DeleteQARegexRuleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteQARegexRule, arg.ID, arg.ProfileID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteQAResultsForJob = `-- name: DeleteQAResultsForJob :exec
 DELETE FROM qa_results
 WHERE translation_id IN (
@@ -4621,6 +4880,17 @@ DELETE FROM qa_rules WHERE id = $1
 
 func (q *Queries) DeleteQARule(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteQARule, id)
+	return err
+}
+
+const deleteQARulesForProfile = `-- name: DeleteQARulesForProfile :exec
+DELETE FROM qa_rules WHERE profile_id = $1
+`
+
+// Internal: caller must have tenant-verified the profile (GetQAProfile). Used
+// by an import that replaces every rule of a profile.
+func (q *Queries) DeleteQARulesForProfile(ctx context.Context, profileID int64) error {
+	_, err := q.db.Exec(ctx, deleteQARulesForProfile, profileID)
 	return err
 }
 
@@ -5554,9 +5824,24 @@ func (q *Queries) FindTenantMTEngine(ctx context.Context, tenantID int64) (MtEng
 	return i, err
 }
 
+const forgetStepRoundTexts = `-- name: ForgetStepRoundTexts :exec
+UPDATE translation_step_statuses
+SET end_text_md5 = NULL
+WHERE translation_id = ANY($1::bigint[]) AND end_text_md5 IS NOT NULL
+`
+
+// Internal: a split or join changes the source under these translations, so
+// a step rollback must not restore a status a round ended with on the old
+// source: with no end text, the text never reads as unchanged.
+func (q *Queries) ForgetStepRoundTexts(ctx context.Context, translationIds []int64) error {
+	_, err := q.db.Exec(ctx, forgetStepRoundTexts, translationIds)
+	return err
+}
+
 const fuzzyLookupTM = `-- name: FuzzyLookupTM :many
 SELECT id, tm_id, source_language, target_language, source_text, target_text,
-       source_rich_text, target_rich_text, created_at, prev_source_hash, next_source_hash,
+       source_rich_text, target_rich_text, created_at, updated_at, created_by, updated_by,
+       prev_source_hash, next_source_hash,
        similarity(source_text, $1::text) AS score
 FROM translation_memory
 WHERE tm_id = $2
@@ -5587,6 +5872,9 @@ type FuzzyLookupTMRow struct {
 	SourceRichText *string            `json:"source_rich_text"`
 	TargetRichText *string            `json:"target_rich_text"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy      string             `json:"created_by"`
+	UpdatedBy      string             `json:"updated_by"`
 	PrevSourceHash *string            `json:"prev_source_hash"`
 	NextSourceHash *string            `json:"next_source_hash"`
 	Score          float32            `json:"score"`
@@ -5599,7 +5887,8 @@ type FuzzyLookupTMRow struct {
 // Sublanguage-aware on both sides (see LookupTM). Callers rescore with
 // translationmemory.PenalizeSublanguage before comparing against the display
 // threshold, so a variant candidate has to clear a slightly higher bar.
-// prev/next_source_hash let an exact hit score 101% in context.
+// prev/next_source_hash let an exact hit score 101% in context; the created/
+// updated stamps are what the editor's match card shows.
 //
 // `%` is what lets idx_tm_source_trgm serve the search; it compares against
 // pg_trgm.similarity_threshold, so run it through
@@ -5631,6 +5920,9 @@ func (q *Queries) FuzzyLookupTM(ctx context.Context, arg FuzzyLookupTMParams) ([
 			&i.SourceRichText,
 			&i.TargetRichText,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CreatedBy,
+			&i.UpdatedBy,
 			&i.PrevSourceHash,
 			&i.NextSourceHash,
 			&i.Score,
@@ -6309,6 +6601,7 @@ func (q *Queries) GetConcept(ctx context.Context, arg GetConceptParams) (TermCon
 const getCurrentStepForJob = `-- name: GetCurrentStepForJob :one
 SELECT jsa.id, jsa.job_id, jsa.workflow_step_id, jsa.assigned_to, jsa.status, jsa.started_at, jsa.completed_at, jsa.created_at, jsa.rejection_reason, jsa.deadline, jsa.round, jsa.handoff_note, jsa.ai_review_all, ws.name AS step_name, ws.step_order, ws.role_required, ws.step_type,
        (ws.ai_router_id IS NOT NULL)::bool AS is_ai_step,
+       job_last_clear_step_order(jsa.job_id) AS last_clear_step_order,
        u.name AS assignee_name, u.email AS assignee_email
 FROM job_step_assignments jsa
 JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
@@ -6317,26 +6610,27 @@ WHERE jsa.id = $1
 `
 
 type GetCurrentStepForJobRow struct {
-	ID              int64              `json:"id"`
-	JobID           int64              `json:"job_id"`
-	WorkflowStepID  int64              `json:"workflow_step_id"`
-	AssignedTo      *int64             `json:"assigned_to"`
-	Status          string             `json:"status"`
-	StartedAt       pgtype.Timestamptz `json:"started_at"`
-	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	RejectionReason string             `json:"rejection_reason"`
-	Deadline        pgtype.Timestamptz `json:"deadline"`
-	Round           int32              `json:"round"`
-	HandoffNote     *string            `json:"handoff_note"`
-	AiReviewAll     bool               `json:"ai_review_all"`
-	StepName        string             `json:"step_name"`
-	StepOrder       int32              `json:"step_order"`
-	RoleRequired    string             `json:"role_required"`
-	StepType        string             `json:"step_type"`
-	IsAiStep        bool               `json:"is_ai_step"`
-	AssigneeName    *string            `json:"assignee_name"`
-	AssigneeEmail   *string            `json:"assignee_email"`
+	ID                 int64              `json:"id"`
+	JobID              int64              `json:"job_id"`
+	WorkflowStepID     int64              `json:"workflow_step_id"`
+	AssignedTo         *int64             `json:"assigned_to"`
+	Status             string             `json:"status"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	RejectionReason    string             `json:"rejection_reason"`
+	Deadline           pgtype.Timestamptz `json:"deadline"`
+	Round              int32              `json:"round"`
+	HandoffNote        *string            `json:"handoff_note"`
+	AiReviewAll        bool               `json:"ai_review_all"`
+	StepName           string             `json:"step_name"`
+	StepOrder          int32              `json:"step_order"`
+	RoleRequired       string             `json:"role_required"`
+	StepType           string             `json:"step_type"`
+	IsAiStep           bool               `json:"is_ai_step"`
+	LastClearStepOrder int32              `json:"last_clear_step_order"`
+	AssigneeName       *string            `json:"assignee_name"`
+	AssigneeEmail      *string            `json:"assignee_email"`
 }
 
 func (q *Queries) GetCurrentStepForJob(ctx context.Context, stepAssignmentID int64) (GetCurrentStepForJobRow, error) {
@@ -6361,6 +6655,7 @@ func (q *Queries) GetCurrentStepForJob(ctx context.Context, stepAssignmentID int
 		&i.RoleRequired,
 		&i.StepType,
 		&i.IsAiStep,
+		&i.LastClearStepOrder,
 		&i.AssigneeName,
 		&i.AssigneeEmail,
 	)
@@ -6538,6 +6833,28 @@ func (q *Queries) GetDemoTenant(ctx context.Context) (Tenant, error) {
 	return i, err
 }
 
+const getEditorSourceLanguage = `-- name: GetEditorSourceLanguage :one
+SELECT p.source_language
+FROM files f
+JOIN projects p ON p.id = f.project_id AND p.tenant_id = $1
+WHERE f.id = $2
+`
+
+type GetEditorSourceLanguageParams struct {
+	TenantID int64 `json:"tenant_id"`
+	FileID   int64 `json:"file_id"`
+}
+
+// The source language of a file's project: how the editor reads the
+// numbers and dates of its placeables. Tenant scoping is structural via
+// files→projects.
+func (q *Queries) GetEditorSourceLanguage(ctx context.Context, arg GetEditorSourceLanguageParams) (string, error) {
+	row := q.db.QueryRow(ctx, getEditorSourceLanguage, arg.TenantID, arg.FileID)
+	var source_language string
+	err := row.Scan(&source_language)
+	return source_language, err
+}
+
 const getExtension = `-- name: GetExtension :one
 SELECT id, tenant_id, ext_id, name, version, api_version, capabilities, manifest, storage_key, sha256, icon, created_by, created_at, updated_at, deleted_at FROM extensions
 WHERE tenant_id = $1 AND ext_id = $2 AND deleted_at IS NULL
@@ -6589,7 +6906,7 @@ func (q *Queries) GetExtensionIcon(ctx context.Context, arg GetExtensionIconPara
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout FROM files WHERE id = $1
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files WHERE id = $1
 `
 
 // Internal: used by pipeline. For user-facing handlers, use GetFileTenant.
@@ -6608,12 +6925,13 @@ func (q *Queries) GetFile(ctx context.Context, id int64) (File, error) {
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
 
 const getFileTenant = `-- name: GetFileTenant :one
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
 `
@@ -6639,6 +6957,7 @@ func (q *Queries) GetFileTenant(ctx context.Context, arg GetFileTenantParams) (F
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -6939,6 +7258,24 @@ func (q *Queries) GetIssueForPlatform(ctx context.Context, id int64) (GetIssueFo
 	return i, err
 }
 
+const getIssueSlackMessage = `-- name: GetIssueSlackMessage :one
+SELECT channel, ts FROM issue_slack_messages WHERE issue_id = $1
+`
+
+type GetIssueSlackMessageRow struct {
+	Channel string `json:"channel"`
+	Ts      string `json:"ts"`
+}
+
+// Internal: the worker's Slack post, platform-wide like the issues it serves.
+// The message that announced the issue; no row when none was posted.
+func (q *Queries) GetIssueSlackMessage(ctx context.Context, issueID int64) (GetIssueSlackMessageRow, error) {
+	row := q.db.QueryRow(ctx, getIssueSlackMessage, issueID)
+	var i GetIssueSlackMessageRow
+	err := row.Scan(&i.Channel, &i.Ts)
+	return i, err
+}
+
 const getJob = `-- name: GetJob :one
 SELECT id, file_id, target_language, word_count, created_at, updated_at, status, current_step, error_message, current_step_id, translated_count, total_count, asynq_task_id, stop_requested_at, mt_skip_reason FROM jobs WHERE id = $1
 `
@@ -7111,6 +7448,18 @@ func (q *Queries) GetJobForAnalysis(ctx context.Context, jobID int64) (GetJobFor
 		&i.ProjectID,
 	)
 	return i, err
+}
+
+const getJobLastClearStepOrder = `-- name: GetJobLastClearStepOrder :one
+SELECT job_last_clear_step_order($1::bigint)::int AS last_clear_step_order
+`
+
+// Internal: keyed by a job the caller already loaded tenant-scoped.
+func (q *Queries) GetJobLastClearStepOrder(ctx context.Context, jobID int64) (int32, error) {
+	row := q.db.QueryRow(ctx, getJobLastClearStepOrder, jobID)
+	var last_clear_step_order int32
+	err := row.Scan(&last_clear_step_order)
+	return last_clear_step_order, err
 }
 
 const getJobLeverageNeedsReview = `-- name: GetJobLeverageNeedsReview :many
@@ -7297,6 +7646,46 @@ func (q *Queries) GetJobTenant(ctx context.Context, arg GetJobTenantParams) (Job
 		&i.AsynqTaskID,
 		&i.StopRequestedAt,
 		&i.MtSkipReason,
+	)
+	return i, err
+}
+
+const getJobTermContext = `-- name: GetJobTermContext :one
+SELECT j.id AS job_id, p.id AS project_id, p.settings_profile_id,
+       p.source_language, j.target_language, sp.linguist_terms
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN settings_profiles sp ON sp.id = p.settings_profile_id
+WHERE j.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
+`
+
+type GetJobTermContextParams struct {
+	JobID    int64 `json:"job_id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+type GetJobTermContextRow struct {
+	JobID             int64  `json:"job_id"`
+	ProjectID         int64  `json:"project_id"`
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	SourceLanguage    string `json:"source_language"`
+	TargetLanguage    string `json:"target_language"`
+	LinguistTerms     string `json:"linguist_terms"`
+}
+
+// Tenant-scoped: a job's project, settings profile, language pair and whether
+// its linguists may add terms, for the editor's term quick-add.
+func (q *Queries) GetJobTermContext(ctx context.Context, arg GetJobTermContextParams) (GetJobTermContextRow, error) {
+	row := q.db.QueryRow(ctx, getJobTermContext, arg.JobID, arg.TenantID)
+	var i GetJobTermContextRow
+	err := row.Scan(
+		&i.JobID,
+		&i.ProjectID,
+		&i.SettingsProfileID,
+		&i.SourceLanguage,
+		&i.TargetLanguage,
+		&i.LinguistTerms,
 	)
 	return i, err
 }
@@ -7601,7 +7990,9 @@ SELECT
     j.total_count     AS total_count,
     f.name            AS file_name,
     f.format          AS file_format,
-    f.segment_count   AS segment_count,
+    -- The job's own rows: a split or join changes this job only.
+    COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+              WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
     p.id              AS project_id,
     p.name            AS project_name,
     p.source_language AS source_language,
@@ -8699,6 +9090,79 @@ func (q *Queries) GetProjectForProfile(ctx context.Context, settingsProfileID in
 	return i, err
 }
 
+const getProjectListRow = `-- name: GetProjectListRow :one
+SELECT p.id, p.name, p.description, p.source_language, p.target_languages, p.created_at, p.updated_at, p.template_id, p.tenant_id, p.deadline, p.settings_profile_id, p.status, p.created_by, p.customer_id, p.client, p.domain, p.deleted_at,
+  COALESCE(NULLIF(u.name, ''), u.email, '')::text AS created_by_name,
+  COALESCE(cv.value, '')::text AS customer_name,
+  cv.id AS customer_value_id
+FROM projects p
+LEFT JOIN users u ON u.id = p.created_by
+LEFT JOIN label_definitions cd ON cd.tenant_id = p.tenant_id
+                              AND cd.system_key = 'customer' AND cd.deleted_at IS NULL
+LEFT JOIN project_labels cpl ON cpl.project_id = p.id AND cpl.label_definition_id = cd.id
+LEFT JOIN label_values cv ON cv.id = cpl.label_value_id AND cv.deleted_at IS NULL
+WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
+`
+
+type GetProjectListRowParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+type GetProjectListRowRow struct {
+	ID                int64              `json:"id"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	SourceLanguage    string             `json:"source_language"`
+	TargetLanguages   []string           `json:"target_languages"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	TemplateID        *int64             `json:"template_id"`
+	TenantID          int64              `json:"tenant_id"`
+	Deadline          pgtype.Timestamptz `json:"deadline"`
+	SettingsProfileID int64              `json:"settings_profile_id"`
+	Status            ProjectStatus      `json:"status"`
+	CreatedBy         *int64             `json:"created_by"`
+	CustomerID        *int64             `json:"customer_id"`
+	Client            *string            `json:"client"`
+	Domain            *string            `json:"domain"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	CreatedByName     string             `json:"created_by_name"`
+	CustomerName      string             `json:"customer_name"`
+	CustomerValueID   *int64             `json:"customer_value_id"`
+}
+
+// One project as ListProjectsFiltered returns it (creator and customer names
+// included), for GET /api/projects/{id}. Its own statement, so the lookup
+// always plans on the primary key.
+func (q *Queries) GetProjectListRow(ctx context.Context, arg GetProjectListRowParams) (GetProjectListRowRow, error) {
+	row := q.db.QueryRow(ctx, getProjectListRow, arg.ID, arg.TenantID)
+	var i GetProjectListRowRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.SourceLanguage,
+		&i.TargetLanguages,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TemplateID,
+		&i.TenantID,
+		&i.Deadline,
+		&i.SettingsProfileID,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CustomerID,
+		&i.Client,
+		&i.Domain,
+		&i.DeletedAt,
+		&i.CreatedByName,
+		&i.CustomerName,
+		&i.CustomerValueID,
+	)
+	return i, err
+}
+
 const getProjectRepetitions = `-- name: GetProjectRepetitions :many
 WITH numbered AS (
     SELECT
@@ -8709,7 +9173,7 @@ WITH numbered AS (
         length(s.source_text) AS chars,
         ROW_NUMBER() OVER (
             PARTITION BY t.target_language, s.source_text
-            ORDER BY s.file_id, s.position
+            ORDER BY s.file_id, s.position, s.sub_position
         ) AS rn
     FROM translations t
     JOIN segments s ON s.id = t.segment_id
@@ -8876,7 +9340,7 @@ SELECT
     COALESCE(SUM(length(s.source_text)), 0)::int AS characters
 FROM segments s
 JOIN jobs j ON j.file_id = s.file_id
-LEFT JOIN translations t
+JOIN translations t
     ON t.segment_id = s.id
    AND t.target_language = j.target_language
 WHERE j.id = $1
@@ -8904,13 +9368,14 @@ type GetSavedAnalysisBandsRow struct {
 //	tm_100    — t.origin='tm' AND tm_match_percent=100
 //	tm_85_99  — t.origin='tm' AND tm_match_percent BETWEEN 85 AND 99
 //	tm_65_84  — t.origin='tm' AND tm_match_percent BETWEEN 65 AND 84
-//	new       — anything else (MT-filled, no-match, below-65 fuzzy, OR no
-//	            translation row at all via LEFT JOIN)
+//	new       — anything else (MT-filled, no-match, below-65 fuzzy)
 //
 // Repetitions are NOT computed here (behavior deferred; see planning doc).
 //
-// is_auto_approved is FALSE for segments with no translation row (LEFT JOIN
-// yields NULL status) and for any status other than 'auto_approved' —
+// A job's rows are the segments with a translation in its language, so a
+// shared segment a split or join replaced in this language is not counted.
+//
+// is_auto_approved is FALSE for any status other than 'auto_approved' —
 // including 'approved' (human-confirmed) and 'needs_review'.
 func (q *Queries) GetSavedAnalysisBands(ctx context.Context, jobID int64) ([]GetSavedAnalysisBandsRow, error) {
 	rows, err := q.db.Query(ctx, getSavedAnalysisBands, jobID)
@@ -8952,13 +9417,13 @@ WITH scoped AS (
         COALESCE(t.status = 'auto_approved', FALSE)::bool AS is_auto_approved,
         (ROW_NUMBER() OVER (
             PARTITION BY j.target_language, s.source_text
-            ORDER BY j.file_id, s.position
+            ORDER BY j.file_id, s.position, s.sub_position
         ) > 1) AS is_repetition,
         s.word_count AS words,
         length(s.source_text) AS characters
     FROM segments s
     JOIN jobs j ON j.file_id = s.file_id
-    LEFT JOIN translations t
+    JOIN translations t
         ON t.segment_id = s.id
        AND t.target_language = j.target_language
     WHERE j.id = ANY($1::bigint[])
@@ -9031,7 +9496,7 @@ func (q *Queries) GetSavedAnalysisRepetitionBands(ctx context.Context, jobIds []
 }
 
 const getSegment = `-- name: GetSegment :one
-SELECT id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text FROM segments WHERE id = $1
+SELECT id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text, target_language, sub_position, export_key, gap_before, chip_base FROM segments WHERE id = $1
 `
 
 // Internal: used by pipeline. For user-facing handlers, use GetSegmentTenant.
@@ -9048,15 +9513,20 @@ func (q *Queries) GetSegment(ctx context.Context, id int64) (Segment, error) {
 		&i.CreatedAt,
 		&i.WordCount,
 		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
 	)
 	return i, err
 }
 
 const getSegmentInFileTenant = `-- name: GetSegmentInFileTenant :one
-SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text FROM segments s
+SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text, s.target_language, s.sub_position, s.export_key, s.gap_before, s.chip_base FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.id = $1 AND s.file_id = $2 AND p.tenant_id = $3 AND p.deleted_at IS NULL
+WHERE s.id = $1 AND s.file_id = $2 AND s.target_language IS NULL AND p.tenant_id = $3 AND p.deleted_at IS NULL
 `
 
 type GetSegmentInFileTenantParams struct {
@@ -9067,6 +9537,7 @@ type GetSegmentInFileTenantParams struct {
 
 // File- and tenant-scoped: returns the segment only if it belongs to the file
 // in the route, so file-level access to one file does not open another's segments.
+// Shared segments only, like ListSegmentsByFileTenant.
 func (q *Queries) GetSegmentInFileTenant(ctx context.Context, arg GetSegmentInFileTenantParams) (Segment, error) {
 	row := q.db.QueryRow(ctx, getSegmentInFileTenant, arg.ID, arg.FileID, arg.TenantID)
 	var i Segment
@@ -9080,6 +9551,11 @@ func (q *Queries) GetSegmentInFileTenant(ctx context.Context, arg GetSegmentInFi
 		&i.CreatedAt,
 		&i.WordCount,
 		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
 	)
 	return i, err
 }
@@ -9087,31 +9563,42 @@ func (q *Queries) GetSegmentInFileTenant(ctx context.Context, arg GetSegmentInFi
 const getSegmentNeighborSources = `-- name: GetSegmentNeighborSources :one
 SELECT
   COALESCE((SELECT prev.source_text FROM segments prev
-     WHERE prev.file_id = s.file_id AND prev."position" < s."position"
-     ORDER BY prev."position" DESC LIMIT 1), '')::text AS prev_source,
+     WHERE prev.file_id = s.file_id
+       AND (prev."position", prev.sub_position) < (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations pt
+                   WHERE pt.segment_id = prev.id AND pt.target_language = $1)
+     ORDER BY prev."position" DESC, prev.sub_position DESC LIMIT 1), '')::text AS prev_source,
   COALESCE((SELECT nxt.source_text FROM segments nxt
-     WHERE nxt.file_id = s.file_id AND nxt."position" > s."position"
-     ORDER BY nxt."position" ASC LIMIT 1), '')::text AS next_source
+     WHERE nxt.file_id = s.file_id
+       AND (nxt."position", nxt.sub_position) > (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations nt
+                   WHERE nt.segment_id = nxt.id AND nt.target_language = $1)
+     ORDER BY nxt."position" ASC, nxt.sub_position ASC LIMIT 1), '')::text AS next_source
 FROM segments s
-WHERE s.id = $1
+WHERE s.id = $2
 `
+
+type GetSegmentNeighborSourcesParams struct {
+	TargetLanguage string `json:"target_language"`
+	SegmentID      int64  `json:"segment_id"`
+}
 
 type GetSegmentNeighborSourcesRow struct {
 	PrevSource string `json:"prev_source"`
 	NextSource string `json:"next_source"`
 }
 
-// The source text of the segments immediately before/after the given
-// segment in document order (nearest lower/higher position) within the same
-// file; NULL at the document boundaries. Equivalent to array-adjacency over
-// position, matching the lookup side (ListSegmentSourcesByFile). Used at TM
-// write-back time to compute the 101% context-match hashes stored on the
-// entry (last-write-wins context).
+// The source text of the job rows immediately before/after the given segment
+// in document order within the same file and language; ” at the document
+// boundaries. Equivalent to array-adjacency over (position, sub_position),
+// matching the lookup side (ListSegmentSourcesByFile). Used at TM write-back
+// time to compute the 101% context-match hashes stored on the entry
+// (last-write-wins context).
 // Boundaries COALESCE to ” (non-null) so a document-start/end segment hashes
 // the empty string on both write and lookup sides; a genuinely-missing segment
 // surfaces as a query error the caller maps to "no context" (stores NULL).
-func (q *Queries) GetSegmentNeighborSources(ctx context.Context, segmentID int64) (GetSegmentNeighborSourcesRow, error) {
-	row := q.db.QueryRow(ctx, getSegmentNeighborSources, segmentID)
+func (q *Queries) GetSegmentNeighborSources(ctx context.Context, arg GetSegmentNeighborSourcesParams) (GetSegmentNeighborSourcesRow, error) {
+	row := q.db.QueryRow(ctx, getSegmentNeighborSources, arg.TargetLanguage, arg.SegmentID)
 	var i GetSegmentNeighborSourcesRow
 	err := row.Scan(&i.PrevSource, &i.NextSource)
 	return i, err
@@ -9144,7 +9631,7 @@ func (q *Queries) GetSegmentRichTextForTranslation(ctx context.Context, arg GetS
 }
 
 const getSegmentTenant = `-- name: GetSegmentTenant :one
-SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text FROM segments s
+SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text, s.target_language, s.sub_position, s.export_key, s.gap_before, s.chip_base FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 WHERE s.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
@@ -9169,12 +9656,78 @@ func (q *Queries) GetSegmentTenant(ctx context.Context, arg GetSegmentTenantPara
 		&i.CreatedAt,
 		&i.WordCount,
 		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
+	)
+	return i, err
+}
+
+const getSegmentationProfile = `-- name: GetSegmentationProfile :one
+SELECT id, tenant_id, builtin_key, name, source_languages, description, definition, based_on, created_at, updated_at, deleted_at FROM segmentation_profile_catalog
+WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL) AND deleted_at IS NULL
+`
+
+type GetSegmentationProfileParams struct {
+	ID       int64  `json:"id"`
+	TenantID *int64 `json:"tenant_id"`
+}
+
+// An org profile of the tenant, or a built-in.
+func (q *Queries) GetSegmentationProfile(ctx context.Context, arg GetSegmentationProfileParams) (SegmentationProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getSegmentationProfile, arg.ID, arg.TenantID)
+	var i SegmentationProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.SourceLanguages,
+		&i.Description,
+		&i.Definition,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getSegmentationProfileForImport = `-- name: GetSegmentationProfileForImport :one
+SELECT id, tenant_id, builtin_key, name, source_languages, description, definition, based_on, created_at, updated_at, deleted_at FROM segmentation_profile_catalog
+WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL)
+`
+
+type GetSegmentationProfileForImportParams struct {
+	ID       int64  `json:"id"`
+	TenantID *int64 `json:"tenant_id"`
+}
+
+// The profile a project or template names, deleted or not: an upload that
+// read its project's settings before a delete still resolves the profile.
+func (q *Queries) GetSegmentationProfileForImport(ctx context.Context, arg GetSegmentationProfileForImportParams) (SegmentationProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getSegmentationProfileForImport, arg.ID, arg.TenantID)
+	var i SegmentationProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.SourceLanguages,
+		&i.Description,
+		&i.Definition,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getSettingsProfile = `-- name: GetSettingsProfile :one
-SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html FROM settings_profiles WHERE id = $1
+SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = $1
 `
 
 func (q *Queries) GetSettingsProfile(ctx context.Context, id int64) (SettingsProfile, error) {
@@ -9197,6 +9750,47 @@ func (q *Queries) GetSettingsProfile(ctx context.Context, id int64) (SettingsPro
 		&i.MtRouterID,
 		&i.TmLookupOrder,
 		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
+	)
+	return i, err
+}
+
+const getSharedSegmentByKey = `-- name: GetSharedSegmentByKey :one
+SELECT id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text, target_language, sub_position, export_key, gap_before, chip_base FROM segments
+WHERE file_id = $1 AND target_language IS NULL
+  AND segment_key = $2 AND position = $3
+ORDER BY id
+LIMIT 1
+`
+
+type GetSharedSegmentByKeyParams struct {
+	FileID     int64   `json:"file_id"`
+	SegmentKey *string `json:"segment_key"`
+	Position   int32   `json:"position"`
+}
+
+// Internal: the file's shared segment with this key at this position; the
+// caller has checked the file in the tenant.
+func (q *Queries) GetSharedSegmentByKey(ctx context.Context, arg GetSharedSegmentByKeyParams) (Segment, error) {
+	row := q.db.QueryRow(ctx, getSharedSegmentByKey, arg.FileID, arg.SegmentKey, arg.Position)
+	var i Segment
+	err := row.Scan(
+		&i.ID,
+		&i.FileID,
+		&i.SourceText,
+		&i.SegmentKey,
+		&i.Position,
+		&i.Context,
+		&i.CreatedAt,
+		&i.WordCount,
+		&i.SourceRichText,
+		&i.TargetLanguage,
+		&i.SubPosition,
+		&i.ExportKey,
+		&i.GapBefore,
+		&i.ChipBase,
 	)
 	return i, err
 }
@@ -9291,7 +9885,12 @@ WITH per_translation AS (
     SELECT
         th.job_step_assignment_id,
         th.created_by,
-        th.translation_id,
+        -- A history row a split or join moved keeps the translation and the
+        -- source words and characters it was written for: each original
+        -- translation counts once, with the counts of its earliest edit here.
+        MIN(th.translation_id) AS translation_id,
+        (array_agg((th.details->>'word_count')::int ORDER BY th.created_at, th.id))[1] AS word_count,
+        (array_agg((th.details->>'char_count')::int ORDER BY th.created_at, th.id))[1] AS char_count,
         SUM(COALESCE(th.editing_time_ms, 0)) AS editing_time_ms,
         AVG(th.edit_distance) AS avg_edit_distance
     -- Starts from the project's step assignments, so the history read is
@@ -9306,7 +9905,8 @@ WITH per_translation AS (
     -- actual rewriting.
     WHERE th.kind IN ('human', 'approved')
       AND th.created_by IS NOT NULL
-    GROUP BY th.job_step_assignment_id, th.created_by, th.translation_id
+    GROUP BY th.job_step_assignment_id, th.created_by,
+             COALESCE((th.details->>'translation_id')::bigint, th.translation_id)
 )
 SELECT
     jsa.id AS step_assignment_id,
@@ -9316,8 +9916,8 @@ SELECT
     u.name AS user_name,
     t.target_language,
     COUNT(*)::int AS segments_edited,
-    COALESCE(SUM(s.word_count), 0)::int AS words_edited,
-    COALESCE(SUM(length(s.source_text)), 0)::int AS chars_edited,
+    COALESCE(SUM(COALESCE(pt.word_count, s.word_count)), 0)::int AS words_edited,
+    COALESCE(SUM(COALESCE(pt.char_count, length(s.source_text))), 0)::int AS chars_edited,
     COALESCE(SUM(pt.editing_time_ms), 0)::bigint AS total_editing_time_ms,
     COALESCE(AVG(pt.avg_edit_distance), 0)::float AS avg_edit_distance
 FROM per_translation pt
@@ -9784,7 +10384,7 @@ func (q *Queries) GetTMProfileWithStats(ctx context.Context, arg GetTMProfileWit
 }
 
 const getTMScopeSettingsProfile = `-- name: GetTMScopeSettingsProfile :one
-SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html FROM settings_profiles WHERE id = tm_scope_profile_id($1)
+SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = tm_scope_profile_id($1)
 `
 
 // The settings_profiles row whose TM rows + match scoring apply to this one:
@@ -9811,6 +10411,9 @@ func (q *Queries) GetTMScopeSettingsProfile(ctx context.Context, spID int64) (Se
 		&i.MtRouterID,
 		&i.TmLookupOrder,
 		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
 	)
 	return i, err
 }
@@ -9826,7 +10429,8 @@ SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_ste
        COALESCE(lc.id, 0)::bigint AS last_completed_id,
        COALESCE(lc.step_order, 0)::int AS last_completed_order,
        COALESCE(lc.name, '')::text AS last_completed_name,
-       COALESCE(lc.step_type, '')::text AS last_completed_type
+       COALESCE(lc.step_type, '')::text AS last_completed_type,
+       job_last_clear_step_order(j.id) AS last_clear_step_order
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 JOIN projects p ON p.id = f.project_id
@@ -9871,6 +10475,7 @@ type GetTaskEditStateRow struct {
 	LastCompletedOrder int32  `json:"last_completed_order"`
 	LastCompletedName  string `json:"last_completed_name"`
 	LastCompletedType  string `json:"last_completed_type"`
+	LastClearStepOrder int32  `json:"last_clear_step_order"`
 }
 
 func (q *Queries) GetTaskEditState(ctx context.Context, arg GetTaskEditStateParams) (GetTaskEditStateRow, error) {
@@ -9893,6 +10498,7 @@ func (q *Queries) GetTaskEditState(ctx context.Context, arg GetTaskEditStatePara
 		&i.LastCompletedOrder,
 		&i.LastCompletedName,
 		&i.LastCompletedType,
+		&i.LastClearStepOrder,
 	)
 	return i, err
 }
@@ -9909,7 +10515,8 @@ SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_ste
        COALESCE(lc.id, 0)::bigint AS last_completed_id,
        COALESCE(lc.step_order, 0)::int AS last_completed_order,
        COALESCE(lc.name, '')::text AS last_completed_name,
-       COALESCE(lc.step_type, '')::text AS last_completed_type
+       COALESCE(lc.step_type, '')::text AS last_completed_type,
+       job_last_clear_step_order(j.id) AS last_clear_step_order
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
 JOIN jobs j ON j.file_id = s.file_id AND j.target_language = t.target_language
@@ -9956,6 +10563,7 @@ type GetTaskEditStateForTranslationRow struct {
 	LastCompletedOrder int32  `json:"last_completed_order"`
 	LastCompletedName  string `json:"last_completed_name"`
 	LastCompletedType  string `json:"last_completed_type"`
+	LastClearStepOrder int32  `json:"last_clear_step_order"`
 }
 
 // Task edit guard (taskedit.Guard). Both reads return the same columns: the
@@ -9985,6 +10593,7 @@ func (q *Queries) GetTaskEditStateForTranslation(ctx context.Context, arg GetTas
 		&i.LastCompletedOrder,
 		&i.LastCompletedName,
 		&i.LastCompletedType,
+		&i.LastClearStepOrder,
 	)
 	return i, err
 }
@@ -11262,6 +11871,24 @@ func (q *Queries) InsertHumanHistoryBatch(ctx context.Context, arg InsertHumanHi
 	return err
 }
 
+const insertIssueSlackMessage = `-- name: InsertIssueSlackMessage :exec
+INSERT INTO issue_slack_messages (issue_id, channel, ts) VALUES ($1, $2, $3)
+ON CONFLICT (issue_id) DO NOTHING
+`
+
+type InsertIssueSlackMessageParams struct {
+	IssueID int64  `json:"issue_id"`
+	Channel string `json:"channel"`
+	Ts      string `json:"ts"`
+}
+
+// Internal: the worker's Slack post. The first message announcing an issue
+// stays its thread.
+func (q *Queries) InsertIssueSlackMessage(ctx context.Context, arg InsertIssueSlackMessageParams) error {
+	_, err := q.db.Exec(ctx, insertIssueSlackMessage, arg.IssueID, arg.Channel, arg.Ts)
+	return err
+}
+
 const insertJobAnalysis = `-- name: InsertJobAnalysis :exec
 INSERT INTO job_analysis (
     analysis_id,
@@ -12434,7 +13061,8 @@ SELECT DISTINCT ON (jsa.job_id)
        (ws.ai_router_id IS NOT NULL)::bool AS is_ai_step,
        (SELECT COUNT(*) FROM workflow_steps ws2
         WHERE ws2.settings_profile_id = ws.settings_profile_id
-          AND ws2.step_order > ws.step_order) = 0 AS is_last_step
+          AND ws2.step_order > ws.step_order) = 0 AS is_last_step,
+       (SELECT project_last_clear_step_order($1::bigint))::int AS last_clear_step_order
 FROM job_step_assignments jsa
 JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
 JOIN jobs j ON j.id = jsa.job_id
@@ -12452,17 +13080,18 @@ type ListActiveStepsForProjectParams struct {
 }
 
 type ListActiveStepsForProjectRow struct {
-	StepAssignmentID int64              `json:"step_assignment_id"`
-	JobID            int64              `json:"job_id"`
-	StepName         string             `json:"step_name"`
-	StepType         string             `json:"step_type"`
-	StepOrder        int32              `json:"step_order"`
-	Status           string             `json:"status"`
-	Deadline         pgtype.Timestamptz `json:"deadline"`
-	AssignedTo       *int64             `json:"assigned_to"`
-	AssigneeName     *string            `json:"assignee_name"`
-	IsAiStep         bool               `json:"is_ai_step"`
-	IsLastStep       bool               `json:"is_last_step"`
+	StepAssignmentID   int64              `json:"step_assignment_id"`
+	JobID              int64              `json:"job_id"`
+	StepName           string             `json:"step_name"`
+	StepType           string             `json:"step_type"`
+	StepOrder          int32              `json:"step_order"`
+	Status             string             `json:"status"`
+	Deadline           pgtype.Timestamptz `json:"deadline"`
+	AssignedTo         *int64             `json:"assigned_to"`
+	AssigneeName       *string            `json:"assignee_name"`
+	IsAiStep           bool               `json:"is_ai_step"`
+	IsLastStep         bool               `json:"is_last_step"`
+	LastClearStepOrder int32              `json:"last_clear_step_order"`
 }
 
 // One representative workflow-step row per job in a project (batched, avoids
@@ -12471,7 +13100,8 @@ type ListActiveStepsForProjectRow struct {
 // the same rule as taskedit's edit guard and the editor's currentTask, so the
 // matrix cell, Open and the job row agree. Completed-workflow jobs
 // (current_step_id NULL) still surface a step assignment to carry/edit a
-// deadline. `step_order` backs first-step-only gating (Apply TM/MT);
+// deadline. `step_order` backs first-step-only gating (Apply TM/MT) and,
+// with `last_clear_step_order`, the clear gate;
 // `step_assignment_id` + `deadline` back the inline deadline editor; `is_ai_step`
 // gates the manager QE+APE re-run button.
 func (q *Queries) ListActiveStepsForProject(ctx context.Context, arg ListActiveStepsForProjectParams) ([]ListActiveStepsForProjectRow, error) {
@@ -12495,6 +13125,7 @@ func (q *Queries) ListActiveStepsForProject(ctx context.Context, arg ListActiveS
 			&i.AssigneeName,
 			&i.IsAiStep,
 			&i.IsLastStep,
+			&i.LastClearStepOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -12512,7 +13143,7 @@ SELECT s.id AS segment_id, s.segment_key, s.source_text, s.source_rich_text, s.p
        t.status, t.locked, t.origin, t.tm_match_percent,
        mtu.source_text AS match_source_text, mtu.target_text AS match_target_text
 FROM segments s
-LEFT JOIN translations t ON t.segment_id = s.id AND t.target_language = $1
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1
 LEFT JOIN LATERAL (
     SELECT h.tm_entry_id
     FROM translation_history h
@@ -12526,7 +13157,7 @@ LEFT JOIN translation_memory mtu ON mtu.id = m.tm_entry_id
     AND EXISTS (SELECT 1 FROM tm_collections c
                 WHERE c.id = mtu.tm_id AND c.tenant_id = $2 AND c.deleted_at IS NULL)
 WHERE s.file_id = $3
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListAllForBilingualExportParams struct {
@@ -12543,17 +13174,16 @@ type ListAllForBilingualExportRow struct {
 	Position        int32                 `json:"position"`
 	ActiveText      *string               `json:"active_text"`
 	ActiveRichText  *string               `json:"active_rich_text"`
-	Status          NullTranslationStatus `json:"status"`
-	Locked          *bool                 `json:"locked"`
+	Status          TranslationStatus     `json:"status"`
+	Locked          bool                  `json:"locked"`
 	Origin          NullTranslationOrigin `json:"origin"`
 	TmMatchPercent  *int16                `json:"tm_match_percent"`
 	MatchSourceText *string               `json:"match_source_text"`
 	MatchTargetText *string               `json:"match_target_text"`
 }
 
-// Bilingual XLIFF export: EVERY segment of the file (LEFT JOIN, so
-// untranslated ones appear too) with its source rich text, the translation
-// for the requested language, its lock and status, and its pre-translation
+// Bilingual XLIFF export: every row of the job (file + language), untranslated
+// ones too, with its source rich text, the translation, its lock and status, and its pre-translation
 // lineage (origin + TM score).
 // For a TM pre-translation, match_* is the TM unit that was matched, taken
 // from the latest `tm` history event. It is NULL when that unit or its
@@ -12728,11 +13358,12 @@ func (q *Queries) ListAnalysisWeights(ctx context.Context, tenantID int64) ([]An
 
 const listApprovedForExport = `-- name: ListApprovedForExport :many
 SELECT t.id, t.segment_id, t.target_language, s.source_text, s.segment_key,
-       t.active_text, t.active_rich_text, t.status, s.source_rich_text
+       t.active_text, t.active_rich_text, t.status, s.source_rich_text,
+       s.export_key, s.gap_before, s.chip_base
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListApprovedForExportParams struct {
@@ -12750,8 +13381,13 @@ type ListApprovedForExportRow struct {
 	ActiveRichText *string           `json:"active_rich_text"`
 	Status         TranslationStatus `json:"status"`
 	SourceRichText *string           `json:"source_rich_text"`
+	ExportKey      *string           `json:"export_key"`
+	GapBefore      *string           `json:"gap_before"`
+	ChipBase       int32             `json:"chip_base"`
 }
 
+// Every row of one job, in document order. The pieces of a split carry the
+// original key they rebuild (export_key), with their gap and chip base.
 func (q *Queries) ListApprovedForExport(ctx context.Context, arg ListApprovedForExportParams) ([]ListApprovedForExportRow, error) {
 	rows, err := q.db.Query(ctx, listApprovedForExport, arg.FileID, arg.TargetLanguage)
 	if err != nil {
@@ -12771,6 +13407,9 @@ func (q *Queries) ListApprovedForExport(ctx context.Context, arg ListApprovedFor
 			&i.ActiveRichText,
 			&i.Status,
 			&i.SourceRichText,
+			&i.ExportKey,
+			&i.GapBefore,
+			&i.ChipBase,
 		); err != nil {
 			return nil, err
 		}
@@ -12790,7 +13429,7 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
   AND t.status = 'approved' AND t.active_text IS NOT NULL
   AND t.confirmed_via = 'user'
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListApprovedForTMParams struct {
@@ -12854,7 +13493,7 @@ JOIN projects p ON p.id = f.project_id
 WHERE t.id = ANY($1::bigint[]) AND p.tenant_id = $2 AND p.deleted_at IS NULL
   AND t.status = 'approved' AND t.active_text IS NOT NULL
   AND t.confirmed_via = 'user'
-ORDER BY s.file_id, t.target_language, s.position
+ORDER BY s.file_id, t.target_language, s.position, s.sub_position
 `
 
 type ListApprovedForTMByIDsParams struct {
@@ -12900,6 +13539,45 @@ func (q *Queries) ListApprovedForTMByIDs(ctx context.Context, arg ListApprovedFo
 			&i.ProjectID,
 			&i.ProjectSourceLanguage,
 			&i.SettingsProfileID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBuiltinSegmentationProfiles = `-- name: ListBuiltinSegmentationProfiles :many
+SELECT id, tenant_id, builtin_key, name, source_languages, description, definition, based_on, created_at, updated_at, deleted_at FROM segmentation_profile_catalog
+WHERE tenant_id IS NULL
+ORDER BY id DESC
+`
+
+// The built-ins, newest first.
+func (q *Queries) ListBuiltinSegmentationProfiles(ctx context.Context) ([]SegmentationProfileCatalog, error) {
+	rows, err := q.db.Query(ctx, listBuiltinSegmentationProfiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SegmentationProfileCatalog{}
+	for rows.Next() {
+		var i SegmentationProfileCatalog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.BuiltinKey,
+			&i.Name,
+			&i.SourceLanguages,
+			&i.Description,
+			&i.Definition,
+			&i.BasedOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -13021,7 +13699,7 @@ func (q *Queries) ListChatUploadBlobPurges(ctx context.Context, batchSize int32)
 
 const listCommentsByTranslation = `-- name: ListCommentsByTranslation :many
 SELECT sc.id, sc.translation_id, sc.user_id, sc.content, sc.created_at, sc.updated_at,
-       u.name AS author_name, u.email AS author_email
+       u.name AS author_name, u.email AS author_email, sc.from_segment
 FROM segment_comments sc
 LEFT JOIN users u ON u.id = sc.user_id
 WHERE sc.translation_id = $1 AND sc.deleted_at IS NULL
@@ -13037,10 +13715,12 @@ type ListCommentsByTranslationRow struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	AuthorName    *string            `json:"author_name"`
 	AuthorEmail   *string            `json:"author_email"`
+	FromSegment   *string            `json:"from_segment"`
 }
 
 // LEFT JOIN: a NULL user_id is an AI/system comment — the
-// frontend renders those authored "AI".
+// frontend renders those authored "AI". from_segment is the number of the row
+// a comment was written on, when a join moved it here.
 func (q *Queries) ListCommentsByTranslation(ctx context.Context, translationID int64) ([]ListCommentsByTranslationRow, error) {
 	rows, err := q.db.Query(ctx, listCommentsByTranslation, translationID)
 	if err != nil {
@@ -13059,6 +13739,7 @@ func (q *Queries) ListCommentsByTranslation(ctx context.Context, translationID i
 			&i.UpdatedAt,
 			&i.AuthorName,
 			&i.AuthorEmail,
+			&i.FromSegment,
 		); err != nil {
 			return nil, err
 		}
@@ -13587,6 +14268,523 @@ func (q *Queries) ListDemoWorkspaceItems(ctx context.Context, tenantID int64) ([
 	return items, nil
 }
 
+const listDuplicatesToReopen = `-- name: ListDuplicatesToReopen :many
+SELECT id FROM issues
+WHERE duplicate_of_id = $1::bigint AND status = 'duplicate' AND deleted_at IS NULL
+ORDER BY id
+`
+
+// Internal: the caller soft-deletes @original_id and holds
+// LockIssueDuplicates. The duplicates ReopenDuplicatesOf sends back to the
+// queue.
+func (q *Queries) ListDuplicatesToReopen(ctx context.Context, originalID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDuplicatesToReopen, originalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorIndex = `-- name: ListEditorIndex :many
+SELECT
+    s.id                        AS segment_id,
+    s.position                  AS position,
+    s.sub_position              AS sub_position,
+    s.word_count                AS word_count,
+    s.source_text               AS source_text,
+    t.id                        AS translation_id,
+    t.status                    AS status,
+    COALESCE(t.active_text, '') <> '' AS has_target,
+    COALESCE(t.step_edited, false)::bool AS step_edited,
+    t.predict_outcome           AS predict_outcome,
+    t.origin                    AS origin,
+    t.tm_match_percent          AS tm_match_percent,
+    COALESCE(t.locked, false)::bool AS locked,
+    t.in_flight_phase           AS in_flight_phase,
+    COALESCE(t.confirmed_via, '')::text AS confirmed_via,
+    -- Six characters say whether the note is short enough to show whole on
+    -- the QE chip (five or fewer) without sending a long vendor note.
+    COALESCE(left(t.qe_note, 6), '')::text AS qe_note_head,
+    -- Read to tell which rows a join may be offered on; not sent.
+    COALESCE(s.export_key, s.segment_key, '')::text AS unit_key,
+    f.format AS file_format
+FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
+WHERE s.file_id = $2::bigint
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+ORDER BY s.position, s.sub_position
+`
+
+type ListEditorIndexParams struct {
+	TargetLanguage string `json:"target_language"`
+	FileID         int64  `json:"file_id"`
+	TenantID       int64  `json:"tenant_id"`
+}
+
+type ListEditorIndexRow struct {
+	SegmentID      int64                 `json:"segment_id"`
+	Position       int32                 `json:"position"`
+	SubPosition    int32                 `json:"sub_position"`
+	WordCount      int32                 `json:"word_count"`
+	SourceText     string                `json:"source_text"`
+	TranslationID  int64                 `json:"translation_id"`
+	Status         TranslationStatus     `json:"status"`
+	HasTarget      bool                  `json:"has_target"`
+	StepEdited     bool                  `json:"step_edited"`
+	PredictOutcome NullPredictOutcome    `json:"predict_outcome"`
+	Origin         NullTranslationOrigin `json:"origin"`
+	TmMatchPercent *int16                `json:"tm_match_percent"`
+	Locked         bool                  `json:"locked"`
+	InFlightPhase  NullTranslationPhase  `json:"in_flight_phase"`
+	ConfirmedVia   string                `json:"confirmed_via"`
+	QeNoteHead     string                `json:"qe_note_head"`
+	UnitKey        string                `json:"unit_key"`
+	FileFormat     FileFormat            `json:"file_format"`
+}
+
+// One row per segment of a job, in document order, without the text the grid
+// renders: what the CAT editor counts, filters and navigates on. A job's rows
+// are the segments that own a translation in its language, so a shared segment
+// a split or join replaced in this language is left out. The source text is
+// read only to find repetitions, and is not sent on. Tenant scoping is
+// structural via files→projects.
+func (q *Queries) ListEditorIndex(ctx context.Context, arg ListEditorIndexParams) ([]ListEditorIndexRow, error) {
+	rows, err := q.db.Query(ctx, listEditorIndex, arg.TargetLanguage, arg.FileID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorIndexRow{}
+	for rows.Next() {
+		var i ListEditorIndexRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.Position,
+			&i.SubPosition,
+			&i.WordCount,
+			&i.SourceText,
+			&i.TranslationID,
+			&i.Status,
+			&i.HasTarget,
+			&i.StepEdited,
+			&i.PredictOutcome,
+			&i.Origin,
+			&i.TmMatchPercent,
+			&i.Locked,
+			&i.InFlightPhase,
+			&i.ConfirmedVia,
+			&i.QeNoteHead,
+			&i.UnitKey,
+			&i.FileFormat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorPreviousStepTexts = `-- name: ListEditorPreviousStepTexts :many
+WITH prev AS (
+    SELECT DISTINCT ON (tss.translation_id) tss.translation_id, tss.ended_at
+    FROM translation_step_statuses tss
+    WHERE tss.translation_id = ANY($1::bigint[])
+      AND tss.tenant_id = $2::bigint
+      AND tss.ended_at IS NOT NULL
+    ORDER BY tss.translation_id, tss.ended_at DESC, tss.id DESC
+)
+SELECT prev.translation_id, h.text::text AS text
+FROM prev
+JOIN LATERAL (
+    SELECT th.text FROM translation_history th
+    WHERE th.translation_id = prev.translation_id
+      AND th.text IS NOT NULL
+      AND NOT COALESCE(th.details ? 'from_segment', false)
+      AND th.created_at <= prev.ended_at
+    ORDER BY th.created_at DESC, th.id DESC
+    LIMIT 1
+) h ON true
+`
+
+type ListEditorPreviousStepTextsParams struct {
+	TranslationIds []int64 `json:"translation_ids"`
+	TenantID       int64   `json:"tenant_id"`
+}
+
+type ListEditorPreviousStepTextsRow struct {
+	TranslationID int64  `json:"translation_id"`
+	Text          string `json:"text"`
+}
+
+// For each of @translation_ids, the text it held when its most recently closed
+// step round ended: the newest history text at or before the round's end,
+// skipping `cleared` and the history a join moved here from the rows it
+// removed (details.from_segment), which is another row's text. The step
+// handoff and a reject write the text a person left unconfirmed, so history
+// holds every handed-over version. A translation with no closed round, or no
+// text when it ended, is not returned.
+func (q *Queries) ListEditorPreviousStepTexts(ctx context.Context, arg ListEditorPreviousStepTextsParams) ([]ListEditorPreviousStepTextsRow, error) {
+	rows, err := q.db.Query(ctx, listEditorPreviousStepTexts, arg.TranslationIds, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorPreviousStepTextsRow{}
+	for rows.Next() {
+		var i ListEditorPreviousStepTextsRow
+		if err := rows.Scan(&i.TranslationID, &i.Text); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorRefSources = `-- name: ListEditorRefSources :many
+SELECT s.source_rich_text::text AS source_rich_text
+FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
+WHERE s.file_id = $2::bigint
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+  AND s.source_rich_text LIKE '%ref\_key="%'
+`
+
+type ListEditorRefSourcesParams struct {
+	TargetLanguage string `json:"target_language"`
+	FileID         int64  `json:"file_id"`
+	TenantID       int64  `json:"tenant_id"`
+}
+
+// Tagged sources of a job's segments that carry a cross-reference chip.
+func (q *Queries) ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listEditorRefSources, arg.TargetLanguage, arg.FileID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var source_rich_text string
+		if err := rows.Scan(&source_rich_text); err != nil {
+			return nil, err
+		}
+		items = append(items, source_rich_text)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorSegmentsByIDs = `-- name: ListEditorSegmentsByIDs :many
+SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text, s.target_language, s.sub_position, s.export_key, s.gap_before, s.chip_base FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE s.file_id = $1::bigint
+  AND (s.target_language IS NULL OR s.target_language = $2::text)
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+  AND s.id = ANY($4::bigint[])
+ORDER BY s.position, s.sub_position
+`
+
+type ListEditorSegmentsByIDsParams struct {
+	FileID         int64   `json:"file_id"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+	Ids            []int64 `json:"ids"`
+}
+
+// The segments of @ids that belong to the job's file and language; others are
+// not returned.
+func (q *Queries) ListEditorSegmentsByIDs(ctx context.Context, arg ListEditorSegmentsByIDsParams) ([]Segment, error) {
+	rows, err := q.db.Query(ctx, listEditorSegmentsByIDs,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.Ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Segment{}
+	for rows.Next() {
+		var i Segment
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.SourceText,
+			&i.SegmentKey,
+			&i.Position,
+			&i.Context,
+			&i.CreatedAt,
+			&i.WordCount,
+			&i.SourceRichText,
+			&i.TargetLanguage,
+			&i.SubPosition,
+			&i.ExportKey,
+			&i.GapBefore,
+			&i.ChipBase,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorSegmentsByKeys = `-- name: ListEditorSegmentsByKeys :many
+SELECT
+    s.id          AS segment_id,
+    COALESCE(s.export_key, s.segment_key)::text AS segment_key,
+    s.source_text AS source_text,
+    COALESCE(t.active_text, '')::text AS target_text
+FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
+WHERE s.file_id = $2::bigint
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+  AND COALESCE(s.export_key, s.segment_key) = ANY($4::text[])
+ORDER BY s.position, s.sub_position
+`
+
+type ListEditorSegmentsByKeysParams struct {
+	TargetLanguage string   `json:"target_language"`
+	FileID         int64    `json:"file_id"`
+	TenantID       int64    `json:"tenant_id"`
+	Keys           []string `json:"keys"`
+}
+
+type ListEditorSegmentsByKeysRow struct {
+	SegmentID  int64  `json:"segment_id"`
+	SegmentKey string `json:"segment_key"`
+	SourceText string `json:"source_text"`
+	TargetText string `json:"target_text"`
+}
+
+// The job's segments with these original keys, and their translation. A key
+// a split replaced in this language comes back once per piece, keyed by the
+// original key, in document order.
+func (q *Queries) ListEditorSegmentsByKeys(ctx context.Context, arg ListEditorSegmentsByKeysParams) ([]ListEditorSegmentsByKeysRow, error) {
+	rows, err := q.db.Query(ctx, listEditorSegmentsByKeys,
+		arg.TargetLanguage,
+		arg.FileID,
+		arg.TenantID,
+		arg.Keys,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorSegmentsByKeysRow{}
+	for rows.Next() {
+		var i ListEditorSegmentsByKeysRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.SegmentKey,
+			&i.SourceText,
+			&i.TargetText,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorTexts = `-- name: ListEditorTexts :many
+SELECT
+    s.id          AS segment_id,
+    s.source_text AS source_text,
+    COALESCE(t.active_text, '')::text AS target_text
+FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
+WHERE s.file_id = $2::bigint
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+ORDER BY s.position, s.sub_position
+`
+
+type ListEditorTextsParams struct {
+	TargetLanguage string `json:"target_language"`
+	FileID         int64  `json:"file_id"`
+	TenantID       int64  `json:"tenant_id"`
+}
+
+type ListEditorTextsRow struct {
+	SegmentID  int64  `json:"segment_id"`
+	SourceText string `json:"source_text"`
+	TargetText string `json:"target_text"`
+}
+
+// Source and target text of every segment of a job, for the editor's text
+// search.
+func (q *Queries) ListEditorTexts(ctx context.Context, arg ListEditorTextsParams) ([]ListEditorTextsRow, error) {
+	rows, err := q.db.Query(ctx, listEditorTexts, arg.TargetLanguage, arg.FileID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorTextsRow{}
+	for rows.Next() {
+		var i ListEditorTextsRow
+		if err := rows.Scan(&i.SegmentID, &i.SourceText, &i.TargetText); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorTranslationsBySegments = `-- name: ListEditorTranslationsBySegments :many
+SELECT t.id, t.segment_id, t.target_language, t.status, t.predict_outcome, t.active_text, t.created_at, t.updated_at, t.editing_time_ms, t.edit_distance, t.edited_by, t.locked, t.active_rich_text, t.origin, t.tm_match_percent, t.in_flight_phase, t.qe_note, t.confirmed_via, t.step_edited FROM translations t
+WHERE t.segment_id = ANY($1::bigint[])
+  AND t.target_language = $2::text
+`
+
+type ListEditorTranslationsBySegmentsParams struct {
+	SegmentIds     []int64 `json:"segment_ids"`
+	TargetLanguage string  `json:"target_language"`
+}
+
+// Internal: the translations of @segment_ids in one language. The ids come from
+// ListEditorSegmentsByIDs (tenant-scoped), which is the tenant scope here.
+func (q *Queries) ListEditorTranslationsBySegments(ctx context.Context, arg ListEditorTranslationsBySegmentsParams) ([]Translation, error) {
+	rows, err := q.db.Query(ctx, listEditorTranslationsBySegments, arg.SegmentIds, arg.TargetLanguage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Translation{}
+	for rows.Next() {
+		var i Translation
+		if err := rows.Scan(
+			&i.ID,
+			&i.SegmentID,
+			&i.TargetLanguage,
+			&i.Status,
+			&i.PredictOutcome,
+			&i.ActiveText,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EditingTimeMs,
+			&i.EditDistance,
+			&i.EditedBy,
+			&i.Locked,
+			&i.ActiveRichText,
+			&i.Origin,
+			&i.TmMatchPercent,
+			&i.InFlightPhase,
+			&i.QeNote,
+			&i.ConfirmedVia,
+			&i.StepEdited,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorWordCandidates = `-- name: ListEditorWordCandidates :many
+SELECT t.id, t.segment_id, t.locked, t.active_text, t.active_rich_text, t.updated_at
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE s.file_id = $1::bigint
+  AND t.target_language = $2::text
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+  AND strpos(t.active_text, $4::text) > 0
+ORDER BY s.position, s.sub_position
+`
+
+type ListEditorWordCandidatesParams struct {
+	FileID         int64  `json:"file_id"`
+	TargetLanguage string `json:"target_language"`
+	TenantID       int64  `json:"tenant_id"`
+	Word           string `json:"word"`
+}
+
+type ListEditorWordCandidatesRow struct {
+	ID             int64              `json:"id"`
+	SegmentID      int64              `json:"segment_id"`
+	Locked         bool               `json:"locked"`
+	ActiveText     *string            `json:"active_text"`
+	ActiveRichText *string            `json:"active_rich_text"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Translations of a job's file whose target contains @word anywhere (case
+// sensitive). The caller narrows to whole words.
+func (q *Queries) ListEditorWordCandidates(ctx context.Context, arg ListEditorWordCandidatesParams) ([]ListEditorWordCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listEditorWordCandidates,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.Word,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorWordCandidatesRow{}
+	for rows.Next() {
+		var i ListEditorWordCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SegmentID,
+			&i.Locked,
+			&i.ActiveText,
+			&i.ActiveRichText,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExtensions = `-- name: ListExtensions :many
 SELECT id, tenant_id, ext_id, name, version, api_version, capabilities, manifest, storage_key, sha256, icon, created_by, created_at, updated_at, deleted_at FROM extensions
 WHERE tenant_id = $1 AND deleted_at IS NULL
@@ -13696,7 +14894,7 @@ func (q *Queries) ListFailedJobs(ctx context.Context, arg ListFailedJobsParams) 
 }
 
 const listFilesByProject = `-- name: ListFilesByProject :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout FROM files WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 // Used internally (pipeline, export). For paginated API responses, use ListFilesPaginated.
@@ -13721,6 +14919,7 @@ func (q *Queries) ListFilesByProject(ctx context.Context, projectID int64) ([]Fi
 			&i.OriginalName,
 			&i.InlineHtml,
 			&i.XlsxLayout,
+			&i.Segmentation,
 		); err != nil {
 			return nil, err
 		}
@@ -13733,7 +14932,7 @@ func (q *Queries) ListFilesByProject(ctx context.Context, projectID int64) ([]Fi
 }
 
 const listFilesPaginated = `-- name: ListFilesPaginated :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout FROM files
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files
 WHERE project_id = $1 AND id > $2
 ORDER BY id
 LIMIT $3
@@ -13766,6 +14965,7 @@ func (q *Queries) ListFilesPaginated(ctx context.Context, arg ListFilesPaginated
 			&i.OriginalName,
 			&i.InlineHtml,
 			&i.XlsxLayout,
+			&i.Segmentation,
 		); err != nil {
 			return nil, err
 		}
@@ -13778,7 +14978,7 @@ func (q *Queries) ListFilesPaginated(ctx context.Context, arg ListFilesPaginated
 }
 
 const listFilesWithoutJobs = `-- name: ListFilesWithoutJobs :many
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.project_id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id)
@@ -13813,6 +15013,7 @@ func (q *Queries) ListFilesWithoutJobs(ctx context.Context, arg ListFilesWithout
 			&i.OriginalName,
 			&i.InlineHtml,
 			&i.XlsxLayout,
+			&i.Segmentation,
 		); err != nil {
 			return nil, err
 		}
@@ -14088,7 +15289,7 @@ type ListIssueOrgsForPlatformRow struct {
 }
 
 // Internal: platform operators only (RequirePlatformAdmin). The orgs that have
-// issues, for the operators' organization filter.
+// issues, for the operators' reporter filter.
 func (q *Queries) ListIssueOrgsForPlatform(ctx context.Context) ([]ListIssueOrgsForPlatformRow, error) {
 	rows, err := q.db.Query(ctx, listIssueOrgsForPlatform)
 	if err != nil {
@@ -14099,6 +15300,90 @@ func (q *Queries) ListIssueOrgsForPlatform(ctx context.Context) ([]ListIssueOrgs
 	for rows.Next() {
 		var i ListIssueOrgsForPlatformRow
 		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueReportersForPlatform = `-- name: ListIssueReportersForPlatform :many
+SELECT u.id, u.name, u.email, string_agg(DISTINCT t.name, ', ' ORDER BY t.name)::text AS org_names
+FROM issues i
+JOIN users u ON u.id = i.reporter_id
+JOIN tenants t ON t.id = i.tenant_id
+WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
+GROUP BY u.id, u.name, u.email
+ORDER BY lower(COALESCE(NULLIF(u.name, ''), u.email)), u.id
+`
+
+type ListIssueReportersForPlatformRow struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	OrgNames string `json:"org_names"`
+}
+
+// Internal: platform operators only (RequirePlatformAdmin). Everyone who has
+// issues, with the orgs they reported in, for the operators' reporter filter.
+func (q *Queries) ListIssueReportersForPlatform(ctx context.Context) ([]ListIssueReportersForPlatformRow, error) {
+	rows, err := q.db.Query(ctx, listIssueReportersForPlatform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueReportersForPlatformRow{}
+	for rows.Next() {
+		var i ListIssueReportersForPlatformRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.OrgNames,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueSlackBlanks = `-- name: ListIssueSlackBlanks :many
+SELECT issue_id, channel, ts FROM issue_slack_blanks
+WHERE issue_id > $1::bigint
+ORDER BY issue_id
+LIMIT $2
+`
+
+type ListIssueSlackBlanksParams struct {
+	AfterID   int64 `json:"after_id"`
+	BatchSize int32 `json:"batch_size"`
+}
+
+type ListIssueSlackBlanksRow struct {
+	IssueID int64  `json:"issue_id"`
+	Channel string `json:"channel"`
+	Ts      string `json:"ts"`
+}
+
+// Internal: platform sweep across tenants. One batch of the queued Slack cards
+// of deleted issues, after @after_id in issue order.
+func (q *Queries) ListIssueSlackBlanks(ctx context.Context, arg ListIssueSlackBlanksParams) ([]ListIssueSlackBlanksRow, error) {
+	rows, err := q.db.Query(ctx, listIssueSlackBlanks, arg.AfterID, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueSlackBlanksRow{}
+	for rows.Next() {
+		var i ListIssueSlackBlanksRow
+		if err := rows.Scan(&i.IssueID, &i.Channel, &i.Ts); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -14132,320 +15417,6 @@ func (q *Queries) ListIssueTagsForPlatform(ctx context.Context) ([]string, error
 			return nil, err
 		}
 		items = append(items, tag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listIssuesForPlatformNewest = `-- name: ListIssuesForPlatformNewest :many
-SELECT i.id, i.tenant_id, i.reporter_id, i.kind, i.severity, i.area, i.title, i.description, i.status, i.context, i.last_activity_by, i.created_at, i.updated_at, i.resolved_at, i.deleted_at, i.assignee_id, i.priority, i.tags, i.duplicate_of_id, i.confirmed_at, i.import_key, i.chat_verification, i.chat_verification_note, i.chat_verification_token_id, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(d.title, '')::text AS duplicate_title,
-       d.status AS duplicate_status, (d.id IS NOT NULL)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
-  AND (cardinality($1::text[]) = 0 OR i.status = ANY($1::text[]))
-  AND (cardinality($2::text[]) = 0 OR i.kind = ANY($2::text[]))
-  AND (cardinality($3::text[]) = 0 OR i.area = ANY($3::text[]))
-  AND (cardinality($4::text[]) = 0 OR i.severity = ANY($4::text[]))
-  AND (cardinality($5::bigint[]) = 0 OR i.tenant_id = ANY($5::bigint[]))
-  AND (cardinality($6::text[]) = 0 OR i.priority = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR i.tags && $7::text[])
-  AND ((cardinality($8::bigint[]) = 0 AND NOT $9::boolean)
-       OR i.assignee_id = ANY($8::bigint[])
-       OR ($9::boolean AND i.assignee_id IS NULL))
-  AND (cardinality($10::text[]) = 0 OR i.chat_verification = ANY($10::text[]))
-  AND ($11::text IS NULL
-       OR i.title ILIKE '%' || $11::text || '%'
-       OR i.description ILIKE '%' || $11::text || '%')
-  AND ($12::timestamptz IS NULL OR (i.updated_at, i.id) < ($12::timestamptz, $13::bigint))
-ORDER BY i.updated_at DESC, i.id DESC
-LIMIT $14
-`
-
-type ListIssuesForPlatformNewestParams struct {
-	Statuses      []string           `json:"statuses"`
-	Kinds         []string           `json:"kinds"`
-	Areas         []string           `json:"areas"`
-	Severities    []string           `json:"severities"`
-	TenantIds     []int64            `json:"tenant_ids"`
-	Priorities    []string           `json:"priorities"`
-	Tags          []string           `json:"tags"`
-	AssigneeIds   []int64            `json:"assignee_ids"`
-	Unassigned    bool               `json:"unassigned"`
-	Verifications []string           `json:"verifications"`
-	Search        *string            `json:"search"`
-	CursorAt      pgtype.Timestamptz `json:"cursor_at"`
-	CursorID      int64              `json:"cursor_id"`
-	RowLimit      int32              `json:"row_limit"`
-}
-
-type ListIssuesForPlatformNewestRow struct {
-	ID                      int64              `json:"id"`
-	TenantID                int64              `json:"tenant_id"`
-	ReporterID              int64              `json:"reporter_id"`
-	Kind                    string             `json:"kind"`
-	Severity                *string            `json:"severity"`
-	Area                    string             `json:"area"`
-	Title                   string             `json:"title"`
-	Description             string             `json:"description"`
-	Status                  string             `json:"status"`
-	Context                 []byte             `json:"context"`
-	LastActivityBy          string             `json:"last_activity_by"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
-	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
-	AssigneeID              *int64             `json:"assignee_id"`
-	Priority                *string            `json:"priority"`
-	Tags                    []string           `json:"tags"`
-	DuplicateOfID           *int64             `json:"duplicate_of_id"`
-	ConfirmedAt             pgtype.Timestamptz `json:"confirmed_at"`
-	ImportKey               *string            `json:"import_key"`
-	ChatVerification        *string            `json:"chat_verification"`
-	ChatVerificationNote    *string            `json:"chat_verification_note"`
-	ChatVerificationTokenID *string            `json:"chat_verification_token_id"`
-	OrgName                 string             `json:"org_name"`
-	ReporterName            string             `json:"reporter_name"`
-	ReporterEmail           string             `json:"reporter_email"`
-	AssigneeName            *string            `json:"assignee_name"`
-	DuplicateID             *int64             `json:"duplicate_id"`
-	DuplicateTitle          string             `json:"duplicate_title"`
-	DuplicateStatus         *string            `json:"duplicate_status"`
-	DuplicateVisible        bool               `json:"duplicate_visible"`
-	ReporterRole            string             `json:"reporter_role"`
-}
-
-// Internal: platform operators only (RequirePlatformAdmin). Every org's issues,
-// paged and searched like ListMemberIssuesNewest. An empty filter list matches
-// any value; a severity filter matches bugs only; a tag filter matches an issue
-// with any of the tags. The assignee filter matches the listed assignees, plus
-// the unassigned issues when @unassigned. A verification filter matches the
-// reports the assistant checked with one of those results.
-func (q *Queries) ListIssuesForPlatformNewest(ctx context.Context, arg ListIssuesForPlatformNewestParams) ([]ListIssuesForPlatformNewestRow, error) {
-	rows, err := q.db.Query(ctx, listIssuesForPlatformNewest,
-		arg.Statuses,
-		arg.Kinds,
-		arg.Areas,
-		arg.Severities,
-		arg.TenantIds,
-		arg.Priorities,
-		arg.Tags,
-		arg.AssigneeIds,
-		arg.Unassigned,
-		arg.Verifications,
-		arg.Search,
-		arg.CursorAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListIssuesForPlatformNewestRow{}
-	for rows.Next() {
-		var i ListIssuesForPlatformNewestRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.ReporterID,
-			&i.Kind,
-			&i.Severity,
-			&i.Area,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Context,
-			&i.LastActivityBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResolvedAt,
-			&i.DeletedAt,
-			&i.AssigneeID,
-			&i.Priority,
-			&i.Tags,
-			&i.DuplicateOfID,
-			&i.ConfirmedAt,
-			&i.ImportKey,
-			&i.ChatVerification,
-			&i.ChatVerificationNote,
-			&i.ChatVerificationTokenID,
-			&i.OrgName,
-			&i.ReporterName,
-			&i.ReporterEmail,
-			&i.AssigneeName,
-			&i.DuplicateID,
-			&i.DuplicateTitle,
-			&i.DuplicateStatus,
-			&i.DuplicateVisible,
-			&i.ReporterRole,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listIssuesForPlatformOldest = `-- name: ListIssuesForPlatformOldest :many
-SELECT i.id, i.tenant_id, i.reporter_id, i.kind, i.severity, i.area, i.title, i.description, i.status, i.context, i.last_activity_by, i.created_at, i.updated_at, i.resolved_at, i.deleted_at, i.assignee_id, i.priority, i.tags, i.duplicate_of_id, i.confirmed_at, i.import_key, i.chat_verification, i.chat_verification_note, i.chat_verification_token_id, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(d.title, '')::text AS duplicate_title,
-       d.status AS duplicate_status, (d.id IS NOT NULL)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.deleted_at IS NULL AND t.status <> 'deleting'
-  AND (cardinality($1::text[]) = 0 OR i.status = ANY($1::text[]))
-  AND (cardinality($2::text[]) = 0 OR i.kind = ANY($2::text[]))
-  AND (cardinality($3::text[]) = 0 OR i.area = ANY($3::text[]))
-  AND (cardinality($4::text[]) = 0 OR i.severity = ANY($4::text[]))
-  AND (cardinality($5::bigint[]) = 0 OR i.tenant_id = ANY($5::bigint[]))
-  AND (cardinality($6::text[]) = 0 OR i.priority = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR i.tags && $7::text[])
-  AND ((cardinality($8::bigint[]) = 0 AND NOT $9::boolean)
-       OR i.assignee_id = ANY($8::bigint[])
-       OR ($9::boolean AND i.assignee_id IS NULL))
-  AND (cardinality($10::text[]) = 0 OR i.chat_verification = ANY($10::text[]))
-  AND ($11::text IS NULL
-       OR i.title ILIKE '%' || $11::text || '%'
-       OR i.description ILIKE '%' || $11::text || '%')
-  AND ($12::timestamptz IS NULL OR (i.updated_at, i.id) > ($12::timestamptz, $13::bigint))
-ORDER BY i.updated_at, i.id
-LIMIT $14
-`
-
-type ListIssuesForPlatformOldestParams struct {
-	Statuses      []string           `json:"statuses"`
-	Kinds         []string           `json:"kinds"`
-	Areas         []string           `json:"areas"`
-	Severities    []string           `json:"severities"`
-	TenantIds     []int64            `json:"tenant_ids"`
-	Priorities    []string           `json:"priorities"`
-	Tags          []string           `json:"tags"`
-	AssigneeIds   []int64            `json:"assignee_ids"`
-	Unassigned    bool               `json:"unassigned"`
-	Verifications []string           `json:"verifications"`
-	Search        *string            `json:"search"`
-	CursorAt      pgtype.Timestamptz `json:"cursor_at"`
-	CursorID      int64              `json:"cursor_id"`
-	RowLimit      int32              `json:"row_limit"`
-}
-
-type ListIssuesForPlatformOldestRow struct {
-	ID                      int64              `json:"id"`
-	TenantID                int64              `json:"tenant_id"`
-	ReporterID              int64              `json:"reporter_id"`
-	Kind                    string             `json:"kind"`
-	Severity                *string            `json:"severity"`
-	Area                    string             `json:"area"`
-	Title                   string             `json:"title"`
-	Description             string             `json:"description"`
-	Status                  string             `json:"status"`
-	Context                 []byte             `json:"context"`
-	LastActivityBy          string             `json:"last_activity_by"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
-	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
-	AssigneeID              *int64             `json:"assignee_id"`
-	Priority                *string            `json:"priority"`
-	Tags                    []string           `json:"tags"`
-	DuplicateOfID           *int64             `json:"duplicate_of_id"`
-	ConfirmedAt             pgtype.Timestamptz `json:"confirmed_at"`
-	ImportKey               *string            `json:"import_key"`
-	ChatVerification        *string            `json:"chat_verification"`
-	ChatVerificationNote    *string            `json:"chat_verification_note"`
-	ChatVerificationTokenID *string            `json:"chat_verification_token_id"`
-	OrgName                 string             `json:"org_name"`
-	ReporterName            string             `json:"reporter_name"`
-	ReporterEmail           string             `json:"reporter_email"`
-	AssigneeName            *string            `json:"assignee_name"`
-	DuplicateID             *int64             `json:"duplicate_id"`
-	DuplicateTitle          string             `json:"duplicate_title"`
-	DuplicateStatus         *string            `json:"duplicate_status"`
-	DuplicateVisible        bool               `json:"duplicate_visible"`
-	ReporterRole            string             `json:"reporter_role"`
-}
-
-// Internal: platform operators only (RequirePlatformAdmin).
-// ListIssuesForPlatformNewest in the other order.
-func (q *Queries) ListIssuesForPlatformOldest(ctx context.Context, arg ListIssuesForPlatformOldestParams) ([]ListIssuesForPlatformOldestRow, error) {
-	rows, err := q.db.Query(ctx, listIssuesForPlatformOldest,
-		arg.Statuses,
-		arg.Kinds,
-		arg.Areas,
-		arg.Severities,
-		arg.TenantIds,
-		arg.Priorities,
-		arg.Tags,
-		arg.AssigneeIds,
-		arg.Unassigned,
-		arg.Verifications,
-		arg.Search,
-		arg.CursorAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListIssuesForPlatformOldestRow{}
-	for rows.Next() {
-		var i ListIssuesForPlatformOldestRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.ReporterID,
-			&i.Kind,
-			&i.Severity,
-			&i.Area,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Context,
-			&i.LastActivityBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResolvedAt,
-			&i.DeletedAt,
-			&i.AssigneeID,
-			&i.Priority,
-			&i.Tags,
-			&i.DuplicateOfID,
-			&i.ConfirmedAt,
-			&i.ImportKey,
-			&i.ChatVerification,
-			&i.ChatVerificationNote,
-			&i.ChatVerificationTokenID,
-			&i.OrgName,
-			&i.ReporterName,
-			&i.ReporterEmail,
-			&i.AssigneeName,
-			&i.DuplicateID,
-			&i.DuplicateTitle,
-			&i.DuplicateStatus,
-			&i.DuplicateVisible,
-			&i.ReporterRole,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -14526,6 +15497,181 @@ func (q *Queries) ListJobAnalysisByAnalysis(ctx context.Context, analysisID int6
 			&i.RepetitionsWordsAutoApproved,
 			&i.RepetitionsCharactersAutoApproved,
 			&i.RepetitionsWeightedWordsAutoApproved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobEditRowsAt = `-- name: ListJobEditRowsAt :many
+SELECT s.id AS segment_id, s.target_language AS segment_language, s.source_text, s.source_rich_text,
+       s.segment_key, s.export_key, s.position, s.sub_position, s.gap_before, s.chip_base,
+       s.context, t.id AS translation_id, t.locked, t.active_text, t.active_rich_text,
+       t.in_flight_phase, t.updated_at
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE s.file_id = $1 AND t.target_language = $2
+  AND p.tenant_id = $3 AND p.deleted_at IS NULL
+  AND s.position = $4
+ORDER BY s.position, s.sub_position
+`
+
+type ListJobEditRowsAtParams struct {
+	FileID         int64  `json:"file_id"`
+	TargetLanguage string `json:"target_language"`
+	TenantID       int64  `json:"tenant_id"`
+	Position       int32  `json:"position"`
+}
+
+type ListJobEditRowsAtRow struct {
+	SegmentID       int64                `json:"segment_id"`
+	SegmentLanguage *string              `json:"segment_language"`
+	SourceText      string               `json:"source_text"`
+	SourceRichText  *string              `json:"source_rich_text"`
+	SegmentKey      *string              `json:"segment_key"`
+	ExportKey       *string              `json:"export_key"`
+	Position        int32                `json:"position"`
+	SubPosition     int32                `json:"sub_position"`
+	GapBefore       *string              `json:"gap_before"`
+	ChipBase        int32                `json:"chip_base"`
+	Context         string               `json:"context"`
+	TranslationID   int64                `json:"translation_id"`
+	Locked          bool                 `json:"locked"`
+	ActiveText      *string              `json:"active_text"`
+	ActiveRichText  *string              `json:"active_rich_text"`
+	InFlightPhase   NullTranslationPhase `json:"in_flight_phase"`
+	UpdatedAt       pgtype.Timestamptz   `json:"updated_at"`
+}
+
+// Tenant-scoped: the job's rows at @position (a row and the pieces of its
+// split), in document order, with what a split or join reads.
+func (q *Queries) ListJobEditRowsAt(ctx context.Context, arg ListJobEditRowsAtParams) ([]ListJobEditRowsAtRow, error) {
+	rows, err := q.db.Query(ctx, listJobEditRowsAt,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.Position,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListJobEditRowsAtRow{}
+	for rows.Next() {
+		var i ListJobEditRowsAtRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.SegmentLanguage,
+			&i.SourceText,
+			&i.SourceRichText,
+			&i.SegmentKey,
+			&i.ExportKey,
+			&i.Position,
+			&i.SubPosition,
+			&i.GapBefore,
+			&i.ChipBase,
+			&i.Context,
+			&i.TranslationID,
+			&i.Locked,
+			&i.ActiveText,
+			&i.ActiveRichText,
+			&i.InFlightPhase,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobEditRowsByTranslations = `-- name: ListJobEditRowsByTranslations :many
+SELECT s.id AS segment_id, s.target_language AS segment_language, s.source_text, s.source_rich_text,
+       s.segment_key, s.export_key, s.position, s.sub_position, s.gap_before, s.chip_base,
+       s.context, t.id AS translation_id, t.locked, t.active_text, t.active_rich_text,
+       t.in_flight_phase, t.updated_at
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE s.file_id = $1 AND t.target_language = $2
+  AND p.tenant_id = $3 AND p.deleted_at IS NULL
+  AND t.id = ANY($4::bigint[])
+ORDER BY s.position, s.sub_position
+`
+
+type ListJobEditRowsByTranslationsParams struct {
+	FileID         int64   `json:"file_id"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+	TranslationIds []int64 `json:"translation_ids"`
+}
+
+type ListJobEditRowsByTranslationsRow struct {
+	SegmentID       int64                `json:"segment_id"`
+	SegmentLanguage *string              `json:"segment_language"`
+	SourceText      string               `json:"source_text"`
+	SourceRichText  *string              `json:"source_rich_text"`
+	SegmentKey      *string              `json:"segment_key"`
+	ExportKey       *string              `json:"export_key"`
+	Position        int32                `json:"position"`
+	SubPosition     int32                `json:"sub_position"`
+	GapBefore       *string              `json:"gap_before"`
+	ChipBase        int32                `json:"chip_base"`
+	Context         string               `json:"context"`
+	TranslationID   int64                `json:"translation_id"`
+	Locked          bool                 `json:"locked"`
+	ActiveText      *string              `json:"active_text"`
+	ActiveRichText  *string              `json:"active_rich_text"`
+	InFlightPhase   NullTranslationPhase `json:"in_flight_phase"`
+	UpdatedAt       pgtype.Timestamptz   `json:"updated_at"`
+}
+
+// Tenant-scoped: the job's rows whose translation is one of @translation_ids,
+// in document order, with what a split or join reads. Rows of another job
+// are not returned.
+func (q *Queries) ListJobEditRowsByTranslations(ctx context.Context, arg ListJobEditRowsByTranslationsParams) ([]ListJobEditRowsByTranslationsRow, error) {
+	rows, err := q.db.Query(ctx, listJobEditRowsByTranslations,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.TranslationIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListJobEditRowsByTranslationsRow{}
+	for rows.Next() {
+		var i ListJobEditRowsByTranslationsRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.SegmentLanguage,
+			&i.SourceText,
+			&i.SourceRichText,
+			&i.SegmentKey,
+			&i.ExportKey,
+			&i.Position,
+			&i.SubPosition,
+			&i.GapBefore,
+			&i.ChipBase,
+			&i.Context,
+			&i.TranslationID,
+			&i.Locked,
+			&i.ActiveText,
+			&i.ActiveRichText,
+			&i.InFlightPhase,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -14704,6 +15850,7 @@ SELECT
     t.id             AS translation_id,
     s.id             AS segment_id,
     s.position       AS position,
+    s.sub_position   AS sub_position,
     s.source_text    AS source_text,
     t.active_text    AS target_text,
     t.status         AS status,
@@ -14722,8 +15869,23 @@ WHERE s.file_id = $2::bigint
        OR s.source_text ILIKE '%' || $6::text || '%'
        OR coalesce(t.active_text, '') ILIKE '%' || $6::text || '%')
   AND s.position >= $7::int
-ORDER BY s.position
-LIMIT $8::int
+  AND s.position <= (
+    SELECT max(firsts.position) FROM (
+      SELECT ps.position
+      FROM segments ps
+      JOIN translations pt ON pt.segment_id = ps.id AND pt.target_language = $1::text
+      WHERE ps.file_id = $2::bigint
+        AND ($4::text = '' OR pt.status::text = $4::text)
+        AND ($5::text = '' OR pt.origin::text = $5::text)
+        AND ($6::text = ''
+             OR ps.source_text ILIKE '%' || $6::text || '%'
+             OR coalesce(pt.active_text, '') ILIKE '%' || $6::text || '%')
+        AND ps.position >= $7::int
+      GROUP BY ps.position
+      ORDER BY ps.position
+      LIMIT $8::int
+    ) firsts)
+ORDER BY s.position, s.sub_position
 `
 
 type ListJobSegmentsPageParams struct {
@@ -14741,6 +15903,7 @@ type ListJobSegmentsPageRow struct {
 	TranslationID  int64                 `json:"translation_id"`
 	SegmentID      int64                 `json:"segment_id"`
 	Position       int32                 `json:"position"`
+	SubPosition    int32                 `json:"sub_position"`
 	SourceText     string                `json:"source_text"`
 	TargetText     *string               `json:"target_text"`
 	Status         TranslationStatus     `json:"status"`
@@ -14763,6 +15926,11 @@ type ListJobSegmentsPageRow struct {
 // and an omitted cursor arrives as 0, so an exclusive `>` would silently skip
 // the very first segment of every file. Callers advance by passing
 // last_position + 1, which the backend returns as next_cursor.
+//
+// A page holds @row_limit whole positions: the pieces of a split share their
+// position, so a page never ends between them and may hold a few more rows
+// than @row_limit. The page's last position comes from an ordered, limited
+// scan of the matching positions, so a page reads only its own rows.
 func (q *Queries) ListJobSegmentsPage(ctx context.Context, arg ListJobSegmentsPageParams) ([]ListJobSegmentsPageRow, error) {
 	rows, err := q.db.Query(ctx, listJobSegmentsPage,
 		arg.TargetLanguage,
@@ -14785,6 +15953,7 @@ func (q *Queries) ListJobSegmentsPage(ctx context.Context, arg ListJobSegmentsPa
 			&i.TranslationID,
 			&i.SegmentID,
 			&i.Position,
+			&i.SubPosition,
 			&i.SourceText,
 			&i.TargetText,
 			&i.Status,
@@ -15034,7 +16203,7 @@ WHERE s.file_id = $1
   AND t.status = 'needs_review'
   AND coalesce(t.active_text, '') <> ''
   AND NOT t.locked
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListJobUnconfirmedTranslationIDsParams struct {
@@ -15162,7 +16331,9 @@ const listJobsByProject = `-- name: ListJobsByProject :many
 SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
        j.created_at, j.updated_at,
        j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
-       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html, f.segment_count,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
        f.created_at AS file_created_at
 FROM jobs j
 JOIN files f ON f.id = j.file_id
@@ -15230,11 +16401,95 @@ func (q *Queries) ListJobsByProject(ctx context.Context, projectID int64) ([]Lis
 	return items, nil
 }
 
+const listJobsByProjectIDs = `-- name: ListJobsByProjectIDs :many
+SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
+       j.created_at, j.updated_at,
+       j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
+       f.created_at AS file_created_at
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+WHERE f.project_id = $1 AND j.id = ANY($2::bigint[])
+ORDER BY f.created_at DESC, j.target_language
+`
+
+type ListJobsByProjectIDsParams struct {
+	ProjectID int64   `json:"project_id"`
+	JobIds    []int64 `json:"job_ids"`
+}
+
+type ListJobsByProjectIDsRow struct {
+	ID              int64              `json:"id"`
+	FileID          int64              `json:"file_id"`
+	TargetLanguage  string             `json:"target_language"`
+	WordCount       int32              `json:"word_count"`
+	Status          string             `json:"status"`
+	CurrentStep     string             `json:"current_step"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ErrorMessage    *string            `json:"error_message"`
+	TranslatedCount *int32             `json:"translated_count"`
+	TotalCount      *int32             `json:"total_count"`
+	StopRequestedAt pgtype.Timestamptz `json:"stop_requested_at"`
+	MtSkipReason    *string            `json:"mt_skip_reason"`
+	FileName        string             `json:"file_name"`
+	FileFormat      FileFormat         `json:"file_format"`
+	FileInlineHtml  bool               `json:"file_inline_html"`
+	SegmentCount    int32              `json:"segment_count"`
+	FileCreatedAt   pgtype.Timestamptz `json:"file_created_at"`
+}
+
+// Internal: no tenant filter. job.Service.ListByProjectIDs checks the project
+// with the tenant-scoped GetProject before calling it. The jobs of the project
+// among job_ids; same columns and order as ListJobsByProject.
+func (q *Queries) ListJobsByProjectIDs(ctx context.Context, arg ListJobsByProjectIDsParams) ([]ListJobsByProjectIDsRow, error) {
+	rows, err := q.db.Query(ctx, listJobsByProjectIDs, arg.ProjectID, arg.JobIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListJobsByProjectIDsRow{}
+	for rows.Next() {
+		var i ListJobsByProjectIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.TargetLanguage,
+			&i.WordCount,
+			&i.Status,
+			&i.CurrentStep,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ErrorMessage,
+			&i.TranslatedCount,
+			&i.TotalCount,
+			&i.StopRequestedAt,
+			&i.MtSkipReason,
+			&i.FileName,
+			&i.FileFormat,
+			&i.FileInlineHtml,
+			&i.SegmentCount,
+			&i.FileCreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJobsByProjectPage = `-- name: ListJobsByProjectPage :many
 SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_step,
        j.created_at, j.updated_at,
        j.error_message, j.translated_count, j.total_count, j.stop_requested_at, j.mt_skip_reason,
-       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html, f.segment_count,
+       f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
+       COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+                 WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
        f.created_at AS file_created_at
 FROM jobs j
 JOIN files f ON f.id = j.file_id
@@ -15690,7 +16945,7 @@ func (q *Queries) ListLatestHistoryTexts(ctx context.Context, ids []int64) ([]Li
 }
 
 const listMCPFilesPage = `-- name: ListMCPFilesPage :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout FROM files
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files
 WHERE project_id = $1
   AND ($2::bigint = 0 OR id < $2::bigint)
 ORDER BY id DESC
@@ -15726,6 +16981,7 @@ func (q *Queries) ListMCPFilesPage(ctx context.Context, arg ListMCPFilesPagePara
 			&i.OriginalName,
 			&i.InlineHtml,
 			&i.XlsxLayout,
+			&i.Segmentation,
 		); err != nil {
 			return nil, err
 		}
@@ -15811,7 +17067,9 @@ SELECT
     j.translated_count AS translated_count,
     j.total_count     AS total_count,
     f.name            AS file_name,
-    f.segment_count   AS segment_count,
+    -- The job's own rows: a split or join changes this job only.
+    COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+              WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
     jsa.deadline      AS step_deadline,
     p.id              AS project_id,
     p.name            AS project_name
@@ -16613,294 +17871,6 @@ func (q *Queries) ListMemberIssueComments(ctx context.Context, arg ListMemberIss
 	return items, nil
 }
 
-const listMemberIssuesNewest = `-- name: ListMemberIssuesNewest :many
-SELECT i.id, i.tenant_id, i.reporter_id, i.kind, i.severity, i.area, i.title, i.description, i.status, i.context, i.last_activity_by, i.created_at, i.updated_at, i.resolved_at, i.deleted_at, i.assignee_id, i.priority, i.tags, i.duplicate_of_id, i.confirmed_at, i.import_key, i.chat_verification, i.chat_verification_note, i.chat_verification_token_id, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(CASE WHEN d.tenant_id = i.tenant_id AND ($1::boolean OR d.reporter_id = $2) THEN d.title END, '')::text AS duplicate_title,
-       d.status AS duplicate_status, COALESCE(d.tenant_id = i.tenant_id AND ($1::boolean OR d.reporter_id = $2), false)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.tenant_id = $3 AND ($1::boolean OR i.reporter_id = $2)
-  AND i.deleted_at IS NULL
-  AND (cardinality($4::text[]) = 0 OR i.status = ANY($4::text[]))
-  AND (cardinality($5::text[]) = 0 OR i.kind = ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR i.area = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR i.severity = ANY($7::text[]))
-  AND ($8::text IS NULL
-       OR i.title ILIKE '%' || $8::text || '%'
-       OR i.description ILIKE '%' || $8::text || '%')
-  AND ($9::timestamptz IS NULL OR (i.updated_at, i.id) < ($9::timestamptz, $10::bigint))
-ORDER BY i.updated_at DESC, i.id DESC
-LIMIT $11
-`
-
-type ListMemberIssuesNewestParams struct {
-	AllMembers bool               `json:"all_members"`
-	ViewerID   int64              `json:"viewer_id"`
-	TenantID   int64              `json:"tenant_id"`
-	Statuses   []string           `json:"statuses"`
-	Kinds      []string           `json:"kinds"`
-	Areas      []string           `json:"areas"`
-	Severities []string           `json:"severities"`
-	Search     *string            `json:"search"`
-	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
-	CursorID   int64              `json:"cursor_id"`
-	RowLimit   int32              `json:"row_limit"`
-}
-
-type ListMemberIssuesNewestRow struct {
-	ID                      int64              `json:"id"`
-	TenantID                int64              `json:"tenant_id"`
-	ReporterID              int64              `json:"reporter_id"`
-	Kind                    string             `json:"kind"`
-	Severity                *string            `json:"severity"`
-	Area                    string             `json:"area"`
-	Title                   string             `json:"title"`
-	Description             string             `json:"description"`
-	Status                  string             `json:"status"`
-	Context                 []byte             `json:"context"`
-	LastActivityBy          string             `json:"last_activity_by"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
-	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
-	AssigneeID              *int64             `json:"assignee_id"`
-	Priority                *string            `json:"priority"`
-	Tags                    []string           `json:"tags"`
-	DuplicateOfID           *int64             `json:"duplicate_of_id"`
-	ConfirmedAt             pgtype.Timestamptz `json:"confirmed_at"`
-	ImportKey               *string            `json:"import_key"`
-	ChatVerification        *string            `json:"chat_verification"`
-	ChatVerificationNote    *string            `json:"chat_verification_note"`
-	ChatVerificationTokenID *string            `json:"chat_verification_token_id"`
-	OrgName                 string             `json:"org_name"`
-	ReporterName            string             `json:"reporter_name"`
-	ReporterEmail           string             `json:"reporter_email"`
-	AssigneeName            *string            `json:"assignee_name"`
-	DuplicateID             *int64             `json:"duplicate_id"`
-	DuplicateTitle          string             `json:"duplicate_title"`
-	DuplicateStatus         *string            `json:"duplicate_status"`
-	DuplicateVisible        bool               `json:"duplicate_visible"`
-	ReporterRole            string             `json:"reporter_role"`
-}
-
-// The org's issues the viewer may see, most recently updated first (ties by
-// id). An empty filter list matches any value; a NULL search matches any
-// text, else a part of the title or description (wildcards escaped by the
-// caller). The cursor is the previous page's last (updated_at, id); a NULL
-// cursor_at is the first page.
-func (q *Queries) ListMemberIssuesNewest(ctx context.Context, arg ListMemberIssuesNewestParams) ([]ListMemberIssuesNewestRow, error) {
-	rows, err := q.db.Query(ctx, listMemberIssuesNewest,
-		arg.AllMembers,
-		arg.ViewerID,
-		arg.TenantID,
-		arg.Statuses,
-		arg.Kinds,
-		arg.Areas,
-		arg.Severities,
-		arg.Search,
-		arg.CursorAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListMemberIssuesNewestRow{}
-	for rows.Next() {
-		var i ListMemberIssuesNewestRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.ReporterID,
-			&i.Kind,
-			&i.Severity,
-			&i.Area,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Context,
-			&i.LastActivityBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResolvedAt,
-			&i.DeletedAt,
-			&i.AssigneeID,
-			&i.Priority,
-			&i.Tags,
-			&i.DuplicateOfID,
-			&i.ConfirmedAt,
-			&i.ImportKey,
-			&i.ChatVerification,
-			&i.ChatVerificationNote,
-			&i.ChatVerificationTokenID,
-			&i.OrgName,
-			&i.ReporterName,
-			&i.ReporterEmail,
-			&i.AssigneeName,
-			&i.DuplicateID,
-			&i.DuplicateTitle,
-			&i.DuplicateStatus,
-			&i.DuplicateVisible,
-			&i.ReporterRole,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listMemberIssuesOldest = `-- name: ListMemberIssuesOldest :many
-SELECT i.id, i.tenant_id, i.reporter_id, i.kind, i.severity, i.area, i.title, i.description, i.status, i.context, i.last_activity_by, i.created_at, i.updated_at, i.resolved_at, i.deleted_at, i.assignee_id, i.priority, i.tags, i.duplicate_of_id, i.confirmed_at, i.import_key, i.chat_verification, i.chat_verification_note, i.chat_verification_token_id, t.name AS org_name, u.name AS reporter_name, u.email AS reporter_email,
-       a.name AS assignee_name, d.id AS duplicate_id, COALESCE(CASE WHEN d.tenant_id = i.tenant_id AND ($1::boolean OR d.reporter_id = $2) THEN d.title END, '')::text AS duplicate_title,
-       d.status AS duplicate_status, COALESCE(d.tenant_id = i.tenant_id AND ($1::boolean OR d.reporter_id = $2), false)::boolean AS duplicate_visible,
-       COALESCE(rm.role, '')::text AS reporter_role
-FROM issues i
-JOIN tenants t ON t.id = i.tenant_id
-JOIN users u ON u.id = i.reporter_id
-LEFT JOIN memberships rm ON rm.user_id = i.reporter_id AND rm.tenant_id = i.tenant_id
-LEFT JOIN users a ON a.id = i.assignee_id
-LEFT JOIN issues d ON d.id = i.duplicate_of_id AND d.deleted_at IS NULL
-WHERE i.tenant_id = $3 AND ($1::boolean OR i.reporter_id = $2)
-  AND i.deleted_at IS NULL
-  AND (cardinality($4::text[]) = 0 OR i.status = ANY($4::text[]))
-  AND (cardinality($5::text[]) = 0 OR i.kind = ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR i.area = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR i.severity = ANY($7::text[]))
-  AND ($8::text IS NULL
-       OR i.title ILIKE '%' || $8::text || '%'
-       OR i.description ILIKE '%' || $8::text || '%')
-  AND ($9::timestamptz IS NULL OR (i.updated_at, i.id) > ($9::timestamptz, $10::bigint))
-ORDER BY i.updated_at, i.id
-LIMIT $11
-`
-
-type ListMemberIssuesOldestParams struct {
-	AllMembers bool               `json:"all_members"`
-	ViewerID   int64              `json:"viewer_id"`
-	TenantID   int64              `json:"tenant_id"`
-	Statuses   []string           `json:"statuses"`
-	Kinds      []string           `json:"kinds"`
-	Areas      []string           `json:"areas"`
-	Severities []string           `json:"severities"`
-	Search     *string            `json:"search"`
-	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
-	CursorID   int64              `json:"cursor_id"`
-	RowLimit   int32              `json:"row_limit"`
-}
-
-type ListMemberIssuesOldestRow struct {
-	ID                      int64              `json:"id"`
-	TenantID                int64              `json:"tenant_id"`
-	ReporterID              int64              `json:"reporter_id"`
-	Kind                    string             `json:"kind"`
-	Severity                *string            `json:"severity"`
-	Area                    string             `json:"area"`
-	Title                   string             `json:"title"`
-	Description             string             `json:"description"`
-	Status                  string             `json:"status"`
-	Context                 []byte             `json:"context"`
-	LastActivityBy          string             `json:"last_activity_by"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
-	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
-	AssigneeID              *int64             `json:"assignee_id"`
-	Priority                *string            `json:"priority"`
-	Tags                    []string           `json:"tags"`
-	DuplicateOfID           *int64             `json:"duplicate_of_id"`
-	ConfirmedAt             pgtype.Timestamptz `json:"confirmed_at"`
-	ImportKey               *string            `json:"import_key"`
-	ChatVerification        *string            `json:"chat_verification"`
-	ChatVerificationNote    *string            `json:"chat_verification_note"`
-	ChatVerificationTokenID *string            `json:"chat_verification_token_id"`
-	OrgName                 string             `json:"org_name"`
-	ReporterName            string             `json:"reporter_name"`
-	ReporterEmail           string             `json:"reporter_email"`
-	AssigneeName            *string            `json:"assignee_name"`
-	DuplicateID             *int64             `json:"duplicate_id"`
-	DuplicateTitle          string             `json:"duplicate_title"`
-	DuplicateStatus         *string            `json:"duplicate_status"`
-	DuplicateVisible        bool               `json:"duplicate_visible"`
-	ReporterRole            string             `json:"reporter_role"`
-}
-
-// ListMemberIssuesNewest in the other order: least recently updated first.
-func (q *Queries) ListMemberIssuesOldest(ctx context.Context, arg ListMemberIssuesOldestParams) ([]ListMemberIssuesOldestRow, error) {
-	rows, err := q.db.Query(ctx, listMemberIssuesOldest,
-		arg.AllMembers,
-		arg.ViewerID,
-		arg.TenantID,
-		arg.Statuses,
-		arg.Kinds,
-		arg.Areas,
-		arg.Severities,
-		arg.Search,
-		arg.CursorAt,
-		arg.CursorID,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListMemberIssuesOldestRow{}
-	for rows.Next() {
-		var i ListMemberIssuesOldestRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.ReporterID,
-			&i.Kind,
-			&i.Severity,
-			&i.Area,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Context,
-			&i.LastActivityBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResolvedAt,
-			&i.DeletedAt,
-			&i.AssigneeID,
-			&i.Priority,
-			&i.Tags,
-			&i.DuplicateOfID,
-			&i.ConfirmedAt,
-			&i.ImportKey,
-			&i.ChatVerification,
-			&i.ChatVerificationNote,
-			&i.ChatVerificationTokenID,
-			&i.OrgName,
-			&i.ReporterName,
-			&i.ReporterEmail,
-			&i.AssigneeName,
-			&i.DuplicateID,
-			&i.DuplicateTitle,
-			&i.DuplicateStatus,
-			&i.DuplicateVisible,
-			&i.ReporterRole,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listMembersByTenant = `-- name: ListMembersByTenant :many
 SELECT u.id, m.tenant_id, u.email, u.name, m.role, u.created_at, u.is_active, u.deactivated_at
 FROM users u
@@ -17086,7 +18056,7 @@ type ListOAuthConnectionsRow struct {
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 }
 
-// One row per live token family for the Settings "Connected apps" list.
+// One row per live token family for the AI settings "Connected apps" list.
 func (q *Queries) ListOAuthConnections(ctx context.Context, arg ListOAuthConnectionsParams) ([]ListOAuthConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listOAuthConnections, arg.UserID, arg.TenantID)
 	if err != nil {
@@ -17183,7 +18153,7 @@ WHERE s.file_id = $1
     (t.origin IS NOT NULL AND t.edited_by IS NULL)
     OR ($3::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
   )
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListPreTranslatedByFileParams struct {
@@ -17479,6 +18449,32 @@ func (q *Queries) ListProjectEvents(ctx context.Context, arg ListProjectEventsPa
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectFileIDs = `-- name: ListProjectFileIDs :many
+SELECT id FROM files WHERE project_id = $1
+`
+
+// Internal: every file id of a project, for the LLM call log's project filter.
+// Callers check the project's tenant first, or are the support team.
+func (q *Queries) ListProjectFileIDs(ctx context.Context, projectID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listProjectFileIDs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -17930,7 +18926,7 @@ JOIN segments s ON s.id = t.segment_id
 JOIN files f ON f.id = s.file_id
 LEFT JOIN users u ON u.id = qr.ignored_by
 WHERE f.id = $1 AND t.target_language = $2
-ORDER BY s.position, qr.severity, qr.check_type
+ORDER BY s.position, s.sub_position, qr.severity, qr.check_type
 `
 
 type ListQAResultsForJobParams struct {
@@ -18044,7 +19040,7 @@ const listQARules = `-- name: ListQARules :many
 
 SELECT id, profile_id, check_type, enabled, severity, config FROM qa_rules
 WHERE profile_id = $1
-ORDER BY check_type
+ORDER BY check_type, id
 `
 
 // ============================================================
@@ -18077,31 +19073,93 @@ func (q *Queries) ListQARules(ctx context.Context, profileID int64) ([]QaRule, e
 	return items, nil
 }
 
-const listSegmentNeighborSourcesByIDs = `-- name: ListSegmentNeighborSourcesByIDs :many
-SELECT s.id,
-  COALESCE((SELECT prev.source_text FROM segments prev
-     WHERE prev.file_id = s.file_id AND prev."position" < s."position"
-     ORDER BY prev."position" DESC LIMIT 1), '')::text AS prev_source,
-  COALESCE((SELECT nxt.source_text FROM segments nxt
-     WHERE nxt.file_id = s.file_id AND nxt."position" > s."position"
-     ORDER BY nxt."position" ASC LIMIT 1), '')::text AS next_source
-FROM segments s
-WHERE s.id = ANY($1::bigint[])
+const listReachedStepsForProfile = `-- name: ListReachedStepsForProfile :many
+SELECT jsa.workflow_step_id, count(DISTINCT jsa.job_id)::int AS jobs
+FROM job_step_assignments jsa
+JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
+JOIN settings_profiles sp ON sp.id = ws.settings_profile_id
+WHERE sp.id = $1 AND sp.tenant_id = $2
+  AND (jsa.status <> 'pending' OR jsa.round > 0)
+GROUP BY jsa.workflow_step_id
 `
 
+type ListReachedStepsForProfileParams struct {
+	SettingsProfileID int64 `json:"settings_profile_id"`
+	TenantID          int64 `json:"tenant_id"`
+}
+
+type ListReachedStepsForProfileRow struct {
+	WorkflowStepID int64 `json:"workflow_step_id"`
+	Jobs           int32 `json:"jobs"`
+}
+
+// The steps of a settings profile that a job has reached at least once, with
+// how many jobs reached each. A task counts once it is past pending, or while
+// pending with a round on record: a reject resets the steps it skips back
+// over, and a clear resets a finished workflow, and both keep the rounds.
+// A reached step keeps its place in a workflow edit.
+// Served by idx_jsa_reached (partial, covering job_id), so it reads only the
+// reached tasks; the tenant check is on the profile.
+func (q *Queries) ListReachedStepsForProfile(ctx context.Context, arg ListReachedStepsForProfileParams) ([]ListReachedStepsForProfileRow, error) {
+	rows, err := q.db.Query(ctx, listReachedStepsForProfile, arg.SettingsProfileID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReachedStepsForProfileRow{}
+	for rows.Next() {
+		var i ListReachedStepsForProfileRow
+		if err := rows.Scan(&i.WorkflowStepID, &i.Jobs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSegmentNeighborSourcesByIDs = `-- name: ListSegmentNeighborSourcesByIDs :many
+SELECT s.id, k.lang::text AS target_language,
+  COALESCE((SELECT prev.source_text FROM segments prev
+     WHERE prev.file_id = s.file_id
+       AND (prev."position", prev.sub_position) < (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations pt
+                   WHERE pt.segment_id = prev.id AND pt.target_language = k.lang)
+     ORDER BY prev."position" DESC, prev.sub_position DESC LIMIT 1), '')::text AS prev_source,
+  COALESCE((SELECT nxt.source_text FROM segments nxt
+     WHERE nxt.file_id = s.file_id
+       AND (nxt."position", nxt.sub_position) > (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations nt
+                   WHERE nt.segment_id = nxt.id AND nt.target_language = k.lang)
+     ORDER BY nxt."position" ASC, nxt.sub_position ASC LIMIT 1), '')::text AS next_source
+FROM (SELECT unnest($1::bigint[]) AS segment_id,
+             unnest($2::text[]) AS lang) k
+JOIN segments s ON s.id = k.segment_id
+`
+
+type ListSegmentNeighborSourcesByIDsParams struct {
+	SegmentIds      []int64  `json:"segment_ids"`
+	TargetLanguages []string `json:"target_languages"`
+}
+
 type ListSegmentNeighborSourcesByIDsRow struct {
-	ID         int64  `json:"id"`
-	PrevSource string `json:"prev_source"`
-	NextSource string `json:"next_source"`
+	ID             int64  `json:"id"`
+	TargetLanguage string `json:"target_language"`
+	PrevSource     string `json:"prev_source"`
+	NextSource     string `json:"next_source"`
 }
 
 // Internal: not tenant-scoped; callers pass segment ids taken from
 // tenant-scoped rows (ListApprovedForTMByIDs, or ListApprovedForTM after
 // GetFileTenant).
 // GetSegmentNeighborSources for many segments in one statement: each listed
-// segment's previous/next source text in its file (” at a boundary).
-func (q *Queries) ListSegmentNeighborSourcesByIDs(ctx context.Context, segmentIds []int64) ([]ListSegmentNeighborSourcesByIDsRow, error) {
-	rows, err := q.db.Query(ctx, listSegmentNeighborSourcesByIDs, segmentIds)
+// segment's previous/next source text among its job's rows (same file, a
+// translation in @target_languages at the same index), ” at a boundary,
+// with the language it was read for.
+func (q *Queries) ListSegmentNeighborSourcesByIDs(ctx context.Context, arg ListSegmentNeighborSourcesByIDsParams) ([]ListSegmentNeighborSourcesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listSegmentNeighborSourcesByIDs, arg.SegmentIds, arg.TargetLanguages)
 	if err != nil {
 		return nil, err
 	}
@@ -18109,7 +19167,12 @@ func (q *Queries) ListSegmentNeighborSourcesByIDs(ctx context.Context, segmentId
 	items := []ListSegmentNeighborSourcesByIDsRow{}
 	for rows.Next() {
 		var i ListSegmentNeighborSourcesByIDsRow
-		if err := rows.Scan(&i.ID, &i.PrevSource, &i.NextSource); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetLanguage,
+			&i.PrevSource,
+			&i.NextSource,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -18121,11 +19184,17 @@ func (q *Queries) ListSegmentNeighborSourcesByIDs(ctx context.Context, segmentId
 }
 
 const listSegmentSourcesByFile = `-- name: ListSegmentSourcesByFile :many
-SELECT id, "position", source_text
-FROM segments
-WHERE file_id = $1
-ORDER BY "position"
+SELECT s.id, s."position", s.source_text
+FROM segments s
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1
+WHERE s.file_id = $2
+ORDER BY s."position", s.sub_position
 `
+
+type ListSegmentSourcesByFileParams struct {
+	TargetLanguage string `json:"target_language"`
+	FileID         int64  `json:"file_id"`
+}
 
 type ListSegmentSourcesByFileRow struct {
 	ID         int64  `json:"id"`
@@ -18133,12 +19202,13 @@ type ListSegmentSourcesByFileRow struct {
 	SourceText string `json:"source_text"`
 }
 
-// Every segment's source text for a file, in document order. The TM
+// Every source text of one job (file + language), in document order. The TM
 // phase builds a per-segment neighbor-context map from this (neighbors by
 // array-adjacency, so gaps in `position` don't matter) to detect 101%
-// (in-context exact) matches. Source-only — no translation join.
-func (q *Queries) ListSegmentSourcesByFile(ctx context.Context, fileID int64) ([]ListSegmentSourcesByFileRow, error) {
-	rows, err := q.db.Query(ctx, listSegmentSourcesByFile, fileID)
+// (in-context exact) matches. A job's rows are the segments with a
+// translation in its language, so the pieces of a split are neighbours.
+func (q *Queries) ListSegmentSourcesByFile(ctx context.Context, arg ListSegmentSourcesByFileParams) ([]ListSegmentSourcesByFileRow, error) {
+	rows, err := q.db.Query(ctx, listSegmentSourcesByFile, arg.TargetLanguage, arg.FileID)
 	if err != nil {
 		return nil, err
 	}
@@ -18157,13 +19227,152 @@ func (q *Queries) ListSegmentSourcesByFile(ctx context.Context, fileID int64) ([
 	return items, nil
 }
 
-const listSegmentsByFile = `-- name: ListSegmentsByFile :many
-SELECT id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text FROM segments WHERE file_id = $1 ORDER BY position
+const listSegmentationProfileTemplateLanguages = `-- name: ListSegmentationProfileTemplateLanguages :many
+SELECT coalesce(t.source_language, '')::text AS source_language
+FROM templates t JOIN settings_profiles sp ON sp.id = t.settings_profile_id
+WHERE t.tenant_id = $1 AND sp.segmentation_profile_id = $2
 `
 
-// Returns all segments for a file. Not paginated by design: the CATEditor needs
-// all segments in memory for keyboard navigation, search, and jump-to-segment.
-// Virtual scroll handles rendering. Files rarely exceed 5K segments.
+type ListSegmentationProfileTemplateLanguagesParams struct {
+	TenantID int64  `json:"tenant_id"`
+	ID       *int64 `json:"id"`
+}
+
+// The source languages (” for none) of the tenant's templates that name a
+// profile.
+func (q *Queries) ListSegmentationProfileTemplateLanguages(ctx context.Context, arg ListSegmentationProfileTemplateLanguagesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listSegmentationProfileTemplateLanguages, arg.TenantID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var source_language string
+		if err := rows.Scan(&source_language); err != nil {
+			return nil, err
+		}
+		items = append(items, source_language)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSegmentationProfiles = `-- name: ListSegmentationProfiles :many
+
+
+SELECT id, tenant_id, builtin_key, name, source_languages, description, definition, based_on, created_at, updated_at, deleted_at FROM segmentation_profile_catalog
+WHERE (tenant_id = $1 OR tenant_id IS NULL) AND deleted_at IS NULL
+ORDER BY tenant_id IS NOT NULL, source_languages, lower(name), id
+`
+
+// ============================================================
+// Segmentation profiles
+// ============================================================
+// Reads go through segmentation_profile_catalog: the built-ins (tenant_id
+// NULL, read by every org) and the org's own profiles, so reads take
+// tenant_id = $tenant OR tenant_id IS NULL. Writes touch the org's table
+// alone, scoped by tenant_id. Org profiles are soft-deleted: live reads
+// filter deleted_at IS NULL.
+// The built-ins, then the org's own profiles.
+func (q *Queries) ListSegmentationProfiles(ctx context.Context, tenantID *int64) ([]SegmentationProfileCatalog, error) {
+	rows, err := q.db.Query(ctx, listSegmentationProfiles, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SegmentationProfileCatalog{}
+	for rows.Next() {
+		var i SegmentationProfileCatalog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.BuiltinKey,
+			&i.Name,
+			&i.SourceLanguages,
+			&i.Description,
+			&i.Definition,
+			&i.BasedOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSegmentationProfilesPage = `-- name: ListSegmentationProfilesPage :many
+SELECT id, tenant_id, builtin_key, name, source_languages, description, definition, based_on, created_at, updated_at, deleted_at FROM segmentation_profile_catalog
+WHERE (tenant_id = $1 OR tenant_id IS NULL) AND deleted_at IS NULL AND id > $2
+  AND ($3::text = '' OR cardinality(source_languages) = 0
+       OR source_languages && ARRAY[$3::text, $4::text])
+ORDER BY id
+LIMIT $5
+`
+
+type ListSegmentationProfilesPageParams struct {
+	TenantID       *int64 `json:"tenant_id"`
+	Cursor         int64  `json:"cursor"`
+	SourceLanguage string `json:"source_language"`
+	BaseLanguage   string `json:"base_language"`
+	Lim            int32  `json:"lim"`
+}
+
+// One page by id: the built-ins and the org's profiles after @cursor; when
+// @source_language is set, those that suit it (the language or its base
+// language is on the profile's list, or the list is empty: any language).
+func (q *Queries) ListSegmentationProfilesPage(ctx context.Context, arg ListSegmentationProfilesPageParams) ([]SegmentationProfileCatalog, error) {
+	rows, err := q.db.Query(ctx, listSegmentationProfilesPage,
+		arg.TenantID,
+		arg.Cursor,
+		arg.SourceLanguage,
+		arg.BaseLanguage,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SegmentationProfileCatalog{}
+	for rows.Next() {
+		var i SegmentationProfileCatalog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.BuiltinKey,
+			&i.Name,
+			&i.SourceLanguages,
+			&i.Description,
+			&i.Definition,
+			&i.BasedOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSegmentsByFile = `-- name: ListSegmentsByFile :many
+SELECT id, file_id, source_text, segment_key, position, context, created_at, word_count, source_rich_text, target_language, sub_position, export_key, gap_before, chip_base FROM segments WHERE file_id = $1 AND target_language IS NULL ORDER BY position
+`
+
+// Internal: the file's shared segments, as imported, for server-side work over
+// the whole file. Rows a split or join made for one language are left out.
 func (q *Queries) ListSegmentsByFile(ctx context.Context, fileID int64) ([]Segment, error) {
 	rows, err := q.db.Query(ctx, listSegmentsByFile, fileID)
 	if err != nil {
@@ -18183,6 +19392,11 @@ func (q *Queries) ListSegmentsByFile(ctx context.Context, fileID int64) ([]Segme
 			&i.CreatedAt,
 			&i.WordCount,
 			&i.SourceRichText,
+			&i.TargetLanguage,
+			&i.SubPosition,
+			&i.ExportKey,
+			&i.GapBefore,
+			&i.ChipBase,
 		); err != nil {
 			return nil, err
 		}
@@ -18195,21 +19409,25 @@ func (q *Queries) ListSegmentsByFile(ctx context.Context, fileID int64) ([]Segme
 }
 
 const listSegmentsByFileTenant = `-- name: ListSegmentsByFileTenant :many
-SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text FROM segments s
+SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text, s.target_language, s.sub_position, s.export_key, s.gap_before, s.chip_base FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.file_id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
+WHERE s.file_id = $1 AND s.target_language IS NULL
+  AND p.tenant_id = $2 AND p.deleted_at IS NULL
 ORDER BY s.position
+LIMIT $3::int
 `
 
 type ListSegmentsByFileTenantParams struct {
 	FileID   int64 `json:"file_id"`
 	TenantID int64 `json:"tenant_id"`
+	RowLimit int32 `json:"row_limit"`
 }
 
-// Tenant-scoped: returns segments only if file belongs to caller's tenant.
+// Tenant-scoped: returns the file's shared segments, as imported, only if the
+// file belongs to caller's tenant, at most @row_limit of them.
 func (q *Queries) ListSegmentsByFileTenant(ctx context.Context, arg ListSegmentsByFileTenantParams) ([]Segment, error) {
-	rows, err := q.db.Query(ctx, listSegmentsByFileTenant, arg.FileID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listSegmentsByFileTenant, arg.FileID, arg.TenantID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -18227,6 +19445,11 @@ func (q *Queries) ListSegmentsByFileTenant(ctx context.Context, arg ListSegments
 			&i.CreatedAt,
 			&i.WordCount,
 			&i.SourceRichText,
+			&i.TargetLanguage,
+			&i.SubPosition,
+			&i.ExportKey,
+			&i.GapBefore,
+			&i.ChipBase,
 		); err != nil {
 			return nil, err
 		}
@@ -19208,7 +20431,7 @@ WHERE s.file_id = $2
   AND t.edited_by IS NULL
   AND t.locked = false
   AND ($4::bigint[] IS NULL OR t.id = ANY($4::bigint[]))
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListTMTargetableByFileParams struct {
@@ -19642,6 +20865,42 @@ func (q *Queries) ListTemplatesFiltered(ctx context.Context, arg ListTemplatesFi
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTenantFileIDsIn = `-- name: ListTenantFileIDsIn :many
+SELECT f.id
+FROM files f
+JOIN projects p ON p.id = f.project_id
+WHERE f.id = ANY($1::bigint[])
+  AND p.tenant_id = $2
+  AND p.deleted_at IS NULL
+`
+
+type ListTenantFileIDsInParams struct {
+	Ids      []int64 `json:"ids"`
+	TenantID int64   `json:"tenant_id"`
+}
+
+// The ids among @ids whose file belongs to the tenant: the LLM call log
+// carries file ids but no tenant, so this decides which calls an org may read.
+func (q *Queries) ListTenantFileIDsIn(ctx context.Context, arg ListTenantFileIDsInParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listTenantFileIDsIn, arg.Ids, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -20109,7 +21368,7 @@ const listTranslationsByFile = `-- name: ListTranslationsByFile :many
 SELECT t.id, t.segment_id, t.target_language, t.status, t.predict_outcome, t.active_text, t.created_at, t.updated_at, t.editing_time_ms, t.edit_distance, t.edited_by, t.locked, t.active_rich_text, t.origin, t.tm_match_percent, t.in_flight_phase, t.qe_note, t.confirmed_via, t.step_edited FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1 AND t.target_language = $2
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListTranslationsByFileParams struct {
@@ -20117,9 +21376,9 @@ type ListTranslationsByFileParams struct {
 	TargetLanguage string `json:"target_language"`
 }
 
-// Returns all translations for a file+language. Not paginated by design: loaded
-// in lockstep with segments for the CATEditor. The UNIQUE(segment_id, target_language)
-// constraint provides a composite index for this query pattern.
+// Internal: every translation of a file in one language, for server-side work
+// over the whole file. The UNIQUE(segment_id, target_language) constraint
+// provides a composite index for this query pattern.
 func (q *Queries) ListTranslationsByFile(ctx context.Context, arg ListTranslationsByFileParams) ([]Translation, error) {
 	rows, err := q.db.Query(ctx, listTranslationsByFile, arg.FileID, arg.TargetLanguage)
 	if err != nil {
@@ -20173,7 +21432,7 @@ FROM translations t
 JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $2
   AND t.target_language = $3
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListTranslationsByFileForReimportParams struct {
@@ -20234,18 +21493,26 @@ JOIN segments s ON s.id = t.segment_id
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 WHERE s.file_id = $1 AND t.target_language = $2 AND p.tenant_id = $3 AND p.deleted_at IS NULL
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
+LIMIT $4::int
 `
 
 type ListTranslationsByFileTenantParams struct {
 	FileID         int64  `json:"file_id"`
 	TargetLanguage string `json:"target_language"`
 	TenantID       int64  `json:"tenant_id"`
+	RowLimit       int32  `json:"row_limit"`
 }
 
-// Tenant-scoped: returns translations only if file belongs to caller's tenant.
+// Tenant-scoped: returns translations only if file belongs to caller's tenant,
+// at most @row_limit of them.
 func (q *Queries) ListTranslationsByFileTenant(ctx context.Context, arg ListTranslationsByFileTenantParams) ([]Translation, error) {
-	rows, err := q.db.Query(ctx, listTranslationsByFileTenant, arg.FileID, arg.TargetLanguage, arg.TenantID)
+	rows, err := q.db.Query(ctx, listTranslationsByFileTenant,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.TenantID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -20285,30 +21552,32 @@ func (q *Queries) ListTranslationsByFileTenant(ctx context.Context, arg ListTran
 }
 
 const listTranslationsForQAPage = `-- name: ListTranslationsForQAPage :many
-SELECT t.id AS translation_id, s.id AS segment_id, s.position, s.source_text,
+SELECT t.id AS translation_id, s.id AS segment_id, s.position, s.sub_position, s.source_text,
        COALESCE(t.active_text, '') AS target_text,
        COALESCE(s.source_rich_text, '') AS source_rich_text,
        COALESCE(t.active_rich_text, '') AS target_rich_text
 FROM segments s
 JOIN translations t ON t.segment_id = s.id AND t.target_language = $1
 WHERE s.file_id = $2
-  AND (s.position, s.id) > ($3::int, $4::bigint)
-ORDER BY s.position, s.id
-LIMIT $5
+  AND (s.position, s.sub_position, s.id) > ($3::int, $4::int, $5::bigint)
+ORDER BY s.position, s.sub_position, s.id
+LIMIT $6
 `
 
 type ListTranslationsForQAPageParams struct {
-	TargetLanguage string `json:"target_language"`
-	FileID         int64  `json:"file_id"`
-	AfterPosition  int32  `json:"after_position"`
-	AfterSegmentID int64  `json:"after_segment_id"`
-	PageSize       int32  `json:"page_size"`
+	TargetLanguage   string `json:"target_language"`
+	FileID           int64  `json:"file_id"`
+	AfterPosition    int32  `json:"after_position"`
+	AfterSubPosition int32  `json:"after_sub_position"`
+	AfterSegmentID   int64  `json:"after_segment_id"`
+	PageSize         int32  `json:"page_size"`
 }
 
 type ListTranslationsForQAPageRow struct {
 	TranslationID  int64  `json:"translation_id"`
 	SegmentID      int64  `json:"segment_id"`
 	Position       int32  `json:"position"`
+	SubPosition    int32  `json:"sub_position"`
 	SourceText     string `json:"source_text"`
 	TargetText     string `json:"target_text"`
 	SourceRichText string `json:"source_rich_text"`
@@ -20316,13 +21585,15 @@ type ListTranslationsForQAPageRow struct {
 }
 
 // Internal: caller must have tenant-verified the job (GetJobTenant).
-// One page of the job's rows in segment order. Positions can repeat within a
-// file, so the page key is (position, segment id).
+// One page of the job's rows in segment order. A position holds a row and the
+// pieces of its split, whose ids need not follow their order, so the page key
+// is the whole sort key (position, sub-position, segment id).
 func (q *Queries) ListTranslationsForQAPage(ctx context.Context, arg ListTranslationsForQAPageParams) ([]ListTranslationsForQAPageRow, error) {
 	rows, err := q.db.Query(ctx, listTranslationsForQAPage,
 		arg.TargetLanguage,
 		arg.FileID,
 		arg.AfterPosition,
+		arg.AfterSubPosition,
 		arg.AfterSegmentID,
 		arg.PageSize,
 	)
@@ -20337,6 +21608,7 @@ func (q *Queries) ListTranslationsForQAPage(ctx context.Context, arg ListTransla
 			&i.TranslationID,
 			&i.SegmentID,
 			&i.Position,
+			&i.SubPosition,
 			&i.SourceText,
 			&i.TargetText,
 			&i.SourceRichText,
@@ -20506,7 +21778,7 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $2 AND t.target_language = $3
   AND t.active_text IS NULL AND t.locked = false
   AND ($4::bigint[] IS NULL OR t.id = ANY($4::bigint[]))
-ORDER BY s.position
+ORDER BY s.position, s.sub_position
 `
 
 type ListUntranslatedByFileParams struct {
@@ -21124,6 +22396,69 @@ func (q *Queries) ListWorkflowsUsingStepDefinition(ctx context.Context, arg List
 	return items, nil
 }
 
+const listWritableTermBasesForPair = `-- name: ListWritableTermBasesForPair :many
+SELECT tb.id, tb.name, tb.source_language, MIN(a.priority)::int AS priority
+FROM settings_terminology_assignments a
+JOIN term_bases tb ON tb.id = a.term_base_id
+  AND tb.deleted_at IS NULL AND tb.tenant_id = $1
+WHERE a.settings_profile_id = $2
+  AND a.mode IN ('write', 'read_write')
+  AND (a.source_language = $3
+       OR SPLIT_PART(a.source_language, '-', 1) = SPLIT_PART($3, '-', 1))
+  AND (a.target_language = $4
+       OR SPLIT_PART(a.target_language, '-', 1) = SPLIT_PART($4, '-', 1))
+GROUP BY tb.id, tb.name, tb.source_language
+ORDER BY MIN(a.priority) ASC, tb.id ASC
+`
+
+type ListWritableTermBasesForPairParams struct {
+	TenantID          int64  `json:"tenant_id"`
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	SourceLanguage    string `json:"source_language"`
+	TargetLanguage    string `json:"target_language"`
+}
+
+type ListWritableTermBasesForPairRow struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	SourceLanguage string `json:"source_language"`
+	Priority       int32  `json:"priority"`
+}
+
+// Tenant-scoped: the live term bases a settings profile assigns to a language
+// pair with Write allowed (the term quick-add writes only to these), matched
+// like LookupSettingsTermsByTokens (exact code or same base language), best
+// priority first.
+func (q *Queries) ListWritableTermBasesForPair(ctx context.Context, arg ListWritableTermBasesForPairParams) ([]ListWritableTermBasesForPairRow, error) {
+	rows, err := q.db.Query(ctx, listWritableTermBasesForPair,
+		arg.TenantID,
+		arg.SettingsProfileID,
+		arg.SourceLanguage,
+		arg.TargetLanguage,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWritableTermBasesForPairRow{}
+	for rows.Next() {
+		var i ListWritableTermBasesForPairRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.SourceLanguage,
+			&i.Priority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockApproveTranslations = `-- name: LockApproveTranslations :many
 UPDATE translations t
 SET locked = true,
@@ -21241,7 +22576,7 @@ func (q *Queries) LockDemoWorkspace(ctx context.Context, tenantID int64) error {
 }
 
 const lockFileTenant = `-- name: LockFileTenant :one
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
 FOR UPDATE OF f
@@ -21270,6 +22605,7 @@ func (q *Queries) LockFileTenant(ctx context.Context, arg LockFileTenantParams) 
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -21517,6 +22853,32 @@ func (q *Queries) LockProjectJobsForWrite(ctx context.Context, arg LockProjectJo
 	return items, nil
 }
 
+const lockRowForJoin = `-- name: LockRowForJoin :one
+SELECT id FROM translations
+WHERE id = $1
+  AND updated_at = $2
+  AND NOT locked
+  AND in_flight_phase IS NULL
+  AND NOT translation_held_by_other(translations.id, $3)
+FOR UPDATE
+`
+
+type LockRowForJoinParams struct {
+	ID                int64              `json:"id"`
+	ExpectedUpdatedAt pgtype.Timestamptz `json:"expected_updated_at"`
+	ActorID           int64              `json:"actor_id"`
+}
+
+// Internal: a row a join removes, locked for the transaction. Matches nothing
+// when it changed since @expected_updated_at, is locked, is being
+// pre-translated or another user holds it.
+func (q *Queries) LockRowForJoin(ctx context.Context, arg LockRowForJoinParams) (int64, error) {
+	row := q.db.QueryRow(ctx, lockRowForJoin, arg.ID, arg.ExpectedUpdatedAt, arg.ActorID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockStepDefinition = `-- name: LockStepDefinition :one
 SELECT id, tenant_id, name, step_type, role_required, created_at, updated_at, deleted_at, ai_router_id, system_key FROM step_definitions
 WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND system_key IS NULL
@@ -21750,7 +23112,7 @@ func (q *Queries) LookupSettingsTerms(ctx context.Context, arg LookupSettingsTer
 const lookupSettingsTermsByTokens = `-- name: LookupSettingsTermsByTokens :many
 SELECT tgt.id, c.id AS concept_id,
        src.text AS source_term, tgt.text AS target_term,
-       tgt.status, src.status AS source_status, tgt.notes, c.domain, tgt.mt_translation,
+       tgt.status, src.status AS source_status, tgt.notes, c.domain, c.definition, tgt.mt_translation,
        tb.id AS term_base_id, tb.name AS term_base_name,
        sta.priority
 FROM term src
@@ -21797,6 +23159,7 @@ type LookupSettingsTermsByTokensRow struct {
 	SourceStatus  string `json:"source_status"`
 	Notes         string `json:"notes"`
 	Domain        string `json:"domain"`
+	Definition    string `json:"definition"`
 	MtTranslation string `json:"mt_translation"`
 	TermBaseID    int64  `json:"term_base_id"`
 	TermBaseName  string `json:"term_base_name"`
@@ -21834,6 +23197,7 @@ func (q *Queries) LookupSettingsTermsByTokens(ctx context.Context, arg LookupSet
 			&i.SourceStatus,
 			&i.Notes,
 			&i.Domain,
+			&i.Definition,
 			&i.MtTranslation,
 			&i.TermBaseID,
 			&i.TermBaseName,
@@ -22214,6 +23578,18 @@ func (q *Queries) MarkProjectDeleted(ctx context.Context, arg MarkProjectDeleted
 	return result.RowsAffected(), nil
 }
 
+const markSettingsProfileWorkflowEdited = `-- name: MarkSettingsProfileWorkflowEdited :exec
+UPDATE settings_profiles SET workflow_edited = true WHERE id = $1 AND workflow_id IS NOT NULL
+`
+
+// Internal: keyed by settings_profile_id with no tenant filter; callers get the
+// id from a tenant-scoped project or template lookup.
+// The profile's steps no longer match the library workflow they came from.
+func (q *Queries) MarkSettingsProfileWorkflowEdited(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markSettingsProfileWorkflowEdited, id)
+	return err
+}
+
 const markTenantDeleting = `-- name: MarkTenantDeleting :execrows
 UPDATE tenants SET status = 'deleting', domain = NULL WHERE id = $1
 `
@@ -22263,6 +23639,95 @@ func (q *Queries) MoveDashboardChart(ctx context.Context, arg MoveDashboardChart
 	return result.RowsAffected(), nil
 }
 
+const moveEditedTranslation = `-- name: MoveEditedTranslation :one
+UPDATE translations
+SET segment_id = $1,
+    step_edited = step_edited OR active_text IS DISTINCT FROM $2::text,
+    active_text = $2::text,
+    active_rich_text = $3::text,
+    status = 'needs_review',
+    predict_outcome = NULL,
+    qe_note = NULL,
+    tm_match_percent = NULL,
+    edited_by = $4,
+    updated_at = now()
+WHERE id = $5
+  AND updated_at = $6
+  AND NOT locked
+  AND in_flight_phase IS NULL
+  AND NOT translation_held_by_other(translations.id, $4)
+RETURNING id, segment_id, target_language, status, predict_outcome, active_text, created_at, updated_at, editing_time_ms, edit_distance, edited_by, locked, active_rich_text, origin, tm_match_percent, in_flight_phase, qe_note, confirmed_via, step_edited
+`
+
+type MoveEditedTranslationParams struct {
+	SegmentID         int64              `json:"segment_id"`
+	ActiveText        *string            `json:"active_text"`
+	ActiveRichText    *string            `json:"active_rich_text"`
+	ActorID           *int64             `json:"actor_id"`
+	ID                int64              `json:"id"`
+	ExpectedUpdatedAt pgtype.Timestamptz `json:"expected_updated_at"`
+}
+
+// Internal: the caller has checked the job in the tenant. Moves a translation
+// onto the segment a split or join made (or back onto the shared segment) and
+// sets its text. The source changed, so a QE verdict and a TM score no longer
+// apply and the row needs review. Matches nothing when the row changed since
+// @expected_updated_at, is locked, is being pre-translated or another user
+// holds it.
+func (q *Queries) MoveEditedTranslation(ctx context.Context, arg MoveEditedTranslationParams) (Translation, error) {
+	row := q.db.QueryRow(ctx, moveEditedTranslation,
+		arg.SegmentID,
+		arg.ActiveText,
+		arg.ActiveRichText,
+		arg.ActorID,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i Translation
+	err := row.Scan(
+		&i.ID,
+		&i.SegmentID,
+		&i.TargetLanguage,
+		&i.Status,
+		&i.PredictOutcome,
+		&i.ActiveText,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EditingTimeMs,
+		&i.EditDistance,
+		&i.EditedBy,
+		&i.Locked,
+		&i.ActiveRichText,
+		&i.Origin,
+		&i.TmMatchPercent,
+		&i.InFlightPhase,
+		&i.QeNote,
+		&i.ConfirmedVia,
+		&i.StepEdited,
+	)
+	return i, err
+}
+
+const moveSegmentComments = `-- name: MoveSegmentComments :exec
+UPDATE segment_comments
+SET translation_id = $1,
+    from_segment = COALESCE(from_segment, $2::text)
+WHERE translation_id = $3
+`
+
+type MoveSegmentCommentsParams struct {
+	ToTranslationID   int64  `json:"to_translation_id"`
+	FromSegment       string `json:"from_segment"`
+	FromTranslationID int64  `json:"from_translation_id"`
+}
+
+// Internal: a join moves the comments of the row it removes to the row it
+// keeps, each labelled with the number of the row it was written on.
+func (q *Queries) MoveSegmentComments(ctx context.Context, arg MoveSegmentCommentsParams) error {
+	_, err := q.db.Exec(ctx, moveSegmentComments, arg.ToTranslationID, arg.FromSegment, arg.FromTranslationID)
+	return err
+}
+
 const moveTabHold = `-- name: MoveTabHold :exec
 DELETE FROM translation_holds
 WHERE tenant_id = $1 AND user_id = $2 AND tab_id = $3
@@ -22284,6 +23749,33 @@ func (q *Queries) MoveTabHold(ctx context.Context, arg MoveTabHoldParams) error 
 		arg.TabID,
 		arg.TranslationID,
 	)
+	return err
+}
+
+const moveTranslationHistory = `-- name: MoveTranslationHistory :exec
+UPDATE translation_history th
+SET translation_id = $1,
+    details = jsonb_build_object('from_segment', $2::text, 'translation_id', th.translation_id,
+                                 'word_count', s.word_count, 'char_count', length(s.source_text))
+              || COALESCE(th.details, '{}'::jsonb)
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+WHERE t.id = $3 AND th.translation_id = t.id
+`
+
+type MoveTranslationHistoryParams struct {
+	ToTranslationID   int64  `json:"to_translation_id"`
+	FromSegment       string `json:"from_segment"`
+	FromTranslationID int64  `json:"from_translation_id"`
+}
+
+// Internal: a join moves the history of the row it removes to the row it
+// keeps. Each event keeps the number of the row it happened on, the
+// translation it was written for and that row's source words and
+// characters, so metrics of past periods do not change; values an earlier
+// split or join stored stay.
+func (q *Queries) MoveTranslationHistory(ctx context.Context, arg MoveTranslationHistoryParams) error {
+	_, err := q.db.Exec(ctx, moveTranslationHistory, arg.ToTranslationID, arg.FromSegment, arg.FromTranslationID)
 	return err
 }
 
@@ -22680,6 +24172,20 @@ func (q *Queries) PurgeDeletedProjectUsageBatch(ctx context.Context, arg PurgeDe
 	return result.RowsAffected(), nil
 }
 
+const queueIssueSlackBlank = `-- name: QueueIssueSlackBlank :exec
+INSERT INTO issue_slack_blanks (issue_id, channel, ts)
+SELECT m.issue_id, m.channel, m.ts FROM issue_slack_messages m WHERE m.issue_id = $1::bigint
+ON CONFLICT (issue_id) DO NOTHING
+`
+
+// Internal: the caller soft-deletes @issue_id. Its card waits for the sweep
+// besides its refresh, so a refresh that read the issue before the delete
+// cannot leave the issue's text in Slack.
+func (q *Queries) QueueIssueSlackBlank(ctx context.Context, issueID int64) error {
+	_, err := q.db.Exec(ctx, queueIssueSlackBlank, issueID)
+	return err
+}
+
 const reactivateUser = `-- name: ReactivateUser :one
 UPDATE users SET is_active = true, deactivated_at = NULL WHERE id = $1 RETURNING id, last_tenant_id, email, password_hash, name, created_at, is_active, deactivated_at
 `
@@ -23060,7 +24566,7 @@ const renameFile = `-- name: RenameFile :one
 UPDATE files
 SET name = $2, original_name = COALESCE(original_name, name), updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
 `
 
 type RenameFileParams struct {
@@ -23083,6 +24589,7 @@ func (q *Queries) RenameFile(ctx context.Context, arg RenameFileParams) (File, e
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -23091,7 +24598,7 @@ const renameFileTenant = `-- name: RenameFileTenant :one
 UPDATE files
 SET name = $1, original_name = COALESCE(original_name, name), updated_at = now()
 WHERE files.id = $2 AND project_id IN (SELECT projects.id FROM projects WHERE projects.tenant_id = $3 AND projects.deleted_at IS NULL)
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
 `
 
 type RenameFileTenantParams struct {
@@ -23116,6 +24623,7 @@ func (q *Queries) RenameFileTenant(ctx context.Context, arg RenameFileTenantPara
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -23146,6 +24654,31 @@ func (q *Queries) RenameTMCollection(ctx context.Context, arg RenameTMCollection
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const renumberLanguageRows = `-- name: RenumberLanguageRows :exec
+UPDATE segments s
+SET sub_position = r.n
+FROM (
+    SELECT ls.id, (row_number() OVER (ORDER BY ls.sub_position, ls.id) - 1)::int AS n
+    FROM segments ls
+    WHERE ls.file_id = $1 AND ls.target_language = $2::text
+      AND ls.position = $3
+) r
+WHERE s.id = r.id AND s.sub_position <> r.n
+`
+
+type RenumberLanguageRowsParams struct {
+	FileID         int64  `json:"file_id"`
+	TargetLanguage string `json:"target_language"`
+	Position       int32  `json:"position"`
+}
+
+// Internal: numbers one job's language rows at @position 0, 1, 2… in their
+// order (sub-position, then the order they were made).
+func (q *Queries) RenumberLanguageRows(ctx context.Context, arg RenumberLanguageRowsParams) error {
+	_, err := q.db.Exec(ctx, renumberLanguageRows, arg.FileID, arg.TargetLanguage, arg.Position)
+	return err
 }
 
 const reopenCompletedStepAssignment = `-- name: ReopenCompletedStepAssignment :execrows
@@ -23293,6 +24826,25 @@ func (q *Queries) RepointDuplicates(ctx context.Context, arg RepointDuplicatesPa
 	return items, nil
 }
 
+const reporterHasIssue = `-- name: ReporterHasIssue :one
+SELECT EXISTS (
+    SELECT 1 FROM issues WHERE tenant_id = $1 AND reporter_id = $2 AND deleted_at IS NULL
+)::boolean
+`
+
+type ReporterHasIssueParams struct {
+	TenantID   int64 `json:"tenant_id"`
+	ReporterID int64 `json:"reporter_id"`
+}
+
+// Whether the user has an issue in the org that is not deleted.
+func (q *Queries) ReporterHasIssue(ctx context.Context, arg ReporterHasIssueParams) (bool, error) {
+	row := q.db.QueryRow(ctx, reporterHasIssue, arg.TenantID, arg.ReporterID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const requestJobStop = `-- name: RequestJobStop :one
 WITH target AS (
     SELECT j.id AS job_id, (j.updated_at < now() - interval '30 minutes')::boolean AS stale
@@ -23331,6 +24883,33 @@ func (q *Queries) RequestJobStop(ctx context.Context, id int64) (bool, error) {
 	var stale bool
 	err := row.Scan(&stale)
 	return stale, err
+}
+
+const reseedWaitingStepAssignments = `-- name: ReseedWaitingStepAssignments :exec
+UPDATE job_step_assignments jsa
+SET assigned_to = $1
+FROM jobs j, files f, projects p
+WHERE jsa.job_id = j.id
+  AND f.id = j.file_id
+  AND p.id = f.project_id
+  AND jsa.workflow_step_id = $2
+  AND jsa.status = 'pending'
+  AND p.tenant_id = $3 AND p.deleted_at IS NULL
+`
+
+type ReseedWaitingStepAssignmentsParams struct {
+	AssignedTo     *int64 `json:"assigned_to"`
+	WorkflowStepID int64  `json:"workflow_step_id"`
+	TenantID       int64  `json:"tenant_id"`
+}
+
+// A workflow edit put a different step at this position: the tasks still
+// waiting on it take the new step's default assignee, NULL included. Only
+// pending tasks are touched; a position with any other task is locked and
+// never changes its step. Tenant-scoped like ReassignInFlightStepAssignments.
+func (q *Queries) ReseedWaitingStepAssignments(ctx context.Context, arg ReseedWaitingStepAssignmentsParams) error {
+	_, err := q.db.Exec(ctx, reseedWaitingStepAssignments, arg.AssignedTo, arg.WorkflowStepID, arg.TenantID)
+	return err
 }
 
 const resendInvite = `-- name: ResendInvite :one
@@ -23468,25 +25047,30 @@ func (q *Queries) ResetStepsBetween(ctx context.Context, arg ResetStepsBetweenPa
 }
 
 const restoreJobPipelineState = `-- name: RestoreJobPipelineState :exec
-UPDATE jobs SET status = $2, current_step = $3, error_message = $4, updated_at = $5
-WHERE id = $1 AND status = 'in_progress' AND current_step = $6
+UPDATE jobs SET status = $2, current_step = $3, error_message = $4,
+       translated_count = $5, total_count = $6,
+       updated_at = $7
+WHERE id = $1 AND status = 'in_progress' AND current_step = $8
 `
 
 type RestoreJobPipelineStateParams struct {
-	ID           int64              `json:"id"`
-	Status       string             `json:"status"`
-	CurrentStep  string             `json:"current_step"`
-	ErrorMessage *string            `json:"error_message"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ClaimStep    string             `json:"claim_step"`
+	ID              int64              `json:"id"`
+	Status          string             `json:"status"`
+	CurrentStep     string             `json:"current_step"`
+	ErrorMessage    *string            `json:"error_message"`
+	TranslatedCount *int32             `json:"translated_count"`
+	TotalCount      *int32             `json:"total_count"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ClaimStep       string             `json:"claim_step"`
 }
 
 // Internal: caller must have claimed the job with the tenant-scoped
 // ClaimJobPipeline.
 // Undo an eager ClaimJobPipeline after a pre-flight 400 (no work actually
 // ran): put back what the claim replaced — status, step, error_message (the
-// claim nulled it — a previously-failed job must keep its explanation) and
-// updated_at, so a dead run's job stays reclaimable. Conditional on the
+// claim nulled it — a previously-failed job must keep its explanation), the
+// progress counts (also nulled) and updated_at, so a dead run's job stays
+// reclaimable. Conditional on the
 // claim's own step so a concurrent writer (worker enqueue, feedback
 // completion) that moved the job since the claim is never clobbered.
 func (q *Queries) RestoreJobPipelineState(ctx context.Context, arg RestoreJobPipelineStateParams) error {
@@ -23495,9 +25079,29 @@ func (q *Queries) RestoreJobPipelineState(ctx context.Context, arg RestoreJobPip
 		arg.Status,
 		arg.CurrentStep,
 		arg.ErrorMessage,
+		arg.TranslatedCount,
+		arg.TotalCount,
 		arg.UpdatedAt,
 		arg.ClaimStep,
 	)
+	return err
+}
+
+const restoreJobProgress = `-- name: RestoreJobProgress :exec
+UPDATE jobs SET translated_count = $1, total_count = $2 WHERE id = $3
+`
+
+type RestoreJobProgressParams struct {
+	TranslatedCount *int32 `json:"translated_count"`
+	TotalCount      *int32 `json:"total_count"`
+	ID              int64  `json:"id"`
+}
+
+// Internal: the caller loaded the job tenant-scoped before queueing it.
+// Puts back the progress counts queueing cleared when the queue then refused
+// the task, so nothing ran.
+func (q *Queries) RestoreJobProgress(ctx context.Context, arg RestoreJobProgressParams) error {
+	_, err := q.db.Exec(ctx, restoreJobProgress, arg.TranslatedCount, arg.TotalCount, arg.ID)
 	return err
 }
 
@@ -24388,9 +25992,59 @@ func (q *Queries) SetSettingsProfileMtOnUpload(ctx context.Context, arg SetSetti
 	return err
 }
 
+const setSettingsProfileSegmentationProfile = `-- name: SetSettingsProfileSegmentationProfile :one
+UPDATE settings_profiles sp SET segmentation_profile_id = $2::bigint, updated_at = now()
+WHERE sp.id = $1
+  AND ($2::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM segmentation_builtin_profiles b WHERE b.id = $2::bigint)
+       OR EXISTS (SELECT 1 FROM segmentation_profiles o
+                  WHERE o.id = $2::bigint AND o.deleted_at IS NULL FOR SHARE))
+RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
+`
+
+type SetSettingsProfileSegmentationProfileParams struct {
+	ID                    int64  `json:"id"`
+	SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+}
+
+// Internal: callers pass the settings profile id of a project or template
+// they read with its tenant. The segmentation profile the row's uploads are
+// split with; separate from UpdateSettingsProfile for the same reason as
+// SetSettingsProfileTMProfile. It stores only a built-in or a live org
+// profile, holding a share lock on the profile row until the caller commits,
+// so a delete either waits and then clears a project row or refuses a
+// template row, or runs first and this write stores nothing (no row
+// returned).
+func (q *Queries) SetSettingsProfileSegmentationProfile(ctx context.Context, arg SetSettingsProfileSegmentationProfileParams) (SettingsProfile, error) {
+	row := q.db.QueryRow(ctx, setSettingsProfileSegmentationProfile, arg.ID, arg.SegmentationProfileID)
+	var i SettingsProfile
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.FuzzyThreshold,
+		&i.MtOnUpload,
+		&i.QaProfileID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TmOnUpload,
+		&i.SublanguagePenaltyPct,
+		&i.NearExactPenaltyPct,
+		&i.AutoComplete,
+		&i.TmProfileID,
+		&i.WorkflowID,
+		&i.MtRouterID,
+		&i.TmLookupOrder,
+		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
+	)
+	return i, err
+}
+
 const setSettingsProfileTMProfile = `-- name: SetSettingsProfileTMProfile :one
 UPDATE settings_profiles SET tm_profile_id = $2::bigint, updated_at = now()
-WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html
+WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type SetSettingsProfileTMProfileParams struct {
@@ -24421,23 +26075,29 @@ func (q *Queries) SetSettingsProfileTMProfile(ctx context.Context, arg SetSettin
 		&i.MtRouterID,
 		&i.TmLookupOrder,
 		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
 	)
 	return i, err
 }
 
 const setSettingsProfileWorkflow = `-- name: SetSettingsProfileWorkflow :exec
-UPDATE settings_profiles SET workflow_id = $2 WHERE id = $1
+UPDATE settings_profiles SET workflow_id = $1, workflow_edited = $2 WHERE id = $3
 `
 
 type SetSettingsProfileWorkflowParams struct {
-	ID         int64  `json:"id"`
-	WorkflowID *int64 `json:"workflow_id"`
+	WorkflowID     *int64 `json:"workflow_id"`
+	WorkflowEdited bool   `json:"workflow_edited"`
+	ID             int64  `json:"id"`
 }
 
+// Internal: keyed by settings_profile_id with no tenant filter; callers get the
+// id from a tenant-scoped project or template lookup.
 // Stamps which library workflow a profile's steps were copied from
-// (provenance). NULL clears it.
+// (provenance), and whether they were edited since. NULL clears it.
 func (q *Queries) SetSettingsProfileWorkflow(ctx context.Context, arg SetSettingsProfileWorkflowParams) error {
-	_, err := q.db.Exec(ctx, setSettingsProfileWorkflow, arg.ID, arg.WorkflowID)
+	_, err := q.db.Exec(ctx, setSettingsProfileWorkflow, arg.WorkflowID, arg.WorkflowEdited, arg.ID)
 	return err
 }
 
@@ -24689,6 +26349,24 @@ func (q *Queries) SettingsTermConcordanceSearch(ctx context.Context, arg Setting
 		return nil, err
 	}
 	return items, nil
+}
+
+const snapshotHistoryCounts = `-- name: SnapshotHistoryCounts :exec
+UPDATE translation_history th
+SET details = jsonb_build_object('word_count', s.word_count, 'char_count', length(s.source_text))
+              || COALESCE(th.details, '{}'::jsonb)
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+WHERE t.id = $1 AND th.translation_id = t.id
+`
+
+// Internal: before a split or join moves a translation to another segment,
+// its history keeps the source words and characters of the segment it was
+// written for, so metrics of past periods do not change; values an earlier
+// split or join stored stay.
+func (q *Queries) SnapshotHistoryCounts(ctx context.Context, translationID int64) error {
+	_, err := q.db.Exec(ctx, snapshotHistoryCounts, translationID)
+	return err
 }
 
 const softDeleteAIEngine = `-- name: SoftDeleteAIEngine :exec
@@ -24945,6 +26623,25 @@ func (q *Queries) SoftDeleteQAProfile(ctx context.Context, arg SoftDeleteQAProfi
 	return err
 }
 
+const softDeleteSegmentationProfile = `-- name: SoftDeleteSegmentationProfile :execrows
+UPDATE segmentation_profiles
+SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteSegmentationProfileParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+func (q *Queries) SoftDeleteSegmentationProfile(ctx context.Context, arg SoftDeleteSegmentationProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteSegmentationProfile, arg.ID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const softDeleteSharedDashboards = `-- name: SoftDeleteSharedDashboards :execrows
 UPDATE dashboards SET deleted_at = now()
 WHERE tenant_id = $1 AND owner_id IS NULL AND deleted_at IS NULL
@@ -25117,7 +26814,8 @@ func (q *Queries) SoftDeleteWorkflow(ctx context.Context, arg SoftDeleteWorkflow
 }
 
 const startJobRun = `-- name: StartJobRun :execrows
-UPDATE jobs SET status = 'in_progress', current_step = $2, error_message = NULL, updated_at = now()
+UPDATE jobs SET status = 'in_progress', current_step = $2, error_message = NULL,
+       translated_count = NULL, total_count = NULL, updated_at = now()
 WHERE id = $1 AND stop_requested_at IS NULL
 `
 
@@ -25128,7 +26826,8 @@ type StartJobRunParams struct {
 
 // Worker-side start transition. Refuses (0 rows) when a stop was requested
 // while the task sat in the queue: the handler then marks the job stopped and
-// returns nil, so asynq does not retry it.
+// returns nil, so asynq does not retry it. A run starts without progress
+// counts, so the counter never shows the last run's numbers.
 func (q *Queries) StartJobRun(ctx context.Context, arg StartJobRunParams) (int64, error) {
 	result, err := q.db.Exec(ctx, startJobRun, arg.ID, arg.CurrentStep)
 	if err != nil {
@@ -25367,7 +27066,7 @@ const unlockJobTranslations = `-- name: UnlockJobTranslations :many
 UPDATE translations
 SET locked = false, updated_at = now()
 WHERE segment_id IN (SELECT id FROM segments WHERE file_id = $1)
-  AND target_language = $2
+  AND translations.target_language = $2
   AND id = ANY($3::bigint[])
   AND locked
 RETURNING id
@@ -25817,12 +27516,49 @@ func (q *Queries) UpdateFileSegmentCount(ctx context.Context, arg UpdateFileSegm
 	return err
 }
 
+const updateFileSegmentation = `-- name: UpdateFileSegmentation :one
+UPDATE files f
+SET segmentation = $1::jsonb, updated_at = now()
+FROM projects p
+WHERE f.id = $2 AND p.id = f.project_id AND p.tenant_id = $3 AND p.deleted_at IS NULL
+RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation
+`
+
+type UpdateFileSegmentationParams struct {
+	Segmentation []byte `json:"segmentation"`
+	ID           int64  `json:"id"`
+	TenantID     int64  `json:"tenant_id"`
+}
+
+// A draft file's segmentation snapshot, resolved again at publish when the
+// draft's source language changed after the upload. Tenant-scoped through the
+// file's project.
+func (q *Queries) UpdateFileSegmentation(ctx context.Context, arg UpdateFileSegmentationParams) (File, error) {
+	row := q.db.QueryRow(ctx, updateFileSegmentation, arg.Segmentation, arg.ID, arg.TenantID)
+	var i File
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Format,
+		&i.StoragePath,
+		&i.SegmentCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OriginalName,
+		&i.InlineHtml,
+		&i.XlsxLayout,
+		&i.Segmentation,
+	)
+	return i, err
+}
+
 const updateFileXLSXLayout = `-- name: UpdateFileXLSXLayout :one
 UPDATE files f
 SET xlsx_layout = $1::jsonb, updated_at = now()
 FROM projects p
 WHERE f.id = $2 AND p.id = f.project_id AND p.tenant_id = $3 AND p.deleted_at IS NULL
-RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout
+RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation
 `
 
 type UpdateFileXLSXLayoutParams struct {
@@ -25847,6 +27583,7 @@ func (q *Queries) UpdateFileXLSXLayout(ctx context.Context, arg UpdateFileXLSXLa
 		&i.OriginalName,
 		&i.InlineHtml,
 		&i.XlsxLayout,
+		&i.Segmentation,
 	)
 	return i, err
 }
@@ -26007,13 +27744,17 @@ func (q *Queries) UpdateJobProgress(ctx context.Context, arg UpdateJobProgressPa
 }
 
 const updateJobStatus = `-- name: UpdateJobStatus :exec
-UPDATE jobs SET status = $2, current_step = $3, error_message = NULL, stop_requested_at = NULL, updated_at = now() WHERE id = $1
+UPDATE jobs SET status = $1, current_step = $2, error_message = NULL, stop_requested_at = NULL,
+       translated_count = CASE WHEN $1::text = 'queued' THEN NULL ELSE translated_count END,
+       total_count      = CASE WHEN $1::text = 'queued' THEN NULL ELSE total_count END,
+       updated_at = now()
+WHERE id = $3
 `
 
 type UpdateJobStatusParams struct {
-	ID          int64  `json:"id"`
 	Status      string `json:"status"`
 	CurrentStep string `json:"current_step"`
+	ID          int64  `json:"id"`
 }
 
 // Clears error_message: every caller passes a non-failed status (queued /
@@ -26023,8 +27764,10 @@ type UpdateJobStatusParams struct {
 // a pending stop request is stale there too. The worker's start transition is
 // StartJobRun instead, which must NOT clear it (a stop requested while the
 // task sat in the queue has to be honoured at pickup).
+// Queueing a run clears the progress counts, so a waiting job reads as queued
+// and not as the last run's "Translating N / M".
 func (q *Queries) UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) error {
-	_, err := q.db.Exec(ctx, updateJobStatus, arg.ID, arg.Status, arg.CurrentStep)
+	_, err := q.db.Exec(ctx, updateJobStatus, arg.Status, arg.CurrentStep, arg.ID)
 	return err
 }
 
@@ -26325,6 +28068,81 @@ func (q *Queries) UpdateQAProfile(ctx context.Context, arg UpdateQAProfileParams
 	return i, err
 }
 
+const updateQARegexRule = `-- name: UpdateQARegexRule :one
+UPDATE qa_rules r
+SET enabled = $1, severity = $2, config = $3
+FROM qa_profiles p
+WHERE r.id = $4 AND r.profile_id = $5 AND r.check_type = 'regex'
+  AND p.id = r.profile_id AND p.tenant_id = $6 AND p.deleted_at IS NULL
+RETURNING r.id, r.profile_id, r.check_type, r.enabled, r.severity, r.config
+`
+
+type UpdateQARegexRuleParams struct {
+	Enabled   bool   `json:"enabled"`
+	Severity  string `json:"severity"`
+	Config    []byte `json:"config"`
+	ID        int64  `json:"id"`
+	ProfileID int64  `json:"profile_id"`
+	TenantID  int64  `json:"tenant_id"`
+}
+
+func (q *Queries) UpdateQARegexRule(ctx context.Context, arg UpdateQARegexRuleParams) (QaRule, error) {
+	row := q.db.QueryRow(ctx, updateQARegexRule,
+		arg.Enabled,
+		arg.Severity,
+		arg.Config,
+		arg.ID,
+		arg.ProfileID,
+		arg.TenantID,
+	)
+	var i QaRule
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.CheckType,
+		&i.Enabled,
+		&i.Severity,
+		&i.Config,
+	)
+	return i, err
+}
+
+const updateSegmentationProfile = `-- name: UpdateSegmentationProfile :one
+UPDATE segmentation_profiles
+SET name            = $1,
+    source_languages = $2::text[],
+    definition      = $3,
+    updated_at      = now()
+WHERE id = $4 AND tenant_id = $5 AND deleted_at IS NULL
+  AND updated_at = $6
+RETURNING id
+`
+
+type UpdateSegmentationProfileParams struct {
+	Name              string             `json:"name"`
+	SourceLanguages   []string           `json:"source_languages"`
+	Definition        []byte             `json:"definition"`
+	ID                int64              `json:"id"`
+	TenantID          int64              `json:"tenant_id"`
+	ExpectedUpdatedAt pgtype.Timestamptz `json:"expected_updated_at"`
+}
+
+// Full replace, only while updated_at still equals @expected_updated_at: a
+// mismatch (someone saved in between) returns no row.
+func (q *Queries) UpdateSegmentationProfile(ctx context.Context, arg UpdateSegmentationProfileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, updateSegmentationProfile,
+		arg.Name,
+		arg.SourceLanguages,
+		arg.Definition,
+		arg.ID,
+		arg.TenantID,
+		arg.ExpectedUpdatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateSettingsProfile = `-- name: UpdateSettingsProfile :one
 UPDATE settings_profiles SET fuzzy_threshold = $2, mt_on_upload = $3, tm_on_upload = $4, qa_profile_id = $5,
   sublanguage_penalty_pct = COALESCE($6::int, sublanguage_penalty_pct),
@@ -26332,8 +28150,9 @@ UPDATE settings_profiles SET fuzzy_threshold = $2, mt_on_upload = $3, tm_on_uplo
   auto_complete           = COALESCE($8::bool, auto_complete),
   tm_lookup_order         = COALESCE($9::text, tm_lookup_order),
   inline_html             = COALESCE($10::bool, inline_html),
+  linguist_terms     = COALESCE($11::text, linguist_terms),
   updated_at = now()
-WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html
+WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type UpdateSettingsProfileParams struct {
@@ -26347,6 +28166,7 @@ type UpdateSettingsProfileParams struct {
 	AutoComplete          *bool   `json:"auto_complete"`
 	TmLookupOrder         *string `json:"tm_lookup_order"`
 	InlineHtml            *bool   `json:"inline_html"`
+	LinguistTerms         *string `json:"linguist_terms"`
 }
 
 // The penalty columns are nil-keeps-stored (sqlc.narg + COALESCE), not
@@ -26358,6 +28178,7 @@ type UpdateSettingsProfileParams struct {
 // that omits it would silently switch auto-completion off.
 // tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
 // inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
+// linguist_terms is nil-keeps-stored like tm_lookup_order.
 func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsProfileParams) (SettingsProfile, error) {
 	row := q.db.QueryRow(ctx, updateSettingsProfile,
 		arg.ID,
@@ -26370,6 +28191,7 @@ func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsP
 		arg.AutoComplete,
 		arg.TmLookupOrder,
 		arg.InlineHtml,
+		arg.LinguistTerms,
 	)
 	var i SettingsProfile
 	err := row.Scan(
@@ -26389,6 +28211,9 @@ func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsP
 		&i.MtRouterID,
 		&i.TmLookupOrder,
 		&i.InlineHtml,
+		&i.WorkflowEdited,
+		&i.SegmentationProfileID,
+		&i.LinguistTerms,
 	)
 	return i, err
 }
@@ -27659,7 +29484,7 @@ func (q *Queries) UpsertQAResults(ctx context.Context, arg UpsertQAResultsParams
 const upsertQARule = `-- name: UpsertQARule :one
 INSERT INTO qa_rules (profile_id, check_type, enabled, severity, config)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (profile_id, check_type)
+ON CONFLICT (profile_id, check_type) WHERE check_type <> 'regex'
 DO UPDATE SET enabled = EXCLUDED.enabled, severity = EXCLUDED.severity, config = EXCLUDED.config
 RETURNING id, profile_id, check_type, enabled, severity, config
 `
@@ -27672,6 +29497,8 @@ type UpsertQARuleParams struct {
 	Config    []byte `json:"config"`
 }
 
+// Built-in check types only: a regex rule has no natural key and is written by
+// CreateQARegexRule / UpdateQARegexRule.
 func (q *Queries) UpsertQARule(ctx context.Context, arg UpsertQARuleParams) (QaRule, error) {
 	row := q.db.QueryRow(ctx, upsertQARule,
 		arg.ProfileID,

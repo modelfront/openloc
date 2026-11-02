@@ -60,6 +60,17 @@ type Config struct {
 	// recipient set — no super-admin role/table.
 	PlatformAdminEmails []string
 
+	// Issue notifications to the platform operators. When Slack is set up,
+	// each new issue is posted to one channel and every reply and internal
+	// note goes in its thread. The operator an issue is assigned to gets an email when
+	// someone else acts on it; no other issue email goes to the operators.
+	//   SlackBotToken     — SLACK_BOT_TOKEN. A Slack app's bot token (xoxb-…)
+	//                       with the chat:write scope.
+	//   IssueSlackChannel — ISSUE_SLACK_CHANNEL. The channel's id; the bot
+	//                       must be a member. Set both or neither.
+	SlackBotToken     string
+	IssueSlackChannel string
+
 	// Parser sidecar (Python service for DOCX/PDF)
 	ParserSidecarURL string // PARSER_SIDECAR_URL — default http://localhost:5200
 
@@ -219,6 +230,9 @@ func Load() Config {
 
 		PlatformAdminEmails: parseCSVLower("PLATFORM_ADMIN_EMAILS"),
 
+		SlackBotToken:     strings.TrimSpace(envOr("SLACK_BOT_TOKEN", "")),
+		IssueSlackChannel: strings.TrimSpace(envOr("ISSUE_SLACK_CHANNEL", "")),
+
 		ParserSidecarURL: envOr("PARSER_SIDECAR_URL", "http://localhost:9007"),
 		SpellcheckLTURL:  envOr("SPELLCHECK_LT_URL", "http://localhost:9008/v2/check"),
 		StaticDir:        envOr("STATIC_DIR", ""),
@@ -283,6 +297,9 @@ func (c Config) Validate() error {
 	}
 	if c.TrustedProxyHops < 0 {
 		return errors.New("TRUSTED_PROXY_HOPS must be 0 or more")
+	}
+	if (c.SlackBotToken == "") != (c.IssueSlackChannel == "") {
+		return errors.New("SLACK_BOT_TOKEN and ISSUE_SLACK_CHANNEL must be set together")
 	}
 	if c.Environment != "development" {
 		if err := validateJWTSecret(c.JWTSecret); err != nil {

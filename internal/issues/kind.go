@@ -17,12 +17,12 @@ type KindChange struct {
 // does: the reporter, or a manager who sees the issue. It runs the support
 // team's triage, recorded from the reporter's side: the kind change is an
 // entry the org sees, the severity it sets or clears an internal one.
-// Nobody is notified.
+// Only the assignee is notified, by email.
 func (s *Service) ChangeKind(ctx context.Context, m Member, id int64, in KindChange) (IssueDetail, error) {
 	if kindLabels[in.Kind] == "" {
 		return IssueDetail{}, clientError("Pick a kind: Bug, Enhancement or Feature request.")
 	}
-	_, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
+	issue, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		issue, err := q.LockMemberIssue(ctx, db.LockMemberIssueParams{
 			ID: id, TenantID: m.TenantID, ViewerID: m.UserID, AllMembers: m.seesAllMembers(),
 		})
@@ -44,5 +44,7 @@ func (s *Service) ChangeKind(ctx context.Context, m Member, id int64, in KindCha
 		return IssueDetail{}, err
 	}
 	logging.Info(ctx, "changed an issue's kind", "issue-kind-changed", logging.IssueID(id))
+	s.refreshSlack(ctx, id)
+	s.emailAssignee(ctx, issue, m.UserID, assigneeNotice{Kind: noticeKind, Value: kindLabels[in.Kind]})
 	return s.Get(ctx, m, id)
 }

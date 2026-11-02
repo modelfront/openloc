@@ -250,8 +250,11 @@ const FIELD_LABELS: Record<string, string> = {
   mt_on_upload: 'MT on upload',
   tm_on_upload: 'TM on upload',
   inline_html: 'Strings contain HTML',
+  linguist_terms: 'Linguists can add terms',
   qa_profile_id: 'QA profile ID',
   qa_profile_name: 'QA profile',
+  segmentation_profile_id: 'Segmentation profile ID',
+  segmentation_profile_name: 'Segmentation profile',
   mt_router_id: 'MT router ID',
   mt_router_name: 'MT router',
 }
@@ -268,6 +271,7 @@ export function flatChangeGroups(changes: Record<string, FieldChange>): ChangeGr
     .filter(([field]) => {
       if (field === 'customer_id' && changes['customer_name']) return false
       if (field === 'qa_profile_id' && changes['qa_profile_name']) return false
+      if (field === 'segmentation_profile_id' && changes['segmentation_profile_name']) return false
       if (field === 'mt_router_id' && changes['mt_router_name']) return false
       return true
     })

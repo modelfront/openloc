@@ -1,0 +1,28 @@
+{
+  "id": "builtin:conservative@1",
+  "name": "Conservative",
+  "source_language": "",
+  "description": "Breaks only after . ! ? or : followed by a space and a capital letter, digit or opening bracket or quote. Few, long segments; suits technical documentation.",
+  "rule_set": {
+    "mode": "sentence",
+    "rules": [
+      {
+        "before": "(?:^|\\P{L})\\p{Ll}\\.",
+        "after": "",
+        "break": false
+      },
+      {
+        "before": "(?:^|\\P{L})(?:[Ee][Tt][Cc]|[Ff][Iiİ][Gg]|[Ff][Iiİ][Gg][Ss]|[Aa][Pp][Pp][Rr][Oo][Xx]|[Vv][Ss]|[Cc][Ff]|[Dd][Rr]|[Mm][Rr]|[Mm][Rr][Ss]|[Pp][Rr][Oo][Ff]|[Iiİ][Nn][Cc]|[Ll][Tt][Dd]|[Cc][Hh][Aa][Pp])\\.",
+        "after": "",
+        "break": false
+      },
+      {
+        "before": "[.!?:]",
+        "after": "[\\t\\n\\v\\f\\r\\x{85}\\p{Z}]+[\\p{Lu}\\p{Nd}(\\[{\"'«“‘]",
+        "break": true
+      }
+    ],
+    "abbreviations": [],
+    "number_abbreviations": []
+  }
+}

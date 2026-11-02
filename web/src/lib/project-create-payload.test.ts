@@ -26,6 +26,12 @@ describe('buildProjectCreatePayload', () => {
     expect(p.settings).toMatchObject({ fuzzy_threshold: 0.75, mt_on_upload: true, tm_on_upload: true, qa_profile_id: null })
   })
 
+  it('sends the picked segmentation profile, and none for the server to pick while unpicked', () => {
+    expect(buildProjectCreatePayload(form, { ...DEFAULT_SETTINGS, segmentationProfileId: 12 }).settings?.segmentation_profile_id).toBe(12)
+    expect(buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, segmentationProfileId: 12 }).settings.segmentation_profile_id).toBe(12)
+    expect(buildProjectCreatePayload(form, DEFAULT_SETTINGS).settings).not.toHaveProperty('segmentation_profile_id', expect.anything())
+  })
+
   it('sends an empty form as empty — a draft may have nothing yet', () => {
     const p = buildProjectCreatePayload({ ...form, name: '', sourceLanguage: '', targetLanguages: [], customerId: null, domain: '', templateId: '' }, DEFAULT_SETTINGS)
     expect(p.name).toBe('')
@@ -57,5 +63,29 @@ describe('buildProjectSetupPayload: inline_html', () => {
 
   it('sends true by default', () => {
     expect(buildProjectSetupPayload('', DEFAULT_SETTINGS).settings.inline_html).toBe(true)
+  })
+})
+
+// "Linguists can add terms" picked in the wizard must reach the server.
+describe('buildProjectSetupPayload: linguist_terms', () => {
+  it('sends the picked value', () => {
+    expect(buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, linguistTerms: 'off' }).settings.linguist_terms).toBe('off')
+  })
+
+  it('sends pending by default', () => {
+    expect(buildProjectSetupPayload('', DEFAULT_SETTINGS).settings.linguist_terms).toBe('pending')
+  })
+})
+
+// A router cleared in the wizard must reach the server as null, or a template's
+// router stays on the project.
+describe('buildProjectSetupPayload: mt_router_id', () => {
+  it('sends null when the router is cleared', () => {
+    const p = buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, mtRouterId: null })
+    expect(p.settings).toHaveProperty('mt_router_id', null)
+  })
+
+  it('sends the picked router', () => {
+    expect(buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, mtRouterId: 7 }).settings.mt_router_id).toBe(7)
   })
 })

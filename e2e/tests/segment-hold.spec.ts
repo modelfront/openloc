@@ -1,5 +1,5 @@
-import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { authHeaders, createIsolatedCATJob, inviteMember, login, segmentEditor, sessionAs } from "./helpers";
+import type { Browser, Page } from "@playwright/test";
+import { authHeaders, createIsolatedCATJob, expect, inviteMember, login, segmentEditor, sessionAs, test } from "./helpers";
 
 // Segment holds with two people in one job: a segment one user has open is
 // read-only for the other, with the holder's name, until the holder moves on;
@@ -23,11 +23,8 @@ const isHoldStream = (url: string) => /\/api\/jobs\/\d+\/holds\/stream$/.test(pa
 let ownerHeaders: Record<string, string> = {};
 let projectId: number | null = null;
 let memberId: number | null = null;
-let memberContext: BrowserContext | null = null;
 
 test.afterEach(async ({ request }) => {
-  await memberContext?.close().catch(() => {});
-  memberContext = null;
   if (projectId) await request.delete(`${API}/api/projects/${projectId}`, { headers: ownerHeaders }).catch(() => {});
   if (memberId) await request.delete(`${API}/api/members/${memberId}`, { headers: ownerHeaders }).catch(() => {});
   projectId = null;
@@ -49,9 +46,7 @@ async function signInOwner(page: Page): Promise<string> {
 // data-hold-stream="live" when the stream says `connected`, and only then
 // slows its hold poll to 30 s.
 async function openEditorAs(browser: Browser, email: string, job: { projectId: number; jobId: number }): Promise<Page> {
-  const session = await sessionAs(browser, email);
-  memberContext = session.context;
-  const page = session.page;
+  const { page } = await sessionAs(browser, email);
   const [stream] = await Promise.all([
     page.waitForResponse(r => isHoldStream(r.url()), { timeout: 10_000 }),
     page.goto(`/projects/${job.projectId}/jobs/${job.jobId}/edit`),

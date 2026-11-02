@@ -60,6 +60,8 @@ export const TranslationHistoryKindCleared: TranslationHistoryKind = "cleared";
 export const TranslationHistoryKindApproved: TranslationHistoryKind = "approved";
 export const TranslationHistoryKindAutoApproved: TranslationHistoryKind = "auto_approved";
 export const TranslationHistoryKindUnconfirmed: TranslationHistoryKind = "unconfirmed";
+export const TranslationHistoryKindSplit: TranslationHistoryKind = "split";
+export const TranslationHistoryKindJoined: TranslationHistoryKind = "joined";
 export interface NullTranslationHistoryKind {
   translation_history_kind: TranslationHistoryKind;
   valid: boolean; // Valid is true if TranslationHistoryKind is not NULL
@@ -408,6 +410,18 @@ export interface IssueComment {
   field?: string;
   from_value?: string;
   to_value?: string;
+}
+export interface IssueSlackBlank {
+  issue_id: number /* int64 */;
+  channel: string;
+  ts: string;
+  queued_at: string;
+}
+export interface IssueSlackMessage {
+  issue_id: number /* int64 */;
+  channel: string;
+  ts: string;
+  created_at: string;
 }
 export interface Job {
   id: number /* int64 */;
@@ -773,12 +787,52 @@ export interface Segment {
   created_at: string;
   word_count: number /* int32 */;
   source_rich_text?: string;
+  target_language?: string;
+  sub_position: number /* int32 */;
+  export_key?: string;
+  gap_before?: string;
+  chip_base: number /* int32 */;
 }
 export interface SegmentComment {
   id: number /* int64 */;
   translation_id: number /* int64 */;
   user_id?: number /* int64 */;
   content: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string;
+  from_segment?: string;
+}
+export interface SegmentationBuiltinProfile {
+  id: number /* int64 */;
+  builtin_key: string;
+  name: string;
+  source_language: string;
+  description: string;
+  definition: string /* []byte */;
+  created_at: string;
+}
+export interface SegmentationProfile {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  name: string;
+  definition: string /* []byte */;
+  based_on?: number /* int64 */;
+  created_by?: number /* int64 */;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string;
+  source_languages: string[];
+}
+export interface SegmentationProfileCatalog {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
+  builtin_key?: string;
+  name: string;
+  source_languages: string[];
+  description: string;
+  definition: string /* []byte */;
+  based_on?: number /* int64 */;
   created_at: string;
   updated_at: string;
   deleted_at: string;
@@ -800,6 +854,9 @@ export interface SettingsProfile {
   mt_router_id?: number /* int64 */;
   tm_lookup_order: string;
   inline_html: boolean;
+  workflow_edited: boolean;
+  segmentation_profile_id?: number /* int64 */;
+  linguist_terms: string;
 }
 export interface SettingsTerminologyAssignment {
   id: number /* int64 */;
@@ -1324,7 +1381,13 @@ export interface ClaimJobPipelineRow {
   status: string;
   current_step: string;
   error_message?: string;
+  translated_count?: number /* int32 */;
+  total_count?: number /* int32 */;
   updated_at: string;
+}
+export interface ClearSegmentationProfileFromProjectsParams {
+  tenant_id: number /* int64 */;
+  id: number /* int64 */;
 }
 export interface ClearTranslationParams {
   id: number /* int64 */;
@@ -1404,6 +1467,14 @@ export interface CountHeldClearableByProjectParams {
   actor_id?: number /* int64 */;
   scope_all: boolean;
 }
+export interface CountJobRowsInsideParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  tenant_id: number /* int64 */;
+  from_position: number /* int32 */;
+  to_position: number /* int32 */;
+  row_cap: number /* int32 */;
+}
 export interface CountJobSegmentsPageParams {
   target_language: string;
   file_id: number /* int64 */;
@@ -1471,13 +1542,13 @@ export interface CountQAIssuesByJobRow {
   bucket: string;
   count: number /* int32 */;
 }
-export interface CountRecentIssuesByReporterParams {
-  reporter_id: number /* int64 */;
-  since: string;
+export interface CountSegmentationProfileUsesParams {
+  tenant_id: number /* int64 */;
+  id?: number /* int64 */;
 }
-export interface CountRecentMemberCommentsParams {
-  author_id?: number /* int64 */;
-  since: string;
+export interface CountSegmentationProfileUsesRow {
+  projects: number /* int64 */;
+  templates: number /* int64 */;
 }
 export interface CountStepRefsForAIRouterParams {
   router_id?: number /* int64 */;
@@ -1674,6 +1745,7 @@ export interface CreateFileParams {
   segment_count: number /* int32 */;
   inline_html?: boolean;
   xlsx_layout: string /* []byte */;
+  segmentation: string /* []byte */;
 }
 export interface CreateInviteParams {
   tenant_id: number /* int64 */;
@@ -1739,6 +1811,19 @@ export interface CreateLabelDefinitionParams {
 export interface CreateLabelValueParams {
   label_definition_id: number /* int64 */;
   value: string;
+}
+export interface CreateLanguageSegmentParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  source_text: string;
+  source_rich_text?: string;
+  export_key: string;
+  position: number /* int32 */;
+  sub_position: number /* int32 */;
+  context: string;
+  word_count: number /* int32 */;
+  gap_before?: string;
+  chip_base: number /* int32 */;
 }
 export interface CreateMTEngineParams {
   name: string;
@@ -1840,12 +1925,26 @@ export interface CreateQAProfileParams {
   name: string;
   description: string;
 }
+export interface CreateQARegexRuleParams {
+  profile_id: number /* int64 */;
+  enabled: boolean;
+  severity: string;
+  config: string /* []byte */;
+}
 export interface CreateSegmentParams {
   file_id: number /* int64 */;
   source_text: string;
   segment_key?: string;
   position: number /* int32 */;
   context: string;
+}
+export interface CreateSegmentationProfileParams {
+  tenant_id: number /* int64 */;
+  name: string;
+  source_languages: string[];
+  definition: string /* []byte */;
+  based_on?: number /* int64 */;
+  created_by?: number /* int64 */;
 }
 export interface CreateSettingsProfileParams {
   tenant_id: number /* int64 */;
@@ -2014,6 +2113,10 @@ export interface DeleteInviteParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
+export interface DeleteJobLanguageSegmentsParams {
+  file_id: number /* int64 */;
+  target_language?: string;
+}
 export interface DeleteJobRunOutcomeParams {
   job_id: number /* int64 */;
   tenant_id: number /* int64 */;
@@ -2036,6 +2139,11 @@ export interface DeleteProjectLabelParams {
 }
 export interface DeleteProjectLabelsForValueParams {
   label_value_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface DeleteQARegexRuleParams {
+  id: number /* int64 */;
+  profile_id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
 export interface DeleteQAResultsForJobParams {
@@ -2207,6 +2315,9 @@ export interface FuzzyLookupTMRow {
   source_rich_text?: string;
   target_rich_text?: string;
   created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
   prev_source_hash?: string;
   next_source_hash?: string;
   score: number /* float32 */;
@@ -2378,6 +2489,7 @@ export interface GetCurrentStepForJobRow {
   role_required: string;
   step_type: string;
   is_ai_step: boolean;
+  last_clear_step_order: number /* int32 */;
   assignee_name?: string;
   assignee_email?: string;
 }
@@ -2422,6 +2534,10 @@ export interface GetDeletedProjectRow {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
   settings_profile_id: number /* int64 */;
+}
+export interface GetEditorSourceLanguageParams {
+  tenant_id: number /* int64 */;
+  file_id: number /* int64 */;
 }
 export interface GetExtensionParams {
   tenant_id: number /* int64 */;
@@ -2507,6 +2623,10 @@ export interface GetIssueForPlatformRow {
   duplicate_visible: boolean;
   reporter_role: string;
 }
+export interface GetIssueSlackMessageRow {
+  channel: string;
+  ts: string;
+}
 export interface GetJobAnalysisParams {
   file_id: number /* int64 */;
   target_language: string;
@@ -2559,6 +2679,18 @@ export interface GetJobRunStateRow {
 export interface GetJobTenantParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface GetJobTermContextParams {
+  job_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface GetJobTermContextRow {
+  job_id: number /* int64 */;
+  project_id: number /* int64 */;
+  settings_profile_id: number /* int64 */;
+  source_language: string;
+  target_language: string;
+  linguist_terms: string;
 }
 export interface GetJobTimingParams {
   job_id: number /* int64 */;
@@ -2807,6 +2939,32 @@ export interface GetProjectForProfileRow {
   target_languages: string[];
   deadline: string;
 }
+export interface GetProjectListRowParams {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface GetProjectListRowRow {
+  id: number /* int64 */;
+  name: string;
+  description: string;
+  source_language: string;
+  target_languages: string[];
+  created_at: string;
+  updated_at: string;
+  template_id?: number /* int64 */;
+  tenant_id: number /* int64 */;
+  deadline: string;
+  settings_profile_id: number /* int64 */;
+  status: ProjectStatus;
+  created_by?: number /* int64 */;
+  customer_id?: number /* int64 */;
+  client?: string;
+  domain?: string;
+  deleted_at: string;
+  created_by_name: string;
+  customer_name: string;
+  customer_value_id?: number /* int64 */;
+}
 export interface GetProjectRepetitionsRow {
   file_id: number /* int64 */;
   target_language: string;
@@ -2861,6 +3019,10 @@ export interface GetSegmentInFileTenantParams {
   file_id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
+export interface GetSegmentNeighborSourcesParams {
+  target_language: string;
+  segment_id: number /* int64 */;
+}
 export interface GetSegmentNeighborSourcesRow {
   prev_source: string;
   next_source: string;
@@ -2873,6 +3035,19 @@ export interface GetSegmentRichTextForTranslationParams {
 export interface GetSegmentTenantParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface GetSegmentationProfileParams {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
+}
+export interface GetSegmentationProfileForImportParams {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
+}
+export interface GetSharedSegmentByKeyParams {
+  file_id: number /* int64 */;
+  segment_key?: string;
+  position: number /* int32 */;
 }
 export interface GetStepDefinitionParams {
   id: number /* int64 */;
@@ -2994,6 +3169,7 @@ export interface GetTaskEditStateRow {
   last_completed_order: number /* int32 */;
   last_completed_name: string;
   last_completed_type: string;
+  last_clear_step_order: number /* int32 */;
 }
 export interface GetTaskEditStateForTranslationParams {
   translation_id: number /* int64 */;
@@ -3016,6 +3192,7 @@ export interface GetTaskEditStateForTranslationRow {
   last_completed_order: number /* int32 */;
   last_completed_name: string;
   last_completed_type: string;
+  last_clear_step_order: number /* int32 */;
 }
 export interface GetTemplateParams {
   id: number /* int64 */;
@@ -3208,6 +3385,11 @@ export interface InsertHumanHistoryBatchParams {
   rich_texts: string[];
   has_rich: boolean[];
   edit_distances: number /* int32 */[];
+}
+export interface InsertIssueSlackMessageParams {
+  issue_id: number /* int64 */;
+  channel: string;
+  ts: string;
 }
 export interface InsertJobAnalysisParams {
   analysis_id: number /* int64 */;
@@ -3413,6 +3595,7 @@ export interface ListActiveStepsForProjectRow {
   assignee_name?: string;
   is_ai_step: boolean;
   is_last_step: boolean;
+  last_clear_step_order: number /* int32 */;
 }
 export interface ListAllForBilingualExportParams {
   target_language: string;
@@ -3427,8 +3610,8 @@ export interface ListAllForBilingualExportRow {
   position: number /* int32 */;
   active_text?: string;
   active_rich_text?: string;
-  status: NullTranslationStatus;
-  locked?: boolean;
+  status: TranslationStatus;
+  locked: boolean;
   origin: NullTranslationOrigin;
   tm_match_percent?: number /* int16 */;
   match_source_text?: string;
@@ -3452,6 +3635,9 @@ export interface ListApprovedForExportRow {
   active_rich_text?: string;
   status: TranslationStatus;
   source_rich_text?: string;
+  export_key?: string;
+  gap_before?: string;
+  chip_base: number /* int32 */;
 }
 export interface ListApprovedForTMParams {
   file_id: number /* int64 */;
@@ -3501,6 +3687,7 @@ export interface ListCommentsByTranslationRow {
   updated_at: string;
   author_name?: string;
   author_email?: string;
+  from_segment?: string;
 }
 export interface ListCommentsByTranslationIDsRow {
   translation_id: number /* int64 */;
@@ -3583,6 +3770,90 @@ export interface ListDemoWorkspaceItemsRow {
   entity_id: number /* int64 */;
   created_at: string;
 }
+export interface ListEditorIndexParams {
+  target_language: string;
+  file_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface ListEditorIndexRow {
+  segment_id: number /* int64 */;
+  position: number /* int32 */;
+  sub_position: number /* int32 */;
+  word_count: number /* int32 */;
+  source_text: string;
+  translation_id: number /* int64 */;
+  status: TranslationStatus;
+  has_target: boolean;
+  step_edited: boolean;
+  predict_outcome: NullPredictOutcome;
+  origin: NullTranslationOrigin;
+  tm_match_percent?: number /* int16 */;
+  locked: boolean;
+  in_flight_phase: NullTranslationPhase;
+  confirmed_via: string;
+  qe_note_head: string;
+  unit_key: string;
+  file_format: FileFormat;
+}
+export interface ListEditorPreviousStepTextsParams {
+  translation_ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+}
+export interface ListEditorPreviousStepTextsRow {
+  translation_id: number /* int64 */;
+  text: string;
+}
+export interface ListEditorRefSourcesParams {
+  target_language: string;
+  file_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface ListEditorSegmentsByIDsParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  tenant_id: number /* int64 */;
+  ids: number /* int64 */[];
+}
+export interface ListEditorSegmentsByKeysParams {
+  target_language: string;
+  file_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  keys: string[];
+}
+export interface ListEditorSegmentsByKeysRow {
+  segment_id: number /* int64 */;
+  segment_key: string;
+  source_text: string;
+  target_text: string;
+}
+export interface ListEditorTextsParams {
+  target_language: string;
+  file_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface ListEditorTextsRow {
+  segment_id: number /* int64 */;
+  source_text: string;
+  target_text: string;
+}
+export interface ListEditorTranslationsBySegmentsParams {
+  segment_ids: number /* int64 */[];
+  target_language: string;
+}
+export interface ListEditorWordCandidatesParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  tenant_id: number /* int64 */;
+  word: string;
+}
+export interface ListEditorWordCandidatesRow {
+  id: number /* int64 */;
+  segment_id: number /* int64 */;
+  locked: boolean;
+  active_text?: string;
+  active_rich_text?: string;
+  updated_at: string;
+}
 export interface ListFailedJobsParams {
   tenant_id: number /* int64 */;
   row_limit: number /* int32 */;
@@ -3649,107 +3920,70 @@ export interface ListIssueOrgsForPlatformRow {
   id: number /* int64 */;
   name: string;
 }
-export interface ListIssuesForPlatformNewestParams {
-  statuses: string[];
-  kinds: string[];
-  areas: string[];
-  severities: string[];
-  tenant_ids: number /* int64 */[];
-  priorities: string[];
-  tags: string[];
-  assignee_ids: number /* int64 */[];
-  unassigned: boolean;
-  verifications: string[];
-  search?: string;
-  cursor_at: string;
-  cursor_id: number /* int64 */;
-  row_limit: number /* int32 */;
-}
-export interface ListIssuesForPlatformNewestRow {
+export interface ListIssueReportersForPlatformRow {
   id: number /* int64 */;
-  tenant_id: number /* int64 */;
-  reporter_id: number /* int64 */;
-  kind: string;
-  severity?: string;
-  area: string;
-  title: string;
-  description: string;
-  status: string;
-  context: string /* []byte */;
-  last_activity_by: string;
-  created_at: string;
-  updated_at: string;
-  resolved_at: string;
-  deleted_at: string;
-  assignee_id?: number /* int64 */;
-  priority?: string;
-  tags: string[];
-  duplicate_of_id?: number /* int64 */;
-  confirmed_at: string;
-  import_key?: string;
-  chat_verification?: string;
-  chat_verification_note?: string;
-  chat_verification_token_id?: string;
-  org_name: string;
-  reporter_name: string;
-  reporter_email: string;
-  assignee_name?: string;
-  duplicate_id?: number /* int64 */;
-  duplicate_title: string;
-  duplicate_status?: string;
-  duplicate_visible: boolean;
-  reporter_role: string;
+  name: string;
+  email: string;
+  org_names: string;
 }
-export interface ListIssuesForPlatformOldestParams {
-  statuses: string[];
-  kinds: string[];
-  areas: string[];
-  severities: string[];
-  tenant_ids: number /* int64 */[];
-  priorities: string[];
-  tags: string[];
-  assignee_ids: number /* int64 */[];
-  unassigned: boolean;
-  verifications: string[];
-  search?: string;
-  cursor_at: string;
-  cursor_id: number /* int64 */;
-  row_limit: number /* int32 */;
+export interface ListIssueSlackBlanksParams {
+  after_id: number /* int64 */;
+  batch_size: number /* int32 */;
 }
-export interface ListIssuesForPlatformOldestRow {
-  id: number /* int64 */;
+export interface ListIssueSlackBlanksRow {
+  issue_id: number /* int64 */;
+  channel: string;
+  ts: string;
+}
+export interface ListJobEditRowsAtParams {
+  file_id: number /* int64 */;
+  target_language: string;
   tenant_id: number /* int64 */;
-  reporter_id: number /* int64 */;
-  kind: string;
-  severity?: string;
-  area: string;
-  title: string;
-  description: string;
-  status: string;
-  context: string /* []byte */;
-  last_activity_by: string;
-  created_at: string;
+  position: number /* int32 */;
+}
+export interface ListJobEditRowsAtRow {
+  segment_id: number /* int64 */;
+  segment_language?: string;
+  source_text: string;
+  source_rich_text?: string;
+  segment_key?: string;
+  export_key?: string;
+  position: number /* int32 */;
+  sub_position: number /* int32 */;
+  gap_before?: string;
+  chip_base: number /* int32 */;
+  context: string;
+  translation_id: number /* int64 */;
+  locked: boolean;
+  active_text?: string;
+  active_rich_text?: string;
+  in_flight_phase: NullTranslationPhase;
   updated_at: string;
-  resolved_at: string;
-  deleted_at: string;
-  assignee_id?: number /* int64 */;
-  priority?: string;
-  tags: string[];
-  duplicate_of_id?: number /* int64 */;
-  confirmed_at: string;
-  import_key?: string;
-  chat_verification?: string;
-  chat_verification_note?: string;
-  chat_verification_token_id?: string;
-  org_name: string;
-  reporter_name: string;
-  reporter_email: string;
-  assignee_name?: string;
-  duplicate_id?: number /* int64 */;
-  duplicate_title: string;
-  duplicate_status?: string;
-  duplicate_visible: boolean;
-  reporter_role: string;
+}
+export interface ListJobEditRowsByTranslationsParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  tenant_id: number /* int64 */;
+  translation_ids: number /* int64 */[];
+}
+export interface ListJobEditRowsByTranslationsRow {
+  segment_id: number /* int64 */;
+  segment_language?: string;
+  source_text: string;
+  source_rich_text?: string;
+  segment_key?: string;
+  export_key?: string;
+  position: number /* int32 */;
+  sub_position: number /* int32 */;
+  gap_before?: string;
+  chip_base: number /* int32 */;
+  context: string;
+  translation_id: number /* int64 */;
+  locked: boolean;
+  active_text?: string;
+  active_rich_text?: string;
+  in_flight_phase: NullTranslationPhase;
+  updated_at: string;
 }
 export interface ListJobHoldsParams {
   job_id: number /* int64 */;
@@ -3798,6 +4032,7 @@ export interface ListJobSegmentsPageRow {
   translation_id: number /* int64 */;
   segment_id: number /* int64 */;
   position: number /* int32 */;
+  sub_position: number /* int32 */;
   source_text: string;
   target_text?: string;
   status: TranslationStatus;
@@ -3880,6 +4115,30 @@ export interface ListJobsByIDsForProjectRow {
   file_name: string;
 }
 export interface ListJobsByProjectRow {
+  id: number /* int64 */;
+  file_id: number /* int64 */;
+  target_language: string;
+  word_count: number /* int32 */;
+  status: string;
+  current_step: string;
+  created_at: string;
+  updated_at: string;
+  error_message?: string;
+  translated_count?: number /* int32 */;
+  total_count?: number /* int32 */;
+  stop_requested_at: string;
+  mt_skip_reason?: string;
+  file_name: string;
+  file_format: FileFormat;
+  file_inline_html: boolean;
+  segment_count: number /* int32 */;
+  file_created_at: string;
+}
+export interface ListJobsByProjectIDsParams {
+  project_id: number /* int64 */;
+  job_ids: number /* int64 */[];
+}
+export interface ListJobsByProjectIDsRow {
   id: number /* int64 */;
   file_id: number /* int64 */;
   target_language: string;
@@ -4126,102 +4385,6 @@ export interface ListMemberIssueCommentsRow {
   created_at: string;
   author_name: string;
 }
-export interface ListMemberIssuesNewestParams {
-  all_members: boolean;
-  viewer_id: number /* int64 */;
-  tenant_id: number /* int64 */;
-  statuses: string[];
-  kinds: string[];
-  areas: string[];
-  severities: string[];
-  search?: string;
-  cursor_at: string;
-  cursor_id: number /* int64 */;
-  row_limit: number /* int32 */;
-}
-export interface ListMemberIssuesNewestRow {
-  id: number /* int64 */;
-  tenant_id: number /* int64 */;
-  reporter_id: number /* int64 */;
-  kind: string;
-  severity?: string;
-  area: string;
-  title: string;
-  description: string;
-  status: string;
-  context: string /* []byte */;
-  last_activity_by: string;
-  created_at: string;
-  updated_at: string;
-  resolved_at: string;
-  deleted_at: string;
-  assignee_id?: number /* int64 */;
-  priority?: string;
-  tags: string[];
-  duplicate_of_id?: number /* int64 */;
-  confirmed_at: string;
-  import_key?: string;
-  chat_verification?: string;
-  chat_verification_note?: string;
-  chat_verification_token_id?: string;
-  org_name: string;
-  reporter_name: string;
-  reporter_email: string;
-  assignee_name?: string;
-  duplicate_id?: number /* int64 */;
-  duplicate_title: string;
-  duplicate_status?: string;
-  duplicate_visible: boolean;
-  reporter_role: string;
-}
-export interface ListMemberIssuesOldestParams {
-  all_members: boolean;
-  viewer_id: number /* int64 */;
-  tenant_id: number /* int64 */;
-  statuses: string[];
-  kinds: string[];
-  areas: string[];
-  severities: string[];
-  search?: string;
-  cursor_at: string;
-  cursor_id: number /* int64 */;
-  row_limit: number /* int32 */;
-}
-export interface ListMemberIssuesOldestRow {
-  id: number /* int64 */;
-  tenant_id: number /* int64 */;
-  reporter_id: number /* int64 */;
-  kind: string;
-  severity?: string;
-  area: string;
-  title: string;
-  description: string;
-  status: string;
-  context: string /* []byte */;
-  last_activity_by: string;
-  created_at: string;
-  updated_at: string;
-  resolved_at: string;
-  deleted_at: string;
-  assignee_id?: number /* int64 */;
-  priority?: string;
-  tags: string[];
-  duplicate_of_id?: number /* int64 */;
-  confirmed_at: string;
-  import_key?: string;
-  chat_verification?: string;
-  chat_verification_note?: string;
-  chat_verification_token_id?: string;
-  org_name: string;
-  reporter_name: string;
-  reporter_email: string;
-  assignee_name?: string;
-  duplicate_id?: number /* int64 */;
-  duplicate_title: string;
-  duplicate_status?: string;
-  duplicate_visible: boolean;
-  reporter_role: string;
-}
 export interface ListMembersByTenantParams {
   tenant_id: number /* int64 */;
   include_inactive: boolean;
@@ -4440,19 +4603,48 @@ export interface ListQAResultsForTranslationRow {
   ignored_at: string;
   ignored_by_name?: string;
 }
+export interface ListReachedStepsForProfileParams {
+  settings_profile_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface ListReachedStepsForProfileRow {
+  workflow_step_id: number /* int64 */;
+  jobs: number /* int32 */;
+}
+export interface ListSegmentNeighborSourcesByIDsParams {
+  segment_ids: number /* int64 */[];
+  target_languages: string[];
+}
 export interface ListSegmentNeighborSourcesByIDsRow {
   id: number /* int64 */;
+  target_language: string;
   prev_source: string;
   next_source: string;
+}
+export interface ListSegmentSourcesByFileParams {
+  target_language: string;
+  file_id: number /* int64 */;
 }
 export interface ListSegmentSourcesByFileRow {
   id: number /* int64 */;
   position: number /* int32 */;
   source_text: string;
 }
+export interface ListSegmentationProfileTemplateLanguagesParams {
+  tenant_id: number /* int64 */;
+  id?: number /* int64 */;
+}
+export interface ListSegmentationProfilesPageParams {
+  tenant_id?: number /* int64 */;
+  cursor: number /* int64 */;
+  source_language: string;
+  base_language: string;
+  lim: number /* int32 */;
+}
 export interface ListSegmentsByFileTenantParams {
   file_id: number /* int64 */;
   tenant_id: number /* int64 */;
+  row_limit: number /* int32 */;
 }
 export interface ListSettingsTermsForQAParams {
   settings_profile_id: number /* int64 */;
@@ -4660,6 +4852,10 @@ export interface ListTemplatesFilteredParams {
   q?: string;
   lim: number /* int32 */;
 }
+export interface ListTenantFileIDsInParams {
+  ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+}
 export interface ListTenantProjectIDsPageParams {
   tenant_id: number /* int64 */;
   after_id: number /* int64 */;
@@ -4758,11 +4954,13 @@ export interface ListTranslationsByFileTenantParams {
   file_id: number /* int64 */;
   target_language: string;
   tenant_id: number /* int64 */;
+  row_limit: number /* int32 */;
 }
 export interface ListTranslationsForQAPageParams {
   target_language: string;
   file_id: number /* int64 */;
   after_position: number /* int32 */;
+  after_sub_position: number /* int32 */;
   after_segment_id: number /* int64 */;
   page_size: number /* int32 */;
 }
@@ -4770,6 +4968,7 @@ export interface ListTranslationsForQAPageRow {
   translation_id: number /* int64 */;
   segment_id: number /* int64 */;
   position: number /* int32 */;
+  sub_position: number /* int32 */;
   source_text: string;
   target_text: string;
   source_rich_text: string;
@@ -4906,6 +5105,18 @@ export interface ListWorkflowsUsingStepDefinitionRow {
   id: number /* int64 */;
   name: string;
 }
+export interface ListWritableTermBasesForPairParams {
+  tenant_id: number /* int64 */;
+  settings_profile_id: number /* int64 */;
+  source_language: string;
+  target_language: string;
+}
+export interface ListWritableTermBasesForPairRow {
+  id: number /* int64 */;
+  name: string;
+  source_language: string;
+  priority: number /* int32 */;
+}
 export interface LockApproveTranslationsParams {
   confirmed_via: string;
   file_id: number /* int64 */;
@@ -4946,6 +5157,11 @@ export interface LockProfileJobsForWriteParams {
 export interface LockProjectJobsForWriteParams {
   project_id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface LockRowForJoinParams {
+  id: number /* int64 */;
+  expected_updated_at: string;
+  actor_id: number /* int64 */;
 }
 export interface LockStepDefinitionParams {
   id: number /* int64 */;
@@ -5000,6 +5216,7 @@ export interface LookupSettingsTermsByTokensRow {
   source_status: string;
   notes: string;
   domain: string;
+  definition: string;
   mt_translation: string;
   term_base_id: number /* int64 */;
   term_base_name: string;
@@ -5074,11 +5291,29 @@ export interface MoveDashboardChartParams {
   tenant_id: number /* int64 */;
   user_id?: number /* int64 */;
 }
+export interface MoveEditedTranslationParams {
+  segment_id: number /* int64 */;
+  active_text?: string;
+  active_rich_text?: string;
+  actor_id?: number /* int64 */;
+  id: number /* int64 */;
+  expected_updated_at: string;
+}
+export interface MoveSegmentCommentsParams {
+  to_translation_id: number /* int64 */;
+  from_segment: string;
+  from_translation_id: number /* int64 */;
+}
 export interface MoveTabHoldParams {
   tenant_id: number /* int64 */;
   user_id: number /* int64 */;
   tab_id: string;
   translation_id: number /* int64 */;
+}
+export interface MoveTranslationHistoryParams {
+  to_translation_id: number /* int64 */;
+  from_segment: string;
+  from_translation_id: number /* int64 */;
 }
 export interface PickTourDashboardRow {
   dashboard_id: number /* int64 */;
@@ -5196,6 +5431,11 @@ export interface RenameTMCollectionParams {
   name: string;
   tenant_id: number /* int64 */;
 }
+export interface RenumberLanguageRowsParams {
+  file_id: number /* int64 */;
+  target_language: string;
+  position: number /* int32 */;
+}
 export interface ReorderDashboardParams {
   position: number /* int32 */;
   id: number /* int64 */;
@@ -5213,6 +5453,15 @@ export interface RepointDuplicatesParams {
   original_id: number /* int64 */;
   id: number /* int64 */;
 }
+export interface ReporterHasIssueParams {
+  tenant_id: number /* int64 */;
+  reporter_id: number /* int64 */;
+}
+export interface ReseedWaitingStepAssignmentsParams {
+  assigned_to?: number /* int64 */;
+  workflow_step_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
 export interface ResendInviteParams {
   new_token: string;
   expires_at: string;
@@ -5229,8 +5478,15 @@ export interface RestoreJobPipelineStateParams {
   status: string;
   current_step: string;
   error_message?: string;
+  translated_count?: number /* int32 */;
+  total_count?: number /* int32 */;
   updated_at: string;
   claim_step: string;
+}
+export interface RestoreJobProgressParams {
+  translated_count?: number /* int32 */;
+  total_count?: number /* int32 */;
+  id: number /* int64 */;
 }
 export interface RestoreStepStatusesParams {
   assignment_id: number /* int64 */;
@@ -5389,13 +5645,18 @@ export interface SetSettingsProfileMtOnUploadParams {
   id: number /* int64 */;
   mt_on_upload: boolean;
 }
+export interface SetSettingsProfileSegmentationProfileParams {
+  id: number /* int64 */;
+  segmentation_profile_id?: number /* int64 */;
+}
 export interface SetSettingsProfileTMProfileParams {
   id: number /* int64 */;
   tm_profile_id?: number /* int64 */;
 }
 export interface SetSettingsProfileWorkflowParams {
-  id: number /* int64 */;
   workflow_id?: number /* int64 */;
+  workflow_edited: boolean;
+  id: number /* int64 */;
 }
 export interface SetTemplateLabelParams {
   template_id: number /* int64 */;
@@ -5494,6 +5755,10 @@ export interface SoftDeleteMemberIssueParams {
   tenant_id: number /* int64 */;
 }
 export interface SoftDeleteQAProfileParams {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface SoftDeleteSegmentationProfileParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
@@ -5642,6 +5907,11 @@ export interface UpdateFileSegmentCountParams {
   id: number /* int64 */;
   segment_count: number /* int32 */;
 }
+export interface UpdateFileSegmentationParams {
+  segmentation: string /* []byte */;
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
 export interface UpdateFileXLSXLayoutParams {
   xlsx_layout: string /* []byte */;
   id: number /* int64 */;
@@ -5670,9 +5940,9 @@ export interface UpdateJobProgressParams {
   current_step: string;
 }
 export interface UpdateJobStatusParams {
-  id: number /* int64 */;
   status: string;
   current_step: string;
+  id: number /* int64 */;
 }
 export interface UpdateMTEngineParams {
   id: number /* int64 */;
@@ -5727,6 +5997,22 @@ export interface UpdateQAProfileParams {
   description: string;
   tenant_id: number /* int64 */;
 }
+export interface UpdateQARegexRuleParams {
+  enabled: boolean;
+  severity: string;
+  config: string /* []byte */;
+  id: number /* int64 */;
+  profile_id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
+export interface UpdateSegmentationProfileParams {
+  name: string;
+  source_languages: string[];
+  definition: string /* []byte */;
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  expected_updated_at: string;
+}
 export interface UpdateSettingsProfileParams {
   id: number /* int64 */;
   fuzzy_threshold: number /* float32 */;
@@ -5738,6 +6024,7 @@ export interface UpdateSettingsProfileParams {
   auto_complete?: boolean;
   tm_lookup_order?: string;
   inline_html?: boolean;
+  linguist_terms?: string;
 }
 export interface UpdateSettingsWorkflowStepParams {
   id: number /* int64 */;

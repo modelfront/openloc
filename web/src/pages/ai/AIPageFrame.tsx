@@ -2,9 +2,7 @@
 // Prompts tabs. The URL is the state (SubNav), so each tab is a
 // route — /ai, /ai/engines, /ai/prompts — and deep links work.
 import type { ReactNode } from 'react'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { PageContainer } from '@/components/layout/PageContainer'
-import { SubNav } from '@/components/layout/SubNav'
+import { SectionPageFrame } from '@/components/layout/SectionPageFrame'
 
 const AI_TABS = [
   { to: '/ai', label: 'Routers', end: true },
@@ -13,11 +11,5 @@ const AI_TABS = [
 ]
 
 export function AIPageFrame({ children }: { children: ReactNode }) {
-  return (
-    <PageContainer>
-      <PageHeader title="AI" />
-      <SubNav className="mb-4" items={AI_TABS} />
-      {children}
-    </PageContainer>
-  )
+  return <SectionPageFrame title="AI" tabs={AI_TABS}>{children}</SectionPageFrame>
 }

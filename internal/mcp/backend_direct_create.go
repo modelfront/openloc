@@ -56,14 +56,16 @@ func (b *directBackend) CreateProject(ctx context.Context, in CreateProjectIn) (
 	var p db.Project
 	var err error
 	switch {
-	case in.WorkflowID != 0:
+	case in.WorkflowID != 0 || in.SegmentationProfileID != 0:
 		// Same setup path as the REST create: template first, then the
-		// workflow's steps on top.
+		// workflow's steps and the segmentation profile on top.
 		var templateID *int64
 		if in.TemplateID != 0 {
 			templateID = &in.TemplateID
 		}
-		p, err = project.CreateWithSetup(ctx, b.pool, b.q, tenantID, userID, params, templateID, project.SetupConfig{WorkflowID: &in.WorkflowID})
+		p, err = project.CreateWithSetup(ctx, b.pool, b.q, tenantID, userID, params, templateID, project.SetupConfig{
+			WorkflowID: ptr.NilIfZero(in.WorkflowID), SegmentationProfileID: ptr.NilIfZero(in.SegmentationProfileID),
+		})
 	case in.TemplateID != 0:
 		p, err = project.CreateWithTemplate(ctx, b.pool, b.q, tenantID, userID, params, in.TemplateID)
 	default:
@@ -86,7 +88,7 @@ func (b *directBackend) CreateProject(ctx context.Context, in CreateProjectIn) (
 		TargetLanguages: p.TargetLanguages,
 		TemplateApplied: in.TemplateID != 0,
 		WorkflowApplied: in.WorkflowID != 0,
-		Note:            "Project created. Add a document the user attached in the chat with openloc_attach_uploaded_file, a text file you can read with openloc_upload_text_file, or open the project for them with navigate_to {page: \"project\"} to upload there.",
+		Note:            "Project created. Add a document the user attached in the chat with openloc_attach_uploaded_file (several at once with openloc_attach_uploaded_files), a text file you can read with openloc_upload_text_file, or open the project for them with navigate_to {page: \"project\"} to upload there.",
 	}
 	return res, nil
 }
@@ -172,104 +174,34 @@ func (b *directBackend) AddTerm(ctx context.Context, in AddTermIn) (AddTermResul
 		}
 		return AddTermResult{}, fmt.Errorf("get term base: %w", err)
 	}
-
-	src := strings.TrimSpace(in.SourceTerm)
-	tgt := strings.TrimSpace(in.TargetTerm)
-	if src == "" || tgt == "" {
-		return AddTermResult{}, invalidf("source_term and target_term are required")
+	if b.pool == nil {
+		return AddTermResult{}, invalidf("add_term is unavailable on this server")
 	}
-	tgtLang := langcode.Normalize(in.TargetLanguage)
-	if tgtLang == "" {
-		return AddTermResult{}, invalidf("target_language is required")
-	}
-	if tgtLang == base.SourceLanguage {
-		return AddTermResult{}, invalidf("target_language must differ from the base's source language")
-	}
-	status := in.Status
-	if status == "" {
-		status = "approved"
-	}
-	if !validTermStatuses[status] {
-		return AddTermResult{}, invalidf("status must be approved, pending, or forbidden")
-	}
-
 	// A model adding a term IS the authority on the target text — no MT enrichment.
-	domain := strings.TrimSpace(in.Domain)
-	tgtTerm := terminology.ConceptTermInput{
-		Language: tgtLang, Text: tgt, Status: status, Notes: strings.TrimSpace(in.Notes),
+	res, err := terminology.NewService(b.q, b.pool).QuickAddTerm(ctx, base, terminology.QuickAddInput{
+		SourceTerm: in.SourceTerm, TargetTerm: in.TargetTerm, TargetLanguage: in.TargetLanguage,
+		Status: in.Status, Notes: in.Notes, Domain: in.Domain,
+	}, userID)
+	if msg, ok := httputil.AsClientError(err); ok {
+		return AddTermResult{}, invalidf("%s", msg)
 	}
-
-	// Find-or-create by concept identity (source-language term + domain). A second
-	// target for the same source term is the SAME meaning, so merge into the
-	// existing concept instead of spawning a duplicate; homographs stay distinct
-	// because a differing domain is a different concept.
-	existing, findErr := b.q.FindConceptBySourceTerm(ctx, db.FindConceptBySourceTermParams{
-		TermBaseID: base.ID, Domain: domain, Language: base.SourceLanguage, Text: src,
-	})
-	var conceptID, termID int64
-	switch {
-	case findErr == nil:
-		conceptID = existing.ID
-		term, e := b.attachTerm(ctx, existing.ID, tgtTerm, userID)
-		if e != nil {
-			return AddTermResult{}, e
-		}
-		termID = term.ID
-	case errors.Is(findErr, pgx.ErrNoRows):
-		// New meaning: create the concept with the source term + the target term.
-		ci := terminology.ConceptInput{
-			Domain: domain,
-			Terms: []terminology.ConceptTermInput{
-				{Language: base.SourceLanguage, Text: src, Status: "approved"},
-				tgtTerm,
-			},
-		}
-		if conceptID, err = b.createConcept(ctx, base, ci, userID); err != nil {
-			return AddTermResult{}, fmt.Errorf("create term: %w", err)
-		}
-		// Resolve the target term's id for the response (concept + both terms were
-		// just written atomically). Best-effort: concept_id is the essential handle.
-		if t, e := b.q.FindConceptTerm(ctx, db.FindConceptTermParams{
-			ConceptID: conceptID, Language: tgtLang, Text: tgt,
-		}); e == nil {
-			termID = t.ID
-		}
-	default:
-		return AddTermResult{}, fmt.Errorf("find concept: %w", findErr)
+	if err != nil {
+		return AddTermResult{}, fmt.Errorf("add term: %w", err)
 	}
-	// Keep the base's derived target_languages in sync (best-effort).
-	_ = b.q.SyncTermBaseTargetLanguages(ctx, base.ID)
-
 	return AddTermResult{
 		TermBaseID: base.ID,
-		ConceptID:  conceptID,
-		TermID:     termID,
-		SourceTerm: src,
-		TargetTerm: tgt,
-		Status:     status,
+		ConceptID:  res.ConceptID,
+		TermID:     res.TermID,
+		SourceTerm: res.SourceTerm,
+		TargetTerm: res.TargetTerm,
+		Status:     res.Status,
 	}, nil
 }
 
-// attachTerm adds a term to an existing concept idempotently: an identical live
-// (language, text) term returns the existing row; otherwise it is created. Inputs
-// must already be normalized/trimmed by the caller. Shared by add_term (concept
-// reuse) and add_term_to_concept.
+// attachTerm adds a term to an existing concept idempotently. Shared by
+// add_term_to_concept.
 func (b *directBackend) attachTerm(ctx context.Context, conceptID int64, t terminology.ConceptTermInput, userID int64) (db.Term, error) {
-	if existing, err := b.q.FindConceptTerm(ctx, db.FindConceptTermParams{
-		ConceptID: conceptID, Language: t.Language, Text: t.Text,
-	}); err == nil {
-		return existing, nil
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return db.Term{}, fmt.Errorf("find term: %w", err)
-	}
-	created, err := b.q.CreateTerm(ctx, db.CreateTermParams{
-		ConceptID: conceptID, Language: t.Language, Text: t.Text, Status: t.Status,
-		PartOfSpeech: t.PartOfSpeech, Notes: t.Notes, CreatedBy: &userID, UpdatedBy: &userID,
-	})
-	if err != nil {
-		return db.Term{}, fmt.Errorf("create term: %w", err)
-	}
-	return created, nil
+	return terminology.AttachTerm(ctx, b.q, conceptID, t, userID)
 }
 
 // createConcept inserts a concept + terms via terminology.CreateConcept, wrapping

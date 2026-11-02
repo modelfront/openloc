@@ -5,6 +5,7 @@
 // — setup is a conversation today — and it avoids inventing auth fields for
 // flows (Adobe IMS, Sitecore XM Cloud OAuth2) the backend hasn't defined.
 import { useState } from 'react'
+import { Plug } from 'lucide-react'
 import {
   siContentful,
   siContentstack,
@@ -137,7 +138,7 @@ function ConnectorRow({
       </div>
 
       <div className="shrink-0 text-right md:w-28">
-        <Button size="sm" onClick={onConnect} data-testid="connector-toggle">
+        <Button variant="outline" size="sm" onClick={onConnect} startIcon={<Plug />} data-testid="connector-toggle">
           Connect
         </Button>
       </div>

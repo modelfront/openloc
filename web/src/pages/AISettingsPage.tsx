@@ -16,7 +16,8 @@ import { ConnectAIToolsSection } from '../components/ai/ConnectAIToolsSection'
  *   owner/admin edit keys and add, replace or remove custom providers,
  *   mirroring the backend's RequireRole on every write.
  * - **Connect an AI tool** — the MCP address and where to paste it in Claude
- *   and ChatGPT, which then sign in through the OAuth consent screen.
+ *   and ChatGPT, which then sign in through the OAuth consent screen, and
+ *   last the apps connected that way, with Disconnect.
  * - **Access keys** — the user's own personal access tokens, for tools that
  *   cannot sign in. Both are per-user and open to EVERY role, which is why
  *   the page itself is not admin-gated: a linguist connects their own tool to

@@ -328,6 +328,24 @@ describe('useJobPipelineActions', () => {
     expect(toastError).not.toHaveBeenCalled()
   })
 
+  // A run happens inside its request; the editor polls the job while one is
+  // open (useJobDetail reads this key), so each run-starting action carries it.
+  it.each([
+    ['applyTM', mockApplyTM],
+    ['applyMT', mockApplyMT],
+    ['runAIStep', mockRunAIStep],
+  ] as const)('%s counts as an open run request while it is pending', async (action, mock) => {
+    let finish: (v: { message: string }) => void = () => {}
+    mock.mockImplementationOnce(() => new Promise(res => { finish = res }))
+    const { result, qc } = setup()
+    const open = () => qc.isMutating({ mutationKey: queryKeys.job.runRequest(7) })
+    expect(open()).toBe(0)
+    result.current[action].mutate()
+    await waitFor(() => expect(open()).toBe(1))
+    finish({ message: 'ok' })
+    await waitFor(() => expect(open()).toBe(0))
+  })
+
   it('isAnyApplying flips true while any of the three mutations is pending', async () => {
     // Hold the promise open so we can observe the pending state.
     let resolveTM: (v: { message: string }) => void = () => {}

@@ -38,7 +38,8 @@ func screenshotToolDef() ToolDef {
 			"is visual and on their screen now. Write one sentence asking for it, then call this tool; the " +
 			"turn ends there. The user sees an Add screenshot button and decides: their next message brings " +
 			"the screenshot, which you see in that message only, or says they skipped it. Never ask for a " +
-			"screenshot of something that happened earlier.",
+			"screenshot of something that happened earlier. One screenshot per ask: when the user wants " +
+			"several, tell them they come one at a time, and ask for the next after this one arrives.",
 		InputSchema: pauseReasonSchema("the screenshot"),
 	}
 }

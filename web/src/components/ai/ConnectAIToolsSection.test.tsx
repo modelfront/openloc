@@ -7,7 +7,12 @@ import { ConnectAIToolsSection } from './ConnectAIToolsSection'
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const getAppConfig = vi.fn()
-vi.mock('@/api', () => ({ getAppConfig: () => getAppConfig() }))
+const listOAuthConnections = vi.fn()
+vi.mock('@/api', () => ({
+  getAppConfig: () => getAppConfig(),
+  listOAuthConnections: () => listOAuthConnections(),
+  revokeOAuthConnection: vi.fn(),
+}))
 
 const CONFIG = {
   app_url: 'https://app.example.com/',
@@ -34,6 +39,7 @@ async function renderSection() {
 beforeEach(() => {
   vi.clearAllMocks()
   getAppConfig.mockResolvedValue(CONFIG)
+  listOAuthConnections.mockResolvedValue([])
 })
 
 describe('ConnectAIToolsSection', () => {
@@ -46,6 +52,20 @@ describe('ConnectAIToolsSection', () => {
     )
     expect(screen.getByRole('button', { name: /^Connect an AI tool/ })).toBeInTheDocument()
     expect(screen.queryByTestId('mcp-server-url')).not.toBeInTheDocument()
+  })
+
+  // Adding and listing in one place: the apps connected with this address are
+  // listed at the end of the same section.
+  it('lists the connected apps last, under the connect steps', async () => {
+    listOAuthConnections.mockResolvedValue([
+      { family_id: 'fam-1', client_name: 'Claude', scope: 'write', created_at: '2026-10-01T10:00:00Z', last_used_at: null },
+    ])
+    await renderSection()
+    const section = screen.getByTestId('connect-ai-tools-section')
+    const apps = within(section).getByTestId('connected-apps')
+    expect(within(apps).getByRole('heading', { name: 'Connected apps' })).toBeInTheDocument()
+    expect(await within(apps).findByTestId('connected-app-row')).toHaveTextContent('Claude')
+    expect(screen.getByTestId('connect-chatgpt').compareDocumentPosition(apps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   // The address a tool needs is the app's own, not the page's: the app may be

@@ -113,7 +113,7 @@ export function TemplatePickerDialog({ open, onOpenChange, selectedId, onPick }:
                     aria-current={selected ? 'true' : undefined}
                     data-testid={`template-option-${t.id}`}
                     className={cn(
-                      'flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors',
+                      'flex w-full cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors',
                       'hover:border-primary focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
                       selected ? 'border-primary bg-primary/5' : 'border-gray-200 dark:border-gray-800',
                     )}

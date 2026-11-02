@@ -5,7 +5,8 @@ import { useMutationWithToast } from './use-mutation-with-toast'
 interface UseCRUDListOptions<TItem, TCreateVars> {
   queryKey: QueryKey
   queryFn: () => Promise<TItem[]>
-  createFn: (vars: TCreateVars) => Promise<unknown>
+  /** Left out by a list whose create lives on its own page. */
+  createFn?: (vars: TCreateVars) => Promise<unknown>
   renameFn?: (params: { id: number; name: string }) => Promise<unknown>
   deleteFn: (id: number) => Promise<unknown>
   entityName: string // "TM", "Term base", "QA profile", etc.
@@ -47,7 +48,7 @@ export function useCRUDList<TItem, TCreateVars = void>({
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null)
 
   const createMut = useMutationWithToast({
-    mutationFn: createFn,
+    mutationFn: createFn ?? (() => Promise.reject(new Error(`${entityName} is created on its own page`))),
     successMessage: `${entityName} created`,
     errorMessage: 'Create failed',
     errorToast: createErrorToast,

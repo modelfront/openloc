@@ -10,6 +10,7 @@ import { queryKeys } from '../../lib/query-keys'
 import { workflowDraftsToLibraryInput, workflowMode } from '../../lib/workflow-steps'
 import { MTRouterLink, RawMTPane } from '../workflow/RawMTPane'
 import { createAction } from '@/components/ui/combobox'
+import { drawAttention } from '@/lib/attention'
 import { useDialogPromise } from '@/hooks/useDialogPromise'
 import type { WorkflowStep } from '../WorkflowStepsEditor'
 import { WorkflowPicker } from '../workflow/WorkflowPicker'
@@ -33,10 +34,16 @@ interface Props {
   mtOnUpload?: boolean
   /** Deadline edits, written back onto the step draft. */
   onStepsChange: (steps: WorkflowStep[]) => void
+  /** Frames the dropdown red: a submit found no workflow. */
+  invalid?: boolean
 }
 
+/** Takes the user to the Workflow card and its dropdown. */
+export const focusWorkflowPicker = () =>
+  drawAttention({ target: '[data-testid="create-workflow-card"]', focus: '[data-testid="use-workflow-select"]' })
+
 export function ProjectCreateWorkflowCard({
-  workflows, workflowId, steps, onPickWorkflow, targetLanguages, onStepsChange, mtRouterName, mtOnUpload,
+  workflows, workflowId, steps, onPickWorkflow, targetLanguages, onStepsChange, mtRouterName, mtOnUpload, invalid = false,
 }: Props) {
   const queryClient = useQueryClient()
   const value = workflowId !== '' ? Number(workflowId) : null
@@ -48,7 +55,7 @@ export function ProjectCreateWorkflowCard({
   const createDialog = useDialogPromise<number>()
 
   const heading = (
-    <WorkflowModeToggle steps={steps} workflowId={value} workflows={workflows} previousWorkflowRef={previousWorkflowRef} onApply={apply} />
+    <WorkflowModeToggle steps={steps} workflowId={value} workflows={workflows} previousWorkflowRef={previousWorkflowRef} onApply={apply} onClear={() => onPickWorkflow('')} />
   )
 
   return (
@@ -61,6 +68,7 @@ export function ProjectCreateWorkflowCard({
           value={value}
           heading={heading}
           entity="project"
+          invalid={invalid}
           onApply={async (id) => { await apply(id) }}
           actions={[createAction('New template', createDialog.request, id => { void onPickWorkflow(String(id)) })]}
         >

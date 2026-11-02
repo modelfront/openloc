@@ -3,7 +3,7 @@ title: "Roles and permissions"
 summary: "The four roles — owner, admin, project manager, linguist — and what each one can see and do."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - internal/auth/roles.go
   - internal/auth/ownership.go
@@ -22,6 +22,8 @@ sources:
   - web/src/pages/AISettingsPage.tsx
   - internal/api/api.go
   - internal/publicapi/register.go
+  - internal/segmentationapi/handler.go
+  - internal/segmentedit/service.go
 related:
   - guides/customers-and-vendors
   - guides/workflows-and-tasks
@@ -53,7 +55,7 @@ The API follows the same table: a request made with your access key may do only 
 
 | Capability | Owner | Admin | Project manager | Linguist |
 |---|---|---|---|---|
-| See **Projects**, **Translation memories**, **Terminology**, **Customers**, **Templates**, **Workflows**, **MT**, **AI**, **Integrations**, **QA profiles**, **Dashboards** | ✓ | ✓ | ✓ | — |
+| See **Projects**, **Translation memories**, **Terminology**, **Labels**, **Templates**, **Workflows**, **MT**, **AI**, **Integrations**, **QA profiles**, **File configurations**, **Dashboards** | ✓ | ✓ | ✓ | — |
 | Open the **Organization** page (account menu → **Organization settings**) | ✓ all tabs | ✓ all tabs | ✓ **Vendors** tab only | — |
 | See **Tasks** in the left menu | ✓ (all tasks in the organization) | ✓ (all tasks in the organization) | ✓ (own tasks) | ✓ (own tasks) |
 | Open a job in the CAT editor | ✓ any job | ✓ any job | ✓ any job | ✓ only jobs assigned to them |
@@ -73,11 +75,13 @@ The API follows the same table: a request made with your access key may do only 
 | **Stop** a pre-translation or AI step that is running on a job | ✓ | ✓ | ✓ | ✓ for own jobs |
 | **Re-run** a task that shows an error | ✓ | ✓ | ✓ | ✓ for own jobs, when pre-translation failed |
 | **Skip AI step** on a Hybrid step whose AI run failed | ✓ | ✓ | ✓ | — |
-| Assign jobs, set step deadlines, clear translations of a job, delete jobs | ✓ | ✓ | ✓ | — |
+| Assign jobs, set step deadlines, delete jobs | ✓ | ✓ | ✓ | — |
+| Clear translations in the CAT editor (a segment, a selection or the whole job), up to the first human or hybrid step | ✓ | ✓ | ✓ | ✓ for own jobs |
 | Complete or reject a workflow step | ✓ when assigned* | ✓ when assigned* | ✓ when assigned* | ✓ when assigned* |
 | Edit a segment of a completed task, which reopens the task | ✓ | ✓ | ✓ | — |
 | Run QA on a segment, and **Ignore** or **Un-ignore** a QA finding | ✓ | ✓ | ✓ | ✓ for own jobs |
 | Confirm a segment (which copies it to identical segments), and use find and replace across a job | ✓ | ✓ | ✓ | ✓ for own jobs |
+| Split and join segments, while the task takes edits (a completed task does not) | ✓ | ✓ | ✓ | ✓ for own jobs |
 | Add a word to the project's spell-check dictionary (**Ignore in this project**) | ✓ | ✓ | ✓ | — |
 | Remove a word from the project's spell-check dictionary | ✓ | ✓ | — | — |
 | Download translated files, bilingual XLIFF and source files | ✓ | ✓ | ✓ | ✓ for own jobs |
@@ -102,8 +106,11 @@ A task that shows an error takes no edits from any role until it is re-run, its 
 |---|---|---|---|---|
 | Create and edit translation memories, TM profiles and term bases; import and export | ✓ | ✓ | ✓ | — |
 | Delete a translation memory, TM profile or term base | ✓ | ✓ | — | — |
+| Add a term to the project's term base from the CAT editor, and choose its status ([Add a term while translating](/docs/guides/terminology#add-a-term-while-translating)) | ✓ | ✓ | ✓ | ✓ for own jobs, unless the project's **Linguists can add terms** setting is **No**; the setting decides whether the term is saved as **Pending** or **Approved** |
 | Create, edit and delete templates, MT routers, MT engines and QA profiles | ✓ | ✓ | ✓ | — |
 | Create, edit and delete workflows and steps in the workflow library (**Workflows** page) | ✓ | ✓ | ✓ | — |
+| Create, copy, edit and delete segmentation profiles, import SRX (**File configurations** → **Segmentation profiles**) | ✓ | ✓ | ✓ | — |
+| Read segmentation profiles, preview them and download them as SRX (a linguist through the API or an AI tool; **File configurations** is not shown to linguists) | ✓ | ✓ | ✓ | ✓ |
 | View AI routers, AI engines and prompts (**AI** page) | ✓ | ✓ | ✓ | — |
 | Create, edit and delete AI routers, AI engines and prompts | ✓ | ✓ | — | — |
 | Manage the organization's AI provider keys (**Providers** on the AI settings page) | ✓ | ✓ | — | — |
@@ -143,7 +150,7 @@ A task that shows an error takes no edits from any role until it is re-run, its 
 
 A linguist's left menu has one entry: **Tasks**. Every management page redirects to it. The account menu at the top right offers **Settings** (profile, notifications, appearance), **AI settings** (connecting their own AI tools, and their own access keys), **Learn**, **Docs**, **API** and **Sign out**. **Docs** is not restricted: it shows every documentation page, and search covers all of them, so a linguist can read how the parts they do not administer actually work.
 
-From **Tasks** a linguist opens a job in the CAT editor. There they can translate, confirm segments, apply translation memory or machine translation, stop a run that is still going with **Stop**, re-run a pre-translation that failed with **Re-run**, run QA and spell check, ignore a QA finding that does not apply, search the concordance, download their own files and complete or reject their step. They cannot edit a completed task, open a project page, browse a translation memory or see other people's jobs.
+From **Tasks** a linguist opens a job in the CAT editor. There they can translate, confirm segments, apply translation memory or machine translation, clear translations, stop a run that is still going with **Stop**, re-run a pre-translation that failed with **Re-run**, run QA and spell check, ignore a QA finding that does not apply, search the concordance, add a term to the term base (when the project allows it), download their own files and complete or reject their step. They cannot edit a completed task, open a project page, browse a translation memory or see other people's jobs.
 
 ## Vendors are linguists
 

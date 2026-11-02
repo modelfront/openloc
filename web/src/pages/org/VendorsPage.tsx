@@ -35,9 +35,10 @@ export default function VendorsPage() {
     register,
     handleSubmit,
     reset,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<InviteFormValues>({
     resolver: zodResolver(inviteSchema),
+    mode: 'onTouched',
     defaultValues: { email: '' },
   })
 
@@ -107,7 +108,12 @@ export default function VendorsPage() {
             data-testid="vendor-invite-email"
           />
         </FormField>
-        <Button type="submit" disabled={inviteMut.isPending} data-testid="vendor-invite-submit">
+        <Button
+          type="submit"
+          disabled={inviteMut.isPending || !isValid}
+          disabledReason={isValid ? undefined : 'Enter a valid email address first.'}
+          data-testid="vendor-invite-submit"
+        >
           {inviteMut.isPending ? 'Sending…' : 'Send invitation'}
         </Button>
       </form>

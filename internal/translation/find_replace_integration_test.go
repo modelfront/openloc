@@ -32,7 +32,7 @@ func newFRFixture(t *testing.T) *frFixture {
 	t.Cleanup(cleanup)
 	f := &frFixture{pool: pool, q: q, router: testutil.NewTestRouter(pool)}
 	f.userID, f.tenantID = registerUser(t, q, "fr-draft")
-	f.projectID = createProject(t, f.router, "FR Draft Project", f.userID, f.tenantID)
+	f.projectID = createProject(t, f.q, f.router, "FR Draft Project", f.userID, f.tenantID)
 	file := testutil.SeedFile(t, q, f.projectID, "fr.txt", db.FileFormatTxt)
 	f.fileID = file.ID
 	f.job = testutil.SeedJob(t, q, file.ID, "es")

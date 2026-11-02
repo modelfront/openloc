@@ -62,3 +62,15 @@ func (r *Ring) Since(after uint64) (entries []Entry, lastSeq uint64) {
 	copy(entries, r.buf[start:])
 	return entries, lastSeq
 }
+
+// Snapshot returns a copy of every buffered entry, newest first; a ring is
+// always read in full. Implements Snapshotter.
+func (r *Ring) Snapshot(context.Context) ([]Entry, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Entry, len(r.buf))
+	for i, e := range r.buf {
+		out[len(r.buf)-1-i] = e
+	}
+	return out, true
+}

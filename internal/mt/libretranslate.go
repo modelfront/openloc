@@ -18,7 +18,7 @@ type LibreTranslate struct {
 	APIKey string // optional, depends on instance config
 }
 
-func (lt LibreTranslate) Name() string { return "libretranslate" }
+func (lt LibreTranslate) Name() string { return ProviderLibreTranslate }
 
 func (lt LibreTranslate) Translate(ctx context.Context, req TranslateRequest) ([]TranslateResult, error) {
 	baseURL := lt.resolveBaseURL()
@@ -61,7 +61,7 @@ func (lt LibreTranslate) translateBatch(ctx context.Context, baseURL string, req
 
 	resp, err := operatorClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("translate request failed: %w", err)
+		return nil, transportError(ctx, ProviderLibreTranslate, err)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -71,7 +71,7 @@ func (lt LibreTranslate) translateBatch(ctx context.Context, baseURL string, req
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &apiError{vendor: "libretranslate", status: resp.StatusCode, body: string(respBody)}
+		return nil, serverVendorError(ProviderLibreTranslate, resp.StatusCode, string(respBody))
 	}
 
 	var batchResp ltBatchResponse
@@ -113,7 +113,7 @@ func (lt LibreTranslate) translateOneByOne(ctx context.Context, baseURL string, 
 
 		resp, err := operatorClient.Do(httpReq)
 		if err != nil {
-			return nil, fmt.Errorf("translate request failed: %w", err)
+			return nil, transportError(ctx, ProviderLibreTranslate, err)
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
@@ -123,7 +123,7 @@ func (lt LibreTranslate) translateOneByOne(ctx context.Context, baseURL string, 
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, &apiError{vendor: "libretranslate", status: resp.StatusCode, body: string(respBody)}
+			return nil, serverVendorError(ProviderLibreTranslate, resp.StatusCode, string(respBody))
 		}
 
 		var ltResp ltSingleResponse

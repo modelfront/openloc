@@ -6,7 +6,6 @@ import { reimportXLIFF } from '@/api/files'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useMutationWithToast } from '@/hooks/use-mutation-with-toast'
 import { invalidateJobContext } from '@/lib/query-invalidation'
-import { queryKeys } from '@/lib/query-keys'
 import { warnHeldSkipped } from '@/lib/segment-bulk'
 
 const XLIFF_ACCEPT = '.xliff,.xlf,.sdlxliff,.mxliff,.mqxliff'
@@ -54,7 +53,6 @@ export function ImportXLIFFAction({ projectId, job, children }: Props) {
       warnHeldSkipped(result.skipped_held)
       if (!job) return
       invalidateJobContext(queryClient, projectId, job.id)
-      queryClient.invalidateQueries({ queryKey: queryKeys.segments.byFile(job.file_id) })
     },
   })
 

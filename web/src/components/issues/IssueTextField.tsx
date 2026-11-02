@@ -1,4 +1,5 @@
-import { useRef, useState, type ClipboardEvent, type ComponentProps, type DragEvent } from 'react'
+import { useRef, type ClipboardEvent, type ComponentProps } from 'react'
+import { useFileDrop } from '@/hooks/useFileDrop'
 import { Textarea } from '@/components/ui/textarea'
 import { AttachmentsField } from './AttachmentsField'
 import { addAttachments, dropUploadRef, insertUploadRefs, isInlineImage } from './attachments'
@@ -27,7 +28,6 @@ export function IssueTextField({
   // Where the cursor was when the field lost focus: the Attach button takes
   // the focus, and its images still go where the user was typing.
   const caret = useRef<number | null>(null)
-  const [dragging, setDragging] = useState(false)
 
   const add = (added: File[]) => {
     const kept = addAttachments(files, added)
@@ -54,18 +54,7 @@ export function IssueTextField({
     e.preventDefault()
     add(pasted)
   }
-  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
-  const onDragOver = (e: DragEvent) => {
-    if (!hasFiles(e) || disabled) return
-    e.preventDefault()
-    setDragging(true)
-  }
-  const onDrop = (e: DragEvent) => {
-    setDragging(false)
-    if (!hasFiles(e) || disabled) return
-    e.preventDefault()
-    add(Array.from(e.dataTransfer.files))
-  }
+  const drop = useFileDrop(add, disabled)
 
   return (
     <div className="space-y-2">
@@ -77,10 +66,8 @@ export function IssueTextField({
         onChange={e => onChange(e.target.value)}
         onBlur={e => { caret.current = e.target.selectionStart; textarea.onBlur?.(e) }}
         onPaste={onPaste}
-        onDragOver={onDragOver}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        dropTarget={dragging}
+        {...drop.handlers}
+        dropTarget={drop.dragging}
       />
       <div>
         <AttachmentsField value={files} onAdd={add} onRemove={remove} disabled={disabled} testId={filesTestId} />

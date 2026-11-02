@@ -291,6 +291,19 @@ export const exportTMX = (tmId: number, tmName: string) =>
 
 // ─── TM matches (editor sidebar) ───
 
+/** Why a match was docked: a region or script variant on the source or the
+ *  target side, a punctuation/case/spacing-only difference, or the penalty
+ *  set on the entry's TM. */
+export type TMPenaltyKind = 'source_variant' | 'target_variant' | 'near_exact' | 'tm'
+
+export interface TMPenalty {
+  kind: TMPenaltyKind;
+  percent: number;
+  // Set on the variant kinds only.
+  tm_language?: string;
+  project_language?: string;
+}
+
 export interface TMMatch {
   score: number;
   source_text: string;
@@ -306,6 +319,20 @@ export interface TMMatch {
   // The match % as the Match column shows it (101 for an in-context exact
   // match, which needs the translation id in the lookup).
   percent: number;
+  // The segment's own source with no penalty: the match pre-translation
+  // approves. A fuzzy match can read 100% without it.
+  exact?: boolean;
+  // When the entry was added and last changed (ISO), and who did it: the
+  // stored label ("Name <email>" for an editor change, a TMX creationid/changeid
+  // for an import), without the email unless the caller is a manager, and
+  // empty when no person is recorded (the creator of an entry the editor wrote).
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+  // The deductions that took percent below the text similarity; absent when
+  // nothing docked the match.
+  penalties?: TMPenalty[];
   // Signed note of this match; a draft save that inserts it records the
   // match on the segment. Absent when the server issues none.
   insert_token?: string;

@@ -160,16 +160,25 @@ LEFT JOIN prev p ON p.id = u.id;
 -- tenant-scoped rows (ListApprovedForTMByIDs, or ListApprovedForTM after
 -- GetFileTenant).
 -- GetSegmentNeighborSources for many segments in one statement: each listed
--- segment's previous/next source text in its file ('' at a boundary).
-SELECT s.id,
+-- segment's previous/next source text among its job's rows (same file, a
+-- translation in @target_languages at the same index), '' at a boundary,
+-- with the language it was read for.
+SELECT s.id, k.lang::text AS target_language,
   COALESCE((SELECT prev.source_text FROM segments prev
-     WHERE prev.file_id = s.file_id AND prev."position" < s."position"
-     ORDER BY prev."position" DESC LIMIT 1), '')::text AS prev_source,
+     WHERE prev.file_id = s.file_id
+       AND (prev."position", prev.sub_position) < (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations pt
+                   WHERE pt.segment_id = prev.id AND pt.target_language = k.lang)
+     ORDER BY prev."position" DESC, prev.sub_position DESC LIMIT 1), '')::text AS prev_source,
   COALESCE((SELECT nxt.source_text FROM segments nxt
-     WHERE nxt.file_id = s.file_id AND nxt."position" > s."position"
-     ORDER BY nxt."position" ASC LIMIT 1), '')::text AS next_source
-FROM segments s
-WHERE s.id = ANY(@segment_ids::bigint[]);
+     WHERE nxt.file_id = s.file_id
+       AND (nxt."position", nxt.sub_position) > (s."position", s.sub_position)
+       AND EXISTS (SELECT 1 FROM translations nt
+                   WHERE nt.segment_id = nxt.id AND nt.target_language = k.lang)
+     ORDER BY nxt."position" ASC, nxt.sub_position ASC LIMIT 1), '')::text AS next_source
+FROM (SELECT unnest(@segment_ids::bigint[]) AS segment_id,
+             unnest(@target_languages::text[]) AS lang) k
+JOIN segments s ON s.id = k.segment_id;
 
 -- name: AcquireTMSourceLocks :exec
 -- AcquireTMSourceLock for many sources of ONE TM in one statement, taken in
@@ -310,14 +319,16 @@ ORDER BY (target_language = @target_language) DESC, (source_language = @source_l
 -- Sublanguage-aware on both sides (see LookupTM). Callers rescore with
 -- translationmemory.PenalizeSublanguage before comparing against the display
 -- threshold, so a variant candidate has to clear a slightly higher bar.
--- prev/next_source_hash let an exact hit score 101% in context.
+-- prev/next_source_hash let an exact hit score 101% in context; the created/
+-- updated stamps are what the editor's match card shows.
 --
 -- `%` is what lets idx_tm_source_trgm serve the search; it compares against
 -- pg_trgm.similarity_threshold, so run it through
 -- translationmemory.FuzzyLookup, which sets that to @threshold first. The
 -- similarity() test keeps the result exact whatever the setting.
 SELECT id, tm_id, source_language, target_language, source_text, target_text,
-       source_rich_text, target_rich_text, created_at, prev_source_hash, next_source_hash,
+       source_rich_text, target_rich_text, created_at, updated_at, created_by, updated_by,
+       prev_source_hash, next_source_hash,
        similarity(source_text, @query::text) AS score
 FROM translation_memory
 WHERE tm_id = @tm_id

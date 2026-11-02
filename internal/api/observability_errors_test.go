@@ -22,8 +22,10 @@ import (
 func TestHandlerErrorReachesRequestLog(t *testing.T) {
 	cause := errors.New("relation \"labels\" is busy: value Acme Confidential")
 	for name, write := range map[string]func(http.ResponseWriter){
-		"ServiceError": func(w http.ResponseWriter) { httputil.ServiceError(w, fmt.Errorf("list labels: %w", cause), "list", "labels") },
-		"DBError":      func(w http.ResponseWriter) { httputil.DBError(w, fmt.Errorf("get label: %w", cause), "label") },
+		"ServiceError": func(w http.ResponseWriter) {
+			httputil.ServiceError(w, fmt.Errorf("list labels: %w", cause), "list", "labels")
+		},
+		"DBError": func(w http.ResponseWriter) { httputil.DBError(w, fmt.Errorf("get label: %w", cause), "label") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := errtracktest.Install(t)
@@ -32,7 +34,10 @@ func TestHandlerErrorReachesRequestLog(t *testing.T) {
 				r.Get("/api/labels", func(w http.ResponseWriter, _ *http.Request) { write(w) })
 			})
 			res := httptest.NewRecorder()
-			r.ServeHTTP(res, httptest.NewRequest("GET", "/api/labels", nil))
+			req := httptest.NewRequest("GET", "/api/labels", nil)
+			// What every browser sends: the response goes through the compressor.
+			req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+			r.ServeHTTP(res, req)
 			if res.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want 500", res.Code)
 			}

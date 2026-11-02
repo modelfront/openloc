@@ -3,8 +3,8 @@
 -- ============================================================
 
 -- name: CreateSettingsProfile :one
--- Penalties, auto_complete and inline_html are deliberately absent: they take
--- the column defaults (1% / 1% / on / on). Adding them as params would make every existing
+-- Penalties, auto_complete, inline_html and linguist_terms are deliberately
+-- absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
 -- struct-literal caller pass a silent zero value — 0 means "locales are
 -- equivalent" (new projects would start auto-confirming sublanguage variants)
 -- and false would switch auto-completion or HTML strings off. Callers that need non-defaults
@@ -25,12 +25,14 @@ SELECT * FROM settings_profiles WHERE id = $1;
 -- that omits it would silently switch auto-completion off.
 -- tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
 -- inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
+-- linguist_terms is nil-keeps-stored like tm_lookup_order.
 UPDATE settings_profiles SET fuzzy_threshold = $2, mt_on_upload = $3, tm_on_upload = $4, qa_profile_id = $5,
   sublanguage_penalty_pct = COALESCE(sqlc.narg('sublanguage_penalty_pct')::int, sublanguage_penalty_pct),
   near_exact_penalty_pct  = COALESCE(sqlc.narg('near_exact_penalty_pct')::int, near_exact_penalty_pct),
   auto_complete           = COALESCE(sqlc.narg('auto_complete')::bool, auto_complete),
   tm_lookup_order         = COALESCE(sqlc.narg('tm_lookup_order')::text, tm_lookup_order),
   inline_html             = COALESCE(sqlc.narg('inline_html')::bool, inline_html),
+  linguist_terms     = COALESCE(sqlc.narg('linguist_terms')::text, linguist_terms),
   updated_at = now()
 WHERE id = $1 RETURNING *;
 
@@ -50,6 +52,23 @@ SELECT * FROM settings_profiles WHERE id = tm_scope_profile_id($1);
 -- and that query's struct-literal callers would all have to learn the field.
 UPDATE settings_profiles SET tm_profile_id = sqlc.narg('tm_profile_id')::bigint, updated_at = now()
 WHERE id = $1 RETURNING *;
+
+-- name: SetSettingsProfileSegmentationProfile :one
+-- Internal: callers pass the settings profile id of a project or template
+-- they read with its tenant. The segmentation profile the row's uploads are
+-- split with; separate from UpdateSettingsProfile for the same reason as
+-- SetSettingsProfileTMProfile. It stores only a built-in or a live org
+-- profile, holding a share lock on the profile row until the caller commits,
+-- so a delete either waits and then clears a project row or refuses a
+-- template row, or runs first and this write stores nothing (no row
+-- returned).
+UPDATE settings_profiles sp SET segmentation_profile_id = sqlc.narg('segmentation_profile_id')::bigint, updated_at = now()
+WHERE sp.id = $1
+  AND (sqlc.narg('segmentation_profile_id')::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM segmentation_builtin_profiles b WHERE b.id = sqlc.narg('segmentation_profile_id')::bigint)
+       OR EXISTS (SELECT 1 FROM segmentation_profiles o
+                  WHERE o.id = sqlc.narg('segmentation_profile_id')::bigint AND o.deleted_at IS NULL FOR SHARE))
+RETURNING *;
 
 -- ============================================================
 -- Settings TM Assignments
@@ -312,7 +331,7 @@ ORDER BY
 -- (group by concept_id downstream). id = the target-language term.id.
 SELECT tgt.id, c.id AS concept_id,
        src.text AS source_term, tgt.text AS target_term,
-       tgt.status, src.status AS source_status, tgt.notes, c.domain, tgt.mt_translation,
+       tgt.status, src.status AS source_status, tgt.notes, c.domain, c.definition, tgt.mt_translation,
        tb.id AS term_base_id, tb.name AS term_base_name,
        sta.priority
 FROM term src
@@ -434,9 +453,17 @@ ORDER BY CASE WHEN src.text ILIKE @query THEN 0 ELSE 1 END, src.text
 LIMIT @entry_limit;
 
 -- name: SetSettingsProfileWorkflow :exec
+-- Internal: keyed by settings_profile_id with no tenant filter; callers get the
+-- id from a tenant-scoped project or template lookup.
 -- Stamps which library workflow a profile's steps were copied from
--- (provenance). NULL clears it.
-UPDATE settings_profiles SET workflow_id = $2 WHERE id = $1;
+-- (provenance), and whether they were edited since. NULL clears it.
+UPDATE settings_profiles SET workflow_id = @workflow_id, workflow_edited = @workflow_edited WHERE id = @id;
+
+-- name: MarkSettingsProfileWorkflowEdited :exec
+-- Internal: keyed by settings_profile_id with no tenant filter; callers get the
+-- id from a tenant-scoped project or template lookup.
+-- The profile's steps no longer match the library workflow they came from.
+UPDATE settings_profiles SET workflow_edited = true WHERE id = $1 AND workflow_id IS NOT NULL;
 
 -- name: SetSettingsProfileMtOnUpload :exec
 -- Pre-translation profiles always fill in MT on upload; the step-replace

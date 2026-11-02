@@ -80,6 +80,7 @@ func TestIntegrationV1_SegmentMustBelongToJob(t *testing.T) {
 	// Same tenant, a job of another project.
 	rec := f.client.do(http.MethodPost, "/api/v1/projects", map[string]any{
 		"name": "Second", "source_language": "en", "target_languages": []string{"fr"},
+		"workflow_id": f.ids["workflowID"],
 	}, f.key(t, "owner"))
 	wantStatus(t, rec, http.StatusCreated)
 	p := testutil.DecodeData[publicapi.Project](t, rec)

@@ -30,11 +30,16 @@ export type RowProps = {
   isActive?: boolean
   readOnly?: boolean
   qaIssues?: QaFinding[]
-  isAdmin?: boolean
-  inFirstStep?: boolean
+  inClearWindow?: boolean
   heldByName?: string | null
   plainText?: boolean
   segment?: Partial<Segment>
+  isRepetitionSource?: boolean
+  isRepetition?: boolean
+  projectId?: number | null
+  /** The row is no longer the open one: CATEditor passes it no insertRef. */
+  detached?: boolean
+  pretranslating?: boolean
 }
 
 export function renderSegmentRow(initial: RowProps) {
@@ -48,10 +53,10 @@ export function renderSegmentRow(initial: RowProps) {
       <SegmentRow
         segment={{ ...rowSegment, ...p.segment }}
         translation={p.translation}
-        index={1}
+        number="1"
         jobId={7}
         fileId={11}
-        projectId={null}
+        projectId={p.projectId ?? null}
         targetLanguage="de"
         sourceLanguage="en"
         isActive={p.isActive ?? true}
@@ -59,22 +64,24 @@ export function renderSegmentRow(initial: RowProps) {
         onNavigate={onNavigate}
         onDeactivate={() => {}}
         dirtyRef={dirtyRef}
-        insertRef={insertRef}
+        insertRef={p.detached ? undefined : insertRef}
         flushDraftRef={flushDraftRef}
         readOnly={p.readOnly}
         qaIssues={p.qaIssues ?? []}
         onQARefresh={() => {}}
-        isAdmin={p.isAdmin}
-        inFirstStep={p.inFirstStep}
+        inClearWindow={p.inClearWindow}
         heldByName={p.heldByName}
         plainText={p.plainText}
+        isRepetitionSource={p.isRepetitionSource}
+        isRepetition={p.isRepetition}
+        pretranslating={p.pretranslating}
       />
     </QueryClientProvider>
   )
   let current = initial
   const result = render(ui(current))
   return {
-    insertRef, flushDraftRef, dirtyRef, onNavigate,
+    insertRef, flushDraftRef, dirtyRef, onNavigate, queryClient,
     rerender: (next: Partial<RowProps>) => {
       current = { ...current, ...next }
       result.rerender(ui(current))

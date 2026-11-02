@@ -51,6 +51,10 @@ beforeEach(() => {
 })
 
 describe('IssueStatusForm marking a duplicate', () => {
+  // This flow opens the picker twice, types two searches past their debounce
+  // and saves; under full-suite load that chain can outrun vitest's 5s default.
+  const PICK_FLOW_TIMEOUT = 15_000
+
   it('searches the platform list by title, never offers the issue itself or duplicates, and saves the pick', async () => {
     const user = userEvent.setup()
     renderForm()
@@ -81,7 +85,7 @@ describe('IssueStatusForm marking a duplicate', () => {
 
     await user.click(screen.getByTestId('issue-status-save'))
     await waitFor(() => expect(setIssueStatus).toHaveBeenCalledWith(7, 'duplicate', '', 12))
-  })
+  }, PICK_FLOW_TIMEOUT)
 
   it('finds an issue by its number, which the title search does not match', async () => {
     const oldBug = issue({ id: 55, title: 'Slow upload', status: 'wont_fix' })

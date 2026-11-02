@@ -74,8 +74,7 @@ var invalidStatusMessage = func() string {
 }()
 
 // projectListMaxLimit caps the project list page size. It is also
-// the default when no ?limit is sent, because the web client reads only
-// r.data and does not paginate. Bounded to prevent OOM from a runaway client.
+// the default when no ?limit is sent. Bounded to prevent OOM from a runaway client.
 const projectListMaxLimit int32 = 10000
 
 // HandleList returns a paginated, filtered list of projects for the tenant.

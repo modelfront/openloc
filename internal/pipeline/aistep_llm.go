@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"openloc/internal/ai"
 	"openloc/internal/aiprompt"
 	db "openloc/internal/database/sqlcgen"
-	"openloc/internal/httputil"
 	"openloc/internal/inlinetag"
 	"openloc/internal/logging"
 	"openloc/internal/ptr"
@@ -133,11 +131,10 @@ func (s *Service) resolveLLMPredictRunner(
 		results, err := s.aiPredictor.PredictBatch(ctx, bcfg, inputs)
 		if err != nil {
 			logging.Warn(ctx, err, "LLM predict batch failed", "ai-step-llm-batch-failed", logging.JobID(jobID), logging.WorkflowStep(stepName), logging.Provider(provider), logging.Label("batch_index", strconv.Itoa(batchIdx)))
-			var provErr *ai.ProviderError
-			if errors.As(err, &provErr) {
-				return nil, httputil.NewClientError(aiStepProviderMessage(provErr))
+			if vErr, ok := vendorFailure(err, aiStepProviderMessage); ok {
+				return nil, vErr
 			}
-			return nil, httputil.NewClientError(fmt.Sprintf("The AI step could not complete: %v. Check AI settings → Providers and try again.", err))
+			return nil, fmt.Errorf("LLM predict batch %d: %w", batchIdx, err)
 		}
 
 		out := make([]aiPredictResult, 0, len(results))

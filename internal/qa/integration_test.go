@@ -34,6 +34,7 @@ func TestIntegration_QAHandlers_CrossTenantReturns404(t *testing.T) {
 		"name":             "QAX Project",
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantA),
 	}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {
@@ -98,6 +99,7 @@ func TestIntegration_RunTranslationQA_PersistsAndScoped(t *testing.T) {
 		"name":             "QARun Project",
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantA),
 	}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {
@@ -243,6 +245,7 @@ func TestIntegration_RunQAJob_PrunesFixedSegments(t *testing.T) {
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "QA Prune Project", "source_language": "en", "target_languages": []string{"es"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantA),
 	}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {

@@ -2,11 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ErrorBoundary } from './ErrorBoundary'
 
-// notifyThen included because transitively-imported lazy-reload.ts binds it
-// from the same mocked module — without it that import is undefined.
 vi.mock('@/lib/errtrack', () => ({
   notify: vi.fn(),
-  notifyThen: vi.fn(),
 }))
 import { notify } from '@/lib/errtrack'
 

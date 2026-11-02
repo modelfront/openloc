@@ -3,7 +3,7 @@ title: "Analysis bands and word counts"
 summary: "How words are counted and why they land in repetitions, 100%, fuzzy or new."
 order: 30
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-17
+updated_at: 2026-10-26
 sources:
   - internal/analysis/**
   - internal/wordcount/**
@@ -99,6 +99,7 @@ The analysis is frozen at the moment it runs. The project is not.
 
 - **The memory grows.** Every segment a linguist confirms is written to the memory. A sentence that was New in the analysis can be a 100% match in the next file.
 - **Pre-translation can be rerun.** Applying the memory or machine translation again changes what the segments hold; the analysis you already took does not change with them.
+- **Segments can be split or joined.** A split or join in the editor changes only the job it is made in, and no analysis runs by itself afterwards. A saved analysis keeps its numbers until a project manager runs a new one, which counts the job's rows as they are now.
 - **Files can be added or deleted.** A row marked "(deleted)" belongs to a file removed after the snapshot.
 
 When the numbers matter — a quote, a hand-off — take a fresh analysis. Older ones stay in the list so you can compare.

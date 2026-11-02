@@ -1,10 +1,10 @@
-import type { SpellcheckJobResult, SpellMatch } from '../api/spellcheck'
+import type { SpellcheckJobResult, SpellcheckSegmentResult, SpellMatch } from '../api/spellcheck'
 
 /**
  * Orchestration for a document-wide spell check run.
  *
  * Scope resolution lives here rather than on the server: the CAT editor already
- * holds the translation list and the active filter, so the client resolves a
+ * holds the index of every segment and the active filter, so the client resolves a
  * scope to concrete translation ids and the endpoint stays a dumb "check these"
  * call. That also keeps the filter predicates in one place
  * (`lib/segment-filters.ts`) instead of duplicated in Go.
@@ -37,6 +37,9 @@ export interface SpellError {
   message: string
   suggestions: string[]
   ruleCategory: string
+  /** The target text that was checked; offset indexes into it. */
+  targetText: string
+  sourceText: string
 }
 
 export interface SpellcheckRunResult {
@@ -72,8 +75,6 @@ export function isIgnored(
 export interface RunSpellcheckOptions {
   jobId: number
   translationIds: number[]
-  /** Plain text of a translation, for extracting flagged words. */
-  textFor: (translationId: number) => string
   ignoredWords: Set<string>
   check: (jobId: number, ids: number[], signal?: AbortSignal) => Promise<SpellcheckJobResult>
   segmentIdFor?: (translationId: number) => number
@@ -93,7 +94,7 @@ export interface RunSpellcheckOptions {
  */
 export async function runSpellcheck(opts: RunSpellcheckOptions): Promise<SpellcheckRunResult> {
   const {
-    jobId, translationIds, textFor, ignoredWords, check,
+    jobId, translationIds, ignoredWords, check,
     segmentIdFor, segmentIndexFor, signal, onProgress,
   } = opts
   const size = opts.chunkSize ?? SPELLCHECK_CHUNK_SIZE
@@ -109,10 +110,9 @@ export async function runSpellcheck(opts: RunSpellcheckOptions): Promise<Spellch
     failed += result.failed ?? 0
 
     for (const segment of result.results ?? []) {
-      const text = textFor(segment.translation_id)
       for (const match of segment.matches ?? []) {
-        if (isIgnored(text, match, ignoredWords)) continue
-        errors.push(toSpellError(segment.translation_id, text, match, segmentIdFor, segmentIndexFor))
+        if (isIgnored(segment.text, match, ignoredWords)) continue
+        errors.push(toSpellError(segment, match, segmentIdFor, segmentIndexFor))
       }
     }
 
@@ -126,21 +126,23 @@ export async function runSpellcheck(opts: RunSpellcheckOptions): Promise<Spellch
 }
 
 function toSpellError(
-  translationId: number,
-  text: string,
+  segment: SpellcheckSegmentResult,
   match: SpellMatch,
   segmentIdFor?: (id: number) => number,
   segmentIndexFor?: (id: number) => number,
 ): SpellError {
+  const translationId = segment.translation_id
   return {
     translationId,
     segmentId: segmentIdFor?.(translationId) ?? 0,
     segmentIndex: segmentIndexFor?.(translationId) ?? -1,
     offset: match.offset,
     length: match.length,
-    word: text.slice(match.offset, match.offset + match.length),
+    word: segment.text.slice(match.offset, match.offset + match.length),
     message: match.message,
     suggestions: (match.replacements ?? []).slice(0, 5).map(r => r.value),
     ruleCategory: match.rule?.category?.id ?? '',
+    targetText: segment.text,
+    sourceText: segment.source_text,
   }
 }

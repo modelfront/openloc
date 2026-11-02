@@ -14,6 +14,8 @@ import (
 	"openloc/internal/logging"
 	"openloc/internal/parser"
 	"openloc/internal/projectevents"
+	"openloc/internal/segmentation"
+	"openloc/internal/segmentationapi"
 	"openloc/internal/timing"
 	"openloc/internal/wordcount"
 )
@@ -72,7 +74,21 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	if err != nil {
 		return IngestResult{}, err
 	}
-	p, err := parser.GetParserWith(format, parser.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: opts.XLSXLayout})
+	// The file keeps the rules it is split with (a snapshot, not a reference),
+	// so a later edit of the project's profile never re-reads it differently.
+	snapshot, err := segmentationapi.Resolve(ctx, h.queries, project.TenantID, settingsProfile.SegmentationProfileID, project.SourceLanguage)
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("resolve segmentation rules: %w", err)
+	}
+	segmentationJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("encode segmentation snapshot: %w", err)
+	}
+	segmenter, err := segmentation.Cached(snapshot.RuleSet)
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("compile segmentation rules: %w", err)
+	}
+	p, err := parser.GetParserWith(format, parser.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: opts.XLSXLayout, Segmenter: segmenter})
 	if err != nil {
 		logging.Warn(ctx, err, "parser lookup failed", "upload-parser-lookup-failed")
 		return IngestResult{}, httputil.NewClientError(fmt.Sprintf("file format %q is not supported", format))
@@ -119,6 +135,7 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 		SegmentCount: int32(len(segments)),
 		InlineHtml:   &inlineHTML,
 		XlsxLayout:   layoutJSON,
+		Segmentation: segmentationJSON,
 	})
 	if err != nil {
 		doneIngest(err)
@@ -253,64 +270,51 @@ func (h *Handler) batchInsertSegments(ctx context.Context, dbtx db.DBTX, fileID 
 // it also sets active_text and origin='file_import' on the stampLang translation
 // (see bilingualTarget); "" stamps none.
 func (h *Handler) batchInsertTranslations(ctx context.Context, dbtx db.DBTX, segmentIDs []int64, segments []parser.Segment, targetLangs []string, stampLang string) error {
-	// Build all (segmentID, lang, status) tuples. Every new row
-	// inserts at status='needs_review'. Rows with a
-	// pre-existing target get active_text + origin='file_import' stamped by the
-	// follow-up loop below, which makes them *derive* as pre_translated; rows
-	// with no target keep active_text NULL → derive as untranslated.
+	// Every new row inserts at status='needs_review'. A segment's pre-existing
+	// target lands on its stampLang row with origin='file_import', so that row
+	// derives as pre_translated; rows without one keep active_text NULL and
+	// derive as untranslated. The targets go in with the insert: the
+	// statement-level triggers on translations make every extra statement
+	// cost, and a file has tens of thousands of segments.
 	type translationRow struct {
 		segmentID int64
 		lang      string
-		status    string
+		origin    *string
+		text      *string
+		richText  *string
 	}
+	fileImport := string(db.TranslationOriginFileImport)
 	allRows := make([]translationRow, 0, len(segmentIDs)*len(targetLangs))
-	for _, sid := range segmentIDs {
+	for i, sid := range segmentIDs {
 		for _, lang := range targetLangs {
-			allRows = append(allRows, translationRow{sid, lang, string(db.TranslationStatusNeedsReview)})
+			r := translationRow{segmentID: sid, lang: lang}
+			if seg := segments[i]; seg.Target != "" && lang == stampLang {
+				r.origin, r.text = &fileImport, &seg.Target
+				if seg.TargetRichText != "" {
+					r.richText = &seg.TargetRichText
+				}
+			}
+			allRows = append(allRows, r)
 		}
 	}
 
-	// Batch-insert translations
-	const translationBatchSize = 500 // 500 rows * 3 cols = 1500 params
+	const translationBatchSize = 500 // 500 rows * 6 cols = 3000 params
 	for batch := range slices.Chunk(allRows, translationBatchSize) {
-
 		var b strings.Builder
-		b.WriteString("INSERT INTO translations (segment_id, target_language, status) VALUES ")
-		args := make([]any, 0, len(batch)*3)
+		b.WriteString("INSERT INTO translations (segment_id, target_language, status, origin, active_text, active_rich_text) VALUES ")
+		args := make([]any, 0, len(batch)*6)
 		for i, r := range batch {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			base := i * 3
-			fmt.Fprintf(&b, "($%d, $%d, $%d)", base+1, base+2, base+3)
-			args = append(args, r.segmentID, r.lang, r.status)
+			base := i * 6
+			fmt.Fprintf(&b, "($%d, $%d, $%d, $%d::translation_origin, $%d, $%d)", base+1, base+2, base+3, base+4, base+5, base+6)
+			args = append(args, r.segmentID, r.lang, string(db.TranslationStatusNeedsReview), r.origin, r.text, r.richText)
 		}
-
 		if _, err := dbtx.Exec(ctx, b.String(), args...); err != nil {
 			return fmt.Errorf("batch insert translations: %w", err)
 		}
 	}
-
-	// For segments with pre-existing targets (XLIFF imports), update the
-	// stampLang translation with origin='file_import' + active_text/active_rich_text.
-	for i, seg := range segments {
-		if seg.Target == "" || stampLang == "" {
-			continue
-		}
-		var richTextPtr *string
-		if seg.TargetRichText != "" {
-			richTextPtr = &seg.TargetRichText
-		}
-		_, err := dbtx.Exec(ctx,
-			`UPDATE translations SET origin = 'file_import',
-			 active_text = $1, active_rich_text = $2
-			 WHERE segment_id = $3 AND target_language = $4`,
-			seg.Target, richTextPtr, segmentIDs[i], stampLang)
-		if err != nil {
-			return fmt.Errorf("update pre-existing translation: %w", err)
-		}
-	}
-
 	return nil
 }
 

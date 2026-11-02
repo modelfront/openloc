@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -314,6 +315,39 @@ func TestRunAIStep_LLM_ProviderErrorSurfaced(t *testing.T) {
 	}
 	if !strings.Contains(msg, "rejected the API key") {
 		t.Fatalf("client error should carry the actionable reason, got: %q", msg)
+	}
+}
+
+// A provider that is down is an outage (502, still reported), and an error
+// that is not the provider's is ours: neither may pass as a message for the
+// user, which would keep it out of error tracking.
+func TestRunAIStep_LLM_OutageAndOwnErrorsAreNotUserErrors(t *testing.T) {
+	for name, perr := range map[string]error{
+		"outage": &ai.ProviderError{Provider: "openai", Status: 503, Kind: ai.ProviderErrProvider},
+		"ours":   errors.New("marshal request: unsupported value"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			mq := newMockQuerier()
+			mq.addFileProject(1, 10, nil, "en", []string{"de"})
+			mq.setAIProviderConn(1, "openai", "sk-test")
+			mq.addLLMAIStepJob(5, 1, 1, "de", "qe_ape", "LLM APE", "openai", "reject")
+			mt := "Hallo"
+			mq.preTranslated[1] = []db.ListPreTranslatedByFileRow{
+				{ID: 100, SegmentID: 1, Position: 0, TargetLanguage: "de", SourceText: "Hello", ActiveText: &mt},
+			}
+
+			_, err := newLLMAIStepService(mq, &fakePredictor{err: perr}).RunAIStep(context.Background(), 1, 5, nil)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if msg, ok := httputil.AsClientError(err); ok {
+				t.Fatalf("must not be a ClientError, got %q", msg)
+			}
+			var outage *VendorOutageError
+			if got := errors.As(err, &outage); got != (name == "outage") {
+				t.Fatalf("VendorOutageError = %v for %s, got %T: %v", got, name, err, err)
+			}
+		})
 	}
 }
 

@@ -565,12 +565,12 @@ test.describe.serial("J18 — QA Profile Rules Gauntlet", () => {
     ).toBeNull();
   });
 
-  test("D2b: run-qa returns 400 'no QA profile assigned' after unassigning", async ({ page }) => {
+  test("D2b: run-qa returns 409 'no QA profile assigned' after unassigning", async ({ page }) => {
     await login(page);
     const { status, body } = await runQAViaAPI(page, jobId);
     expect(status,
-      "D2b: run-qa with no profile assigned must 400. Got: " + JSON.stringify(body).slice(0, 200),
-    ).toBe(400);
+      "D2b: run-qa with no profile assigned must 409. Got: " + JSON.stringify(body).slice(0, 200),
+    ).toBe(409);
   });
 
   test("D3: create a SECOND profile with only target_identical_to_source, swap, verify ONLY that check fires", async ({ page }) => {

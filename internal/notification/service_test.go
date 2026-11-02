@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"openloc/internal/emaillayout"
 )
 
 // ---------------------------------------------------------------------------
@@ -373,5 +375,63 @@ func TestRenderHTML_IssueUpdate(t *testing.T) {
 		if strings.Contains(html, unwanted) {
 			t.Errorf("issue update email has %q:\n%s", unwanted, html)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Email subject + thread tests
+// ---------------------------------------------------------------------------
+
+func TestEmailSubject_JobEventsUseProjectName(t *testing.T) {
+	for _, typ := range allEventTypes {
+		t.Run(string(typ), func(t *testing.T) {
+			if got := EmailSubject(makeEvent(typ)); got != "[OpenLoc] Demo Project" {
+				t.Errorf("EmailSubject(%s) = %q, want %q", typ, got, "[OpenLoc] Demo Project")
+			}
+		})
+	}
+}
+
+func TestEmailSubject_FallsBackToSubject(t *testing.T) {
+	noProject := makeEvent(EventCompletion)
+	noProject.ProjectName = ""
+	issue := Event{Type: EventIssueResolved, IssueTitle: "Export does nothing"}
+	for name, e := range map[string]Event{"no project name": noProject, "issue resolved": issue} {
+		t.Run(name, func(t *testing.T) {
+			if got, want := EmailSubject(e), Subject(e); got != want {
+				t.Errorf("EmailSubject = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestEmailThread_IsPerProject(t *testing.T) {
+	thread := func(e Event) emaillayout.Thread { return EmailThread(e, testBaseURL) }
+	base := makeEvent(EventCompletion)
+	if got := thread(base); got != (emaillayout.Thread{ID: "project-1-50.app.example.com"}) {
+		t.Errorf("thread = %+v, want project-1-50.app.example.com with no root", got)
+	}
+	other := makeEvent(EventAssignment)
+	other.JobID, other.FileName, other.TargetLang = 101, "other.docx", "fr"
+	if thread(other) != thread(base) {
+		t.Errorf("same project: threads %+v and %+v differ", thread(other), thread(base))
+	}
+	otherProject := makeEvent(EventCompletion)
+	otherProject.ProjectID = 51
+	otherTenant := makeEvent(EventCompletion)
+	otherTenant.TenantID = 2
+	for name, e := range map[string]Event{"other project": otherProject, "other tenant": otherTenant} {
+		if thread(e) == thread(base) {
+			t.Errorf("%s shares thread %+v", name, thread(e))
+		}
+	}
+	noProject := makeEvent(EventCompletion)
+	noProject.ProjectID = 0
+	if got := thread(noProject); got != (emaillayout.Thread{}) {
+		t.Errorf("no project: thread = %+v, want none", got)
+	}
+	issue := Event{Type: EventIssueUpdated, Thread: emaillayout.Thread{ID: "issue-7.app.example.com"}}
+	if got := thread(issue); got != issue.Thread {
+		t.Errorf("issue event: thread = %+v, want its own %+v", got, issue.Thread)
 	}
 }

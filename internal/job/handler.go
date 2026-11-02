@@ -93,13 +93,29 @@ func (h *Handler) SetCanceller(c TaskCanceller) { h.canceller = c }
 // still cancels them.
 func (h *Handler) SetDraining(ch <-chan struct{}) { h.draining = ch }
 
+// maxListJobIDs caps ?ids on the project job list.
+const maxListJobIDs = 500
+
 func (h *Handler) HandleListByProject(w http.ResponseWriter, r *http.Request) {
 	projectID, err := httputil.ParseID(r, "projectID")
 	if err != nil {
 		httputil.BadRequest(w, "invalid project ID")
 		return
 	}
-	views, err := h.ListByProject(r.Context(), auth.TenantIDFromContext(r.Context()), projectID)
+	// ?ids=… narrows the list to those jobs: the project page polls only the
+	// jobs still running.
+	ids, err := httputil.ParseIDList(r, "ids", maxListJobIDs)
+	if err != nil {
+		httputil.BadRequest(w, err.Error())
+		return
+	}
+	tenantID := auth.TenantIDFromContext(r.Context())
+	var views []JobView
+	if ids != nil {
+		views, err = h.ListByProjectIDs(r.Context(), tenantID, projectID, ids)
+	} else {
+		views, err = h.ListByProject(r.Context(), tenantID, projectID)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		httputil.NotFound(w, "project")
 		return
@@ -125,7 +141,8 @@ func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	httputil.Data(w, view)
 }
 
-// HandleTranslations returns translations for a job (delegates to existing query).
+// HandleTranslations returns every translation of a job, up to
+// httputil.WholeFileCap; a larger file is read through the editor routes.
 func (h *Handler) HandleTranslations(w http.ResponseWriter, r *http.Request) {
 	jobID, err := httputil.ParseID(r, "jobID")
 	if err != nil {
@@ -141,12 +158,17 @@ func (h *Handler) HandleTranslations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	translations, err := h.queries.ListTranslationsByFile(r.Context(), db.ListTranslationsByFileParams{
+	translations, err := h.queries.ListTranslationsByFileTenant(r.Context(), db.ListTranslationsByFileTenantParams{
 		FileID:         job.FileID,
 		TargetLanguage: job.TargetLanguage,
+		TenantID:       tenantID,
+		RowLimit:       httputil.WholeFileCap + 1,
 	})
 	if err != nil {
 		httputil.ServerError(w, "list", "translations")
+		return
+	}
+	if httputil.RefuseWholeFile(w, len(translations)) {
 		return
 	}
 
@@ -197,6 +219,12 @@ func (h *Handler) HandleDeleteJob(w http.ResponseWriter, r *http.Request) {
 			TargetLanguage: job.TargetLanguage,
 		}); err != nil {
 			return fmt.Errorf("delete translations: %w", err)
+		}
+		if err := q.DeleteJobLanguageSegments(r.Context(), db.DeleteJobLanguageSegmentsParams{
+			FileID:         job.FileID,
+			TargetLanguage: &job.TargetLanguage,
+		}); err != nil {
+			return fmt.Errorf("delete language segments: %w", err)
 		}
 		return q.DeleteJob(r.Context(), jobID)
 	}); err != nil {

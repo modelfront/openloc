@@ -58,10 +58,11 @@ vi.mock('./AssignmentSection', () => ({
     const i = v.indexOf(':')
     return i === -1 ? { id: Number(v) } : { kind: v.slice(0, i), id: Number(v.slice(i + 1)) }
   },
-  AssignmentSection: ({ title, onDraftChange, onCreateNewResource, headerContent, resourceActions }: Pick<ComponentProps<typeof AssignmentSection>, 'title' | 'onDraftChange' | 'onCreateNewResource' | 'headerContent' | 'resourceActions'>) => (
-    <div data-testid={`assignment-section-${title.toLowerCase().replace(/\s/g, '-')}`}>
+  AssignmentSection: ({ title, resources, onDraftChange, onCreateNewResource, headerContent, resourceActions, resourcePath }: Pick<ComponentProps<typeof AssignmentSection>, 'title' | 'resources' | 'onDraftChange' | 'onCreateNewResource' | 'headerContent' | 'resourceActions' | 'resourcePath'>) => (
+    <div data-testid={`assignment-section-${title.toLowerCase().replace(/\s/g, '-')}`} data-resource-path={resourcePath?.(3)}>
       {title}
       {headerContent}
+      {resources.map(r => r.meta != null && <span key={r.id} data-testid={`resource-meta-${r.id}`}>{r.meta}</span>)}
       {(resourceActions ?? []).map(a => (
         <button key={a.key} data-testid={`row-action-${title.toLowerCase().replace(/\s/g, '-')}-${a.key}`} onClick={a.onSelect}>
           {a.label}
@@ -129,7 +130,18 @@ vi.mock('../api', () => ({
   listAIEngines: vi.fn().mockResolvedValue([]),
   listAIPrompts: vi.fn().mockResolvedValue([]),
   listAIVendors: vi.fn().mockResolvedValue([]),
+  // The server's list for a source language: only the profiles that suit it,
+  // the one a new project starts with marked suggested.
+  listSegmentationProfiles: vi.fn((lang?: string) => Promise.resolve(segmentationProfilesFor(lang))),
 }))
+
+const segProfile = (id: number, name: string, sourceLanguage: string, suggested = false) =>
+  ({ id, name, source_languages: sourceLanguage ? [sourceLanguage] : [], suggested, builtin: id < 10, builtin_key: id === 1 ? 'builtin:default@1' : undefined, description: '', definition: { mode: 'sentence', rules: [], abbreviations: [], number_abbreviations: [] }, created_at: '', updated_at: '' })
+function segmentationProfilesFor(lang?: string) {
+  if (lang === 'is') return [segProfile(1, 'Default', '', true), segProfile(10, 'Icelandic legal', 'is')]
+  if (lang === 'de') return [segProfile(1, 'Default', ''), segProfile(2, 'German', 'de', true)]
+  return [segProfile(1, 'Default', ''), segProfile(2, 'German', 'de'), segProfile(10, 'Icelandic legal', 'is')]
+}
 
 // Mock inline-create dialogs — they use useMutation which needs a QueryClient.
 // SettingsEditor tests don't wrap with a QueryClientProvider, so mock the
@@ -176,7 +188,9 @@ const baseValues: SettingsValues = {
   tmOnUpload: false,
   autoComplete: true,
   inlineHTML: true,
+  linguistTerms: 'pending',
   qaProfileId: null,
+  segmentationProfileId: null,
   tmAssignments: [],
   mtRouterId: null,
   termAssignments: [],
@@ -234,29 +248,80 @@ describe('SettingsEditor', () => {
     expect(within(projectCard).getByTestId('settings-auto-complete')).toBeInTheDocument()
   })
 
-  // JSON, PO, TXT and Excel strings are HTML unless this is off.
-  describe('Strings contain HTML', () => {
-    const htmlSwitch = () => screen.getByRole('checkbox', { name: /strings contain html/i })
+  // Strings contain HTML: JSON, PO, TXT and Excel strings are HTML unless off.
+  describe.each([
+    { label: /strings contain html/i, testId: 'settings-inline-html', key: 'inline_html', field: 'inlineHTML' },
+  ] as const)('$testId', ({ label, testId, key, field }) => {
+    const toggle = () => screen.getByRole('checkbox', { name: label })
 
     it('shows the stored value in the project settings card', () => {
-      renderEditor({ values: { ...baseValues, inlineHTML: false } })
+      renderEditor({ values: { ...baseValues, [field]: false } })
       const projectCard = screen.getByText('Project settings').closest('div')!
-      expect(within(projectCard).getByTestId('settings-inline-html')).not.toBeChecked()
+      expect(within(projectCard).getByTestId(testId)).not.toBeChecked()
     })
 
-    it('edit mode: turning it off saves inline_html false', async () => {
+    it('edit mode: turning it off saves false', async () => {
       const { onUpdateScalars } = renderEditor()
-      expect(htmlSwitch()).toBeChecked()
-      await userEvent.click(htmlSwitch())
-      expect(onUpdateScalars).toHaveBeenCalledWith({ inline_html: false })
+      expect(toggle()).toBeChecked()
+      await userEvent.click(toggle())
+      expect(onUpdateScalars).toHaveBeenCalledWith({ [key]: false })
     })
 
     it('create mode: turning it off reaches the draft and keeps the other values', async () => {
       const onChange = vi.fn()
       renderEditor({ mode: 'create', values: { ...baseValues, autoComplete: false }, onChange, onUpdateScalars: undefined })
-      await userEvent.click(htmlSwitch())
-      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ inlineHTML: false, autoComplete: false }))
-      expect(htmlSwitch()).not.toBeChecked()
+      await userEvent.click(toggle())
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ [field]: false, autoComplete: false }))
+      expect(toggle()).not.toBeChecked()
+    })
+  })
+
+  // Linguists can add terms: No, or Yes with the status their terms get.
+  describe('Linguists can add terms', () => {
+    const picker = () => screen.getByTestId('linguist-terms-select')
+    const termBase = (mode: string) => ({ id: 1, resourceId: 1, resourceName: 'Main', sourceLang: 'en', targetLang: 'fr', mode })
+    const writable = { ...baseValues, termAssignments: [termBase('read_write')] }
+
+    it('shows the stored value in the Terminology card, not in Project settings', () => {
+      renderEditor({ values: { ...writable, linguistTerms: 'off' } })
+      const termCard = screen.getByTestId('terminology-settings')
+      expect(within(termCard).getByTestId('linguist-terms-select')).toHaveValue('off')
+      const projectCard = screen.getByText('Project settings').closest('div')!
+      expect(within(projectCard).queryByTestId('linguist-terms-select')).toBeNull()
+    })
+
+    it('edit mode: picking approved saves it', async () => {
+      const { onUpdateScalars } = renderEditor({ values: writable })
+      expect(picker()).toHaveValue('pending')
+      await userEvent.selectOptions(picker(), 'approved')
+      expect(onUpdateScalars).toHaveBeenCalledWith({ linguist_terms: 'approved' })
+    })
+
+    it('create mode: picking off reaches the draft and keeps the other values', async () => {
+      const onChange = vi.fn()
+      renderEditor({ mode: 'create', values: { ...writable, autoComplete: false }, onChange, onUpdateScalars: undefined })
+      await userEvent.selectOptions(picker(), 'off')
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ linguistTerms: 'off', autoComplete: false }))
+      expect(picker()).toHaveValue('off')
+    })
+
+    it('is disabled, and says why, while no term base allows Write', () => {
+      renderEditor({ values: { ...baseValues, termAssignments: [termBase('read')] } })
+      expect(picker()).toBeDisabled()
+      expect(screen.getByText('Tick Write on a term base to let linguists add terms.')).toBeInTheDocument()
+    })
+
+    it('asks for a term base first while there is none', () => {
+      renderEditor({ values: { ...baseValues, termAssignments: [] } })
+      expect(picker()).toBeDisabled()
+      expect(screen.getByText('Add a term base to let linguists add terms.')).toBeInTheDocument()
+    })
+
+    it('is enabled once a term base allows Write', () => {
+      renderEditor({ values: writable })
+      expect(picker()).toBeEnabled()
+      expect(screen.queryByText('Tick Write on a term base to let linguists add terms.')).toBeNull()
+      expect(screen.getByText("Linguists' terms wait for a project manager to approve them.")).toBeInTheDocument()
     })
   })
 
@@ -271,7 +336,20 @@ describe('SettingsEditor', () => {
     expect(screen.getByTestId('assignment-section-translation-memory')).toBeInTheDocument()
     expect(screen.getByTestId('mt-section')).toBeInTheDocument()
     expect(screen.getByTestId('mt-router-select')).toBeInTheDocument()
-    expect(screen.getByTestId('assignment-section-terminology')).toBeInTheDocument()
+    expect(screen.getByTestId('assignment-section-term-bases')).toBeInTheDocument()
+  })
+
+  it('labels each term base with its concept count', () => {
+    renderEditor({
+      termBases: [
+        { id: 1, name: 'Big', source_language: 'en', target_languages: ['de'], entry_count: 1234 },
+        { id: 2, name: 'One', source_language: 'en', target_languages: ['de'], entry_count: 1 },
+        { id: 3, name: 'Unknown', source_language: 'en', target_languages: ['de'] },
+      ],
+    })
+    expect(screen.getByTestId('resource-meta-1')).toHaveTextContent(/^1,234 concepts$/)
+    expect(screen.getByTestId('resource-meta-2')).toHaveTextContent(/^1 concept$/)
+    expect(screen.queryByTestId('resource-meta-3')).not.toBeInTheDocument()
   })
 
   // The New project page's Workflow card names the MT router before anything
@@ -460,7 +538,7 @@ describe('SettingsEditor', () => {
 
   it('keeps the create actions off the terminology section', () => {
     renderEditor({ mode: 'create' })
-    expect(screen.queryByTestId('row-action-terminology-new-mt-router')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('row-action-term-bases-new-mt-router')).not.toBeInTheDocument()
   })
 
   it('displays current fuzzy threshold as percentage', () => {
@@ -521,6 +599,28 @@ describe('SettingsEditor', () => {
     expect(screen.queryByRole('checkbox', { name: /predict on upload/i })).toBeNull()
   })
 
+  it('links each picked asset to where it lives, in a new tab', async () => {
+    renderEditor({ values: { ...baseValues, qaProfileId: 2, mtRouterId: 1, segmentationProfileId: 2 } })
+    const opens = (testId: string) => screen.getByTestId(testId)
+    expect(opens('mt-router-open')).toHaveAttribute('href', '/mt?attention=mt-router-1')
+    expect(opens('qa-profile-open')).toHaveAttribute('href', '/quality?attention=qa-profile-2')
+    expect(await screen.findByTestId('segmentation-profile-open')).toHaveAttribute('href', '/file-configurations/segmentation-profiles/2')
+    // Icons only: the label is the tooltip and the accessible name.
+    for (const [id, label] of [['mt-router-open', 'Open MT router'], ['qa-profile-open', 'Open QA profile'], ['segmentation-profile-open', 'Open segmentation profile']]) {
+      expect(opens(id)).toHaveAttribute('target', '_blank')
+      expect(opens(id)).toHaveAccessibleName(`${label} (opens in a new tab)`)
+      expect(opens(id)).not.toHaveTextContent(label)
+    }
+    expect(screen.getByTestId('assignment-section-term-bases')).toHaveAttribute('data-resource-path', '/terminology/3')
+  })
+
+  it('offers no link while nothing is picked', () => {
+    renderEditor()
+    expect(screen.queryByTestId('mt-router-open')).toBeNull()
+    expect(screen.queryByTestId('qa-profile-open')).toBeNull()
+    expect(screen.queryByTestId('segmentation-profile-open')).toBeNull()
+  })
+
   it('changes QA profile and calls onUpdateScalars', async () => {
     const user = userEvent.setup()
     const { onUpdateScalars } = renderEditor()
@@ -541,6 +641,90 @@ describe('SettingsEditor', () => {
     await user.selectOptions(qaSelect, '')
 
     expect(onUpdateScalars).toHaveBeenCalledWith({ qa_profile_id: null })
+  })
+
+  describe('segmentation profile', () => {
+    const select = () => screen.getByTestId('segmentation-profile-select') as HTMLSelectElement
+    const optionLabels = () => [...select().options].filter(o => o.value !== '').map(o => o.textContent)
+
+    it('lists only the profiles that suit the source language and preselects the suggested one', async () => {
+      renderEditor({ mode: 'create', onChange: vi.fn(), onUpdateScalars: undefined, sourceLanguage: 'is' })
+      await waitFor(() => expect(select()).toHaveValue('1'))
+      expect(optionLabels()).toEqual(['Default (built-in)', 'Icelandic legal'])
+    })
+
+    it('lists every profile while there is no source language', async () => {
+      renderEditor({ mode: 'create', onChange: vi.fn(), onUpdateScalars: undefined })
+      await waitFor(() => expect(optionLabels()).toEqual(['Default (built-in)', 'German (built-in)', 'Icelandic legal']))
+      // No language marks no suggestion: the default built-in stands in.
+      expect(select()).toHaveValue('1')
+    })
+
+    it('create mode: a pick reaches the draft, and a new source language it does not suit falls back to the suggested one', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const props = { mode: 'create' as const, onChange, onUpdateScalars: undefined }
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const tree = (lang: string) => (
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <SettingsEditor values={baseValues} tmCollections={[]} mtRouters={[]} termBases={[]} qaProfiles={qaProfiles} sourceLanguage={lang} {...props} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      )
+      const { rerender } = render(tree('is'))
+      await waitFor(() => expect(optionLabels()).toContain('Icelandic legal'))
+      await user.selectOptions(select(), '10')
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ segmentationProfileId: 10 }))
+      expect(select()).toHaveValue('10')
+
+      rerender(tree('de'))
+      await waitFor(() => expect(optionLabels()).toEqual(['Default (built-in)', 'German (built-in)']))
+      expect(select()).toHaveValue('2')
+    })
+
+    it('edit mode: a pick saves segmentation_profile_id and names the profile in the toast', async () => {
+      const user = userEvent.setup()
+      const { toast } = await import('sonner')
+      const { onUpdateScalars } = renderEditor({ sourceLanguage: 'is', values: { ...baseValues, segmentationProfileId: 1 } })
+      await waitFor(() => expect(optionLabels()).toContain('Icelandic legal'))
+      expect(select()).toHaveValue('1')
+      await user.selectOptions(select(), '10')
+      expect(onUpdateScalars).toHaveBeenCalledWith({ segmentation_profile_id: 10 })
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Segmentation profile set to Icelandic legal', undefined))
+    })
+
+    it('edit mode: a project whose profile was deleted shows no profile and asks for one', async () => {
+      renderEditor({ sourceLanguage: 'is', values: { ...baseValues, segmentationProfileId: null } })
+      await waitFor(() => expect(optionLabels()).toEqual(['Default (built-in)', 'Icelandic legal']))
+      expect(select()).toHaveValue('')
+      expect(screen.getByTestId('segmentation-profile-missing')).toHaveTextContent(/^Pick a segmentation profile\.$/)
+    })
+
+    it('edit mode: a live profile that no longer suits the language says so', async () => {
+      renderEditor({ sourceLanguage: 'is', values: { ...baseValues, segmentationProfileId: 99, segmentationProfileName: 'Legal' } })
+      await waitFor(() => expect(optionLabels()).toEqual(['Legal (not for this language)', 'Default (built-in)', 'Icelandic legal']))
+      expect(select()).toHaveValue('99')
+    })
+
+    it('puts the segmentation profile in the File configurations section', async () => {
+      renderEditor({ sourceLanguage: 'is', values: { ...baseValues, segmentationProfileId: 10 } })
+      const section = await screen.findByTestId('file-configurations-section')
+      expect(within(section).getByRole('heading', { name: 'File configurations' })).toBeInTheDocument()
+      expect(within(section).getByTestId('segmentation-profile-select')).toBeInTheDocument()
+    })
+
+    it('a list that fails to load shows the error with a Retry, not a profile marked deleted', async () => {
+      const user = userEvent.setup()
+      const api = await import('../api')
+      vi.mocked(api.listSegmentationProfiles).mockRejectedValueOnce(new Error('server unavailable'))
+      renderEditor({ sourceLanguage: 'is', values: { ...baseValues, segmentationProfileId: 10, segmentationProfileName: 'Icelandic legal' } })
+      const section = await screen.findByTestId('file-configurations-section')
+      await waitFor(() => expect(section).toHaveTextContent("Couldn't load the segmentation profiles: server unavailable"))
+      expect(screen.queryByTestId('segmentation-profile-select')).toBeNull()
+      await user.click(within(section).getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(select()).toHaveValue('10'))
+    })
   })
 
   it('in create mode calls onChange instead of onUpdateScalars', async () => {
@@ -828,7 +1012,7 @@ describe('SettingsEditor', () => {
 
     expect(screen.queryByTestId('create-tb-dialog')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('create-new-terminology'))
+    await user.click(screen.getByTestId('create-new-term-bases'))
 
     expect(screen.getByTestId('create-tb-dialog')).toBeInTheDocument()
   })
@@ -839,7 +1023,7 @@ describe('SettingsEditor', () => {
     // TM has the button (onCreateNewResource was passed)
     expect(screen.getByTestId('create-new-translation-memory')).toBeInTheDocument()
     // Term base has the button
-    expect(screen.getByTestId('create-new-terminology')).toBeInTheDocument()
+    expect(screen.getByTestId('create-new-term-bases')).toBeInTheDocument()
     // MT does NOT — inline-create is not supported for MT engines (too complex)
     expect(screen.queryByTestId('create-new-machine-translation')).not.toBeInTheDocument()
   })
@@ -867,6 +1051,16 @@ describe('SettingsEditor — followed TM profile', () => {
     expect(screen.getByTestId('tm-profile-settings-toggle')).toHaveTextContent(/Hide profile settings/)
   })
 
+  it('adds the TMs\' combined entries to the collapsed summary', () => {
+    renderEditor({
+      tmProfiles,
+      tmCollections: [{ id: 1, name: 'Big', entry_count: 1200 }, { id: 2, name: 'Small', entry_count: 34 }, { id: 3, name: 'Unused', entry_count: 9 }],
+      values: { ...baseValues, fuzzyThreshold: 0.6, tmProfileId: 7, tmProfileName: 'Acme', tmProfileUsageCount: 2,
+        tmAssignments: [{ id: 1, tmId: 1, mode: 'read', priority: 0 }, { id: 2, tmId: 2, mode: 'read', priority: 1 }] },
+    })
+    expect(screen.getByTestId('tm-profile-settings-toggle')).toHaveTextContent('Show profile settings — 2 TMs · 1,234 entries · 60% threshold')
+  })
+
   it('custom (unlinked) settings are never collapsed', () => {
     renderEditor({ tmProfiles })
     expect(screen.queryByTestId('tm-profile-settings-toggle')).toBeNull()
@@ -879,7 +1073,7 @@ describe('SettingsEditor — followed TM profile', () => {
       tmProfiles,
       values: { ...baseValues, tmProfileId: 7, tmProfileName: 'Acme', tmProfileUsageCount: 1 },
     })
-    expect(screen.getByTestId('tm-profile-editable')).toBeInTheDocument()
+    expect(screen.getByTestId('tm-profile-linked')).toHaveAttribute('data-editable', 'true')
     expandProfileSettings()
     expect(screen.getByTestId('tm-scoring')).not.toHaveAttribute('data-readonly', 'true')
     const fuzzy = screen.getByLabelText('Fuzzy match threshold')
@@ -911,7 +1105,7 @@ describe('SettingsEditor — followed TM profile', () => {
       tmProfiles,
       values: { ...baseValues, tmProfileId: 7, tmProfileName: 'Acme', tmProfileUsageCount: 2 },
     })
-    expect(screen.queryByTestId('tm-profile-editable')).toBeNull()
+    expect(screen.getByTestId('tm-profile-linked')).not.toHaveAttribute('data-editable')
     expandProfileSettings()
     expect(screen.getByTestId('tm-scoring')).toHaveAttribute('data-readonly', 'true')
     expect(screen.getByLabelText('Fuzzy match threshold')).toBeDisabled()

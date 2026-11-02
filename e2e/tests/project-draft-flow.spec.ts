@@ -6,7 +6,7 @@
 // on a timer — the autosave is debounced, so a sleep would be a guess.
 
 import { test, expect } from '@playwright/test'
-import { login, selectTargetLanguages, startFromScratch, startFromTemplate, submitProjectWizard } from './helpers'
+import { authHeaders, login, pickProjectWorkflow, selectTargetLanguages, standardWorkflow, startFromScratch, startFromTemplate, submitProjectWizard } from './helpers'
 
 const TS = Date.now()
 
@@ -14,17 +14,24 @@ const TS = Date.now()
 const DRAFT_SAVE_DELAY_MS = 800
 
 test.describe('Draft projects', () => {
+  let headers: Record<string, string> = {}
   test.beforeEach(async ({ page }) => {
     await login(page)
+    headers = await authHeaders(page)
   })
 
   // Worker-local cleanup registry: each parallel worker loads the module
   // separately, so a test only removes what it created itself.
   const createdProjects: number[] = []
+  // What a draft was made from goes after the draft.
+  const createdTemplates: number[] = []
+  const createdRouters: number[] = []
   test.afterEach(async ({ page }) => {
     while (createdProjects.length) {
       await page.request.delete(`/api/projects/${createdProjects.pop()}`)
     }
+    while (createdTemplates.length) await page.request.delete(`/api/templates/${createdTemplates.pop()}`, { headers }).catch(() => {})
+    while (createdRouters.length) await page.request.delete(`/api/mt-routers/${createdRouters.pop()}`, { headers }).catch(() => {})
   })
 
   test('typing a name saves a draft; reload and the list bring it back; Create publishes it', async ({ page }) => {
@@ -43,8 +50,8 @@ test.describe('Draft projects', () => {
     await startFromScratch(page)
 
     // An untouched wizard saves nothing. The mount-time work that would betray
-    // a wrongly-wired autosave has to have happened first: the step library
-    // arrives and seeds the workflow, and the settings editor reports its own
+    // a wrongly-wired autosave has to have happened first: the step and
+    // workflow libraries arrive, and the settings editor reports its own
     // draft. Then the debounce window has to elapse — `data-state` stays 'idle'
     // while a save is merely PENDING, so only the absence of a request proves
     // it. This is the negative-assertion exception to "never wait on a timer":
@@ -148,7 +155,9 @@ test.describe('Draft projects', () => {
     await expect(page.getByTestId(`create-file-${strayId}`)).toHaveCount(0)
     await expect(page.getByTestId('create-file-list')).toContainText('draft-upload.json')
 
-    // ── 6. Create project publishes the same row and lands on it.
+    // ── 6. Create project publishes the same row and lands on it. The form
+    //       starts with no workflow, so one is picked first.
+    await pickProjectWorkflow(page)
     const { response: publishResp, id } = await submitProjectWizard(page)
     expect(publishResp.status()).toBe(200)
     expect(id).toBe(draftId)
@@ -238,10 +247,14 @@ test.describe('Draft projects', () => {
     ])
     const draftId: number = (await createResp.json()).data.id
     createdProjects.push(draftId)
-    // Publishable below needs a target language too.
+    // Publishable below needs a target language and a workflow too.
     await Promise.all([
       page.waitForResponse(r => r.url().endsWith(`/api/projects/${draftId}/draft`) && r.request().method() === 'PUT'),
       selectTargetLanguages(page, page.locator('[data-field="target_languages"] button').first(), ['fr']),
+    ])
+    await Promise.all([
+      page.waitForResponse(r => r.url().endsWith(`/api/projects/${draftId}/draft`) && r.request().method() === 'PUT'),
+      pickProjectWorkflow(page),
     ])
 
     await page.goto(`/projects/${draftId}`)
@@ -259,6 +272,45 @@ test.describe('Draft projects', () => {
 
   // "Discard" means the draft is gone, not emptied: an abandoned start
   // must not leave an "Untitled draft" behind in the project list.
+  // A template's MT router fills the form; clearing it in the wizard must
+  // clear it on the draft too, or the published project still runs MT.
+  test("clearing a template's MT router clears it on the draft", async ({ page }) => {
+    test.setTimeout(30_000)
+    const engines = (await (await page.request.get('/api/mt-engines', { headers })).json()).data as { id: number }[]
+    expect(engines.length, 'the seed has an MT engine').toBeGreaterThan(0)
+    const routerRes = await page.request.post('/api/mt-routers', { headers, data: { name: `E2E Router ${TS}`, default: { mt_engine_id: engines[0].id } } })
+    expect(routerRes.ok(), `create router: ${routerRes.status()} ${await routerRes.text()}`).toBe(true)
+    const routerId: number = (await routerRes.json()).data.id
+    createdRouters.push(routerId)
+    const templateName = `E2E Router Template ${TS}`
+    const templateRes = await page.request.post('/api/templates', {
+      headers, data: { name: templateName, source_language: 'en', target_languages: ['de'], settings: { mt_router_id: routerId }, workflow_id: (await standardWorkflow(page)).id },
+    })
+    expect(templateRes.ok(), `create template: ${templateRes.status()} ${await templateRes.text()}`).toBe(true)
+    createdTemplates.push((await templateRes.json()).data.id)
+
+    await page.goto('/projects/new')
+    await startFromTemplate(page, templateName)
+    await expect(page.getByTestId('mt-router-select')).toContainText(`E2E Router ${TS}`)
+
+    const nameInput = page.getByPlaceholder('Project name')
+    const [createResp] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith('/api/projects') && r.request().method() === 'POST'),
+      (async () => { await nameInput.fill(`E2E Router Draft ${TS}`); await nameInput.blur() })(),
+    ])
+    const draftId: number = (await createResp.json()).data.id
+    createdProjects.push(draftId)
+    const routerOf = async () => (await (await page.request.get(`/api/projects/${draftId}/settings`, { headers })).json()).data.project.mt_router_id
+    expect(await routerOf(), 'the draft starts with the template router').toBe(routerId)
+
+    const [saveResp] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith(`/api/projects/${draftId}/draft`) && r.request().method() === 'PUT'),
+      page.getByTestId('mt-router-select-clear').click(),
+    ])
+    expect(saveResp.ok()).toBe(true)
+    expect(await routerOf(), 'the cleared router is gone from the draft').toBeNull()
+  })
+
   test('Discard deletes the draft and the wizard begins again clean', async ({ page }) => {
     const name = `E2E Start Over ${TS}`
     await page.goto('/projects/new')
@@ -412,5 +464,36 @@ test.describe('Draft projects', () => {
     expect(publish.status()).toBe(400)
     const project = await page.request.get(`/api/projects/${draftId}`)
     expect((await project.json()).data.status).toBe('draft')
+  })
+
+  test('a reopened draft without a workflow still asks for one', async ({ page }) => {
+    await page.getByRole('link', { name: 'New project' }).click()
+    await startFromScratch(page)
+    const nameInput = page.getByPlaceholder('Project name')
+    const [createResp] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith('/api/projects') && r.request().method() === 'POST'),
+      (async () => {
+        await nameInput.fill(`E2E Draft no workflow ${TS}`)
+        await nameInput.blur()
+      })(),
+    ])
+    const draftId: number = (await createResp.json()).data.id
+    createdProjects.push(draftId)
+    await Promise.all([
+      page.waitForResponse(r => r.url().endsWith(`/api/projects/${draftId}/draft`) && r.request().method() === 'PUT'),
+      selectTargetLanguages(page, page.locator('[data-field="target_languages"] button').first(), ['fr']),
+    ])
+
+    // The draft holds no steps, so the reopened form has none either.
+    await page.reload()
+    await expect(nameInput).toHaveValue(`E2E Draft no workflow ${TS}`)
+    const select = page.getByTestId('use-workflow-select')
+    await expect(select).toContainText('Choose a workflow')
+    await expect(page.getByTestId('create-workflow-card').locator('[data-testid^="workflow-deadline-input-"]')).toHaveCount(0)
+
+    await page.getByRole('button', { name: /^create project$/i }).click()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Pick a workflow, or create one' })).toBeVisible()
+    await expect(select).toHaveAttribute('aria-invalid', 'true')
+    await expect(page).toHaveURL(new RegExp(`\\?draft=${draftId}$`))
   })
 })

@@ -1,6 +1,10 @@
 package pipeline
 
-import db "openloc/internal/database/sqlcgen"
+import (
+	"fmt"
+
+	db "openloc/internal/database/sqlcgen"
+)
 
 // TranslateOutcome reports what a TranslateFile run did, per phase.
 //
@@ -114,4 +118,24 @@ func (f tmFilled) names(assignments []db.LookupSettingsTMsRow) []string {
 type mtRun struct {
 	translated int
 	engine     string
+}
+
+// UnactionableMessage returns a user-facing error message when a requested
+// phase was a no-op due to missing project configuration. Empty string when
+// every requested phase either ran or skipped for a non-config reason (e.g.,
+// nothing to translate).
+func (o TranslateOutcome) UnactionableMessage(phases TranslatePhases, sourceLang, targetLang string) string {
+	if phases.UseTM && o.TMSkipReason == PhaseSkipNoAssignment {
+		return fmt.Sprintf("No TM configured for %s → %s — add one in project settings", sourceLang, targetLang)
+	}
+	if phases.UseMT && o.MTSkipReason == PhaseSkipNoAssignment {
+		return fmt.Sprintf("No MT engine configured for %s → %s — add one in project settings", sourceLang, targetLang)
+	}
+	if phases.UseMT && o.MTSkipReason == PhaseSkipNoRoute {
+		return fmt.Sprintf("The project's MT router has no engine for %s — add a route for it, or a default engine, in MT → Routers", targetLang)
+	}
+	if phases.UseMT && o.MTSkipReason == PhaseSkipNoProvider {
+		return fmt.Sprintf("The AI engine assigned for %s → %s has no connected provider — connect it in AI settings → Providers", sourceLang, targetLang)
+	}
+	return ""
 }

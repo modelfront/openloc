@@ -142,7 +142,7 @@ func (b *directBackend) PreviewReportIssue(ctx context.Context, in ReportIssueIn
 		Summary: fmt.Sprintf("Send “%s” to the support team: %s, %s.", in.Title,
 			issues.KindSummary(in.Kind, in.Severity), issues.AreaLabel(area)),
 		Effects: []string{
-			"The support team gets an email with the report, the page and your role.",
+			"The support team gets the report, the page and your role.",
 			"You follow the answer under Reported issues in the account menu.",
 		},
 		VerificationToken: token,
@@ -170,9 +170,6 @@ func (b *directBackend) ReportIssue(ctx context.Context, in ReportIssueIn) (Repo
 		return ReportIssueResult{}, serviceErr(err, "sign issue verification")
 	}
 	issue, err := svc.Create(ctx, m, n)
-	if issues.IsRateLimited(err) {
-		return ReportIssueResult{}, errLimited{err.Error()}
-	}
 	if err != nil {
 		return ReportIssueResult{}, serviceErr(err, "report issue")
 	}

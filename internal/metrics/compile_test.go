@@ -34,7 +34,7 @@ func TestCompileGoldenMTEngineUsage(t *testing.T) {
 
 	want := `SELECT "mt_engine", "month", COUNT(*) AS segments, COALESCE(SUM(word_count), 0) AS words, COALESCE(SUM(char_count), 0) AS characters
 FROM (
-  SELECT DISTINCT t.id AS _unit, length(s.source_text) AS char_count, s.word_count AS word_count, me.name AS "mt_engine", date_trunc('month', th.created_at)::date AS "month"
+  SELECT DISTINCT ON (COALESCE((th.details->>'translation_id')::bigint, t.id), me.name, date_trunc('month', th.created_at)::date) COALESCE((th.details->>'translation_id')::bigint, t.id) AS _unit, COALESCE((th.details->>'char_count')::int, length(s.source_text)) AS char_count, COALESCE((th.details->>'word_count')::int, s.word_count) AS word_count, me.name AS "mt_engine", date_trunc('month', th.created_at)::date AS "month"
   FROM translation_history th
 JOIN translations t ON t.id = th.translation_id
 JOIN segments s ON s.id = t.segment_id
@@ -50,6 +50,7 @@ LEFT JOIN ai_engines ais ON ais.id = th.ai_engine_id
 LEFT JOIN job_step_assignments jsa ON jsa.id = th.job_step_assignment_id
 LEFT JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
   WHERE p.tenant_id = $1 AND th.tenant_id = $1 AND p.deleted_at IS NULL AND th.created_at >= $2 AND th.created_at < $3 AND th.kind = 'mt' AND th.mt_engine_id IS NOT NULL AND LOWER(t.target_language) = $4
+  ORDER BY COALESCE((th.details->>'translation_id')::bigint, t.id), me.name, date_trunc('month', th.created_at)::date, th.created_at
 ) sub
 GROUP BY "mt_engine", "month"
 ORDER BY "month" ASC

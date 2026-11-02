@@ -122,6 +122,7 @@ func TestIntegrationCustomerCRUD(t *testing.T) {
 	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/projects", map[string]any{
 		"name": "Acme launch", "source_language": "en", "target_languages": []string{"de"},
 		"customer_id": customerID,
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, owner.ID, tenant.ID, "owner")
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	rec = testutil.DoRequestWithRole(t, router, "GET", fmt.Sprintf("/api/customers/%d/project-count", customerID), nil, admin.ID, tenant.ID, "admin")

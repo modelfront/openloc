@@ -26,6 +26,7 @@ import (
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/file"
+	"openloc/internal/notification"
 	"openloc/internal/testutil"
 )
 
@@ -104,6 +105,8 @@ type fixture struct {
 	tokenA     string
 	tokenLingA string
 	tokenB     string
+	// outbox holds the emails an issue fixture's server sent.
+	outbox *notification.Outbox
 }
 
 func newFixture(t *testing.T) *fixture {

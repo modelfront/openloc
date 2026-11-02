@@ -17,7 +17,8 @@ SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_ste
        COALESCE(lc.id, 0)::bigint AS last_completed_id,
        COALESCE(lc.step_order, 0)::int AS last_completed_order,
        COALESCE(lc.name, '')::text AS last_completed_name,
-       COALESCE(lc.step_type, '')::text AS last_completed_type
+       COALESCE(lc.step_type, '')::text AS last_completed_type,
+       job_last_clear_step_order(j.id) AS last_clear_step_order
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
 JOIN jobs j ON j.file_id = s.file_id AND j.target_language = t.target_language
@@ -52,7 +53,8 @@ SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_ste
        COALESCE(lc.id, 0)::bigint AS last_completed_id,
        COALESCE(lc.step_order, 0)::int AS last_completed_order,
        COALESCE(lc.name, '')::text AS last_completed_name,
-       COALESCE(lc.step_type, '')::text AS last_completed_type
+       COALESCE(lc.step_type, '')::text AS last_completed_type,
+       job_last_clear_step_order(j.id) AS last_clear_step_order
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 JOIN projects p ON p.id = f.project_id

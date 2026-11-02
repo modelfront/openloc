@@ -62,12 +62,13 @@ func CopyAssignments(ctx context.Context, q db.Querier, srcID, dstID int64) erro
 			return fmt.Errorf("create workflow step: %w", err)
 		}
 	}
-	// The "Based on workflow …" pointer travels with the steps it describes.
+	// The "Based on workflow …" pointer, and its edited mark, travel with the
+	// steps they describe.
 	srcProfile, err := q.GetSettingsProfile(ctx, srcID)
 	if err != nil {
 		return fmt.Errorf("get source profile: %w", err)
 	}
-	if err := q.SetSettingsProfileWorkflow(ctx, db.SetSettingsProfileWorkflowParams{ID: dstID, WorkflowID: srcProfile.WorkflowID}); err != nil {
+	if err := q.SetSettingsProfileWorkflow(ctx, db.SetSettingsProfileWorkflowParams{ID: dstID, WorkflowID: srcProfile.WorkflowID, WorkflowEdited: srcProfile.WorkflowEdited}); err != nil {
 		return fmt.Errorf("copy workflow provenance: %w", err)
 	}
 

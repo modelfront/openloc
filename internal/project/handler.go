@@ -72,6 +72,7 @@ type createRequest struct {
 		TmOnUpload     *bool    `json:"tm_on_upload"`
 		AutoComplete   *bool    `json:"auto_complete"`
 		InlineHTML     *bool    `json:"inline_html"`
+		LinguistTerms  *string  `json:"linguist_terms"`
 		// Match scoring; nil keeps the template's value or the column default.
 		SublanguagePenaltyPct *int32  `json:"sublanguage_penalty_pct"`
 		NearExactPenaltyPct   *int32  `json:"near_exact_penalty_pct"`
@@ -83,8 +84,12 @@ type createRequest struct {
 		// (template value), null/0 = clear, N>0 = set. The wizard sends
 		// null when the user cleared a template's prefilled profile.
 		QAProfileID json.RawMessage `json:"qa_profile_id"`
-		// MT router for the project (nil = keep the template's, if any).
-		MTRouterID *int64 `json:"mt_router_id"`
+		// Tri-state like qa_profile_id: absent = keep (template value),
+		// null/0 = clear, N>0 = set.
+		MTRouterID json.RawMessage `json:"mt_router_id"`
+		// Segmentation profile; nil keeps the template's while it fits the
+		// source language, else the suggested one for it.
+		SegmentationProfileID *int64 `json:"segmentation_profile_id"`
 	} `json:"settings"`
 	TMAssignments   []settings.TMAssignmentInput   `json:"tm_assignments"`
 	TermAssignments []settings.TermAssignmentInput `json:"term_assignments"`
@@ -119,15 +124,19 @@ func (req *createRequest) params() (CreateParams, SetupConfig, error) {
 		cfg.TmOnUpload = req.Settings.TmOnUpload
 		cfg.AutoComplete = req.Settings.AutoComplete
 		cfg.InlineHTML = req.Settings.InlineHTML
+		cfg.LinguistTerms = req.Settings.LinguistTerms
 		cfg.SublanguagePenaltyPct = req.Settings.SublanguagePenaltyPct
 		cfg.NearExactPenaltyPct = req.Settings.NearExactPenaltyPct
 		cfg.TMLookupOrder = req.Settings.TMLookupOrder
-		if req.Settings.MTRouterID != nil && *req.Settings.MTRouterID > 0 {
-			cfg.MTRouterID = req.Settings.MTRouterID
+		routerID, routerSet, err := settings.ParseNullableIDPatch(req.Settings.MTRouterID, "settings.mt_router_id")
+		if err != nil {
+			return params, cfg, err
 		}
+		cfg.MTRouterID, cfg.ClearMTRouter = routerID, routerSet && routerID == nil
 		if req.Settings.TMProfileID != nil && *req.Settings.TMProfileID > 0 {
 			cfg.TMProfileID = req.Settings.TMProfileID
 		}
+		cfg.SegmentationProfileID = req.Settings.SegmentationProfileID
 		if len(req.Settings.QAProfileID) > 0 {
 			if raw := strings.TrimSpace(string(req.Settings.QAProfileID)); raw == "null" {
 				cfg.ClearQAProfile = true
@@ -222,10 +231,11 @@ func (h *Handler) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := auth.TenantIDFromContext(r.Context())
-	project, err := h.queries.GetProject(r.Context(), db.GetProjectParams{
+	// The project list's row (creator and customer names included), so the
+	// project page renders what a list row does.
+	project, err := h.queries.GetProjectListRow(r.Context(), db.GetProjectListRowParams{
 		ID:       id,
-		TenantID: tenantID,
+		TenantID: auth.TenantIDFromContext(r.Context()),
 	})
 	if httputil.DBError(w, err, "project") {
 		return

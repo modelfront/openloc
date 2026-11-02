@@ -38,8 +38,17 @@ export function OrgSwitcher() {
     if (closeTimer.current) clearTimeout(closeTimer.current)
     closeTimer.current = null
   }
-  const openNow = () => { cancelClose(); setOpen(true) }
+  // Whether the open menu came from the hover. A click always follows the
+  // pointer onto the trigger, so a press on a hover-opened trigger keeps the
+  // menu open instead of toggling it shut.
+  const hoverOpened = useRef(false)
+  const openNow = () => { cancelClose(); hoverOpened.current = true; setOpen(true) }
   const closeSoon = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 120) }
+  const onOpenChange = (next: boolean, details: { reason: string }) => {
+    if (!next && details.reason === 'trigger-press' && hoverOpened.current) return
+    hoverOpened.current = false
+    setOpen(next)
+  }
   useEffect(() => cancelClose, [])
 
   const switchOrg = async (tenantId: number) => {
@@ -65,7 +74,7 @@ export function OrgSwitcher() {
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         onMouseMove={openNow}
         onMouseLeave={closeSoon}

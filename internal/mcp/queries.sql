@@ -44,7 +44,9 @@ SELECT
     j.total_count     AS total_count,
     f.name            AS file_name,
     f.format          AS file_format,
-    f.segment_count   AS segment_count,
+    -- The job's own rows: a split or join changes this job only.
+    COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+              WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
     p.id              AS project_id,
     p.name            AS project_name,
     p.source_language AS source_language,
@@ -95,7 +97,9 @@ SELECT
     j.translated_count AS translated_count,
     j.total_count     AS total_count,
     f.name            AS file_name,
-    f.segment_count   AS segment_count,
+    -- The job's own rows: a split or join changes this job only.
+    COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
+              WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
     jsa.deadline      AS step_deadline,
     p.id              AS project_id,
     p.name            AS project_name
@@ -266,3 +270,18 @@ SELECT file_id, count(*)::int AS job_count
 FROM jobs
 WHERE file_id = ANY(@file_ids::bigint[])
 GROUP BY file_id;
+
+-- name: ListTenantFileIDsIn :many
+-- The ids among @ids whose file belongs to the tenant: the LLM call log
+-- carries file ids but no tenant, so this decides which calls an org may read.
+SELECT f.id
+FROM files f
+JOIN projects p ON p.id = f.project_id
+WHERE f.id = ANY(sqlc.arg(ids)::bigint[])
+  AND p.tenant_id = sqlc.arg(tenant_id)
+  AND p.deleted_at IS NULL;
+
+-- name: ListProjectFileIDs :many
+-- Internal: every file id of a project, for the LLM call log's project filter.
+-- Callers check the project's tenant first, or are the support team.
+SELECT id FROM files WHERE project_id = $1;

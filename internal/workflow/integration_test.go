@@ -23,7 +23,8 @@ func TestIntegrationSetAndListWorkflowSteps(t *testing.T) {
 
 	// Create template
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Steps Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Steps Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -102,7 +103,8 @@ func TestIntegrationListJobSteps(t *testing.T) {
 
 	// Create template + workflow steps via API
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Job Steps Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Job Steps Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -136,6 +138,7 @@ func TestIntegrationListJobSteps(t *testing.T) {
 		"name":             "Job Steps Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -207,7 +210,8 @@ func TestIntegrationAdvanceStep(t *testing.T) {
 
 	// Create template + workflow steps
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Advance Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Advance Template",
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -241,6 +245,7 @@ func TestIntegrationAdvanceStep(t *testing.T) {
 		"name":             "Advance Project",
 		"source_language":  "en",
 		"target_languages": []string{"de"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -324,7 +329,8 @@ func TestIntegrationHardLockForbidden(t *testing.T) {
 
 	// Create template + steps
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Lock Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Lock Template",
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -355,6 +361,7 @@ func TestIntegrationHardLockForbidden(t *testing.T) {
 		"name":             "Lock Project",
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -408,7 +415,8 @@ func TestIntegrationRejectStep(t *testing.T) {
 
 	// Create template + steps
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Reject Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Reject Template",
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -442,6 +450,7 @@ func TestIntegrationRejectStep(t *testing.T) {
 		"name":             "Reject Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -529,7 +538,8 @@ func TestIntegrationAssignStep(t *testing.T) {
 
 	// Create template + steps
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Assign Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Assign Template",
 	}, ownerID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -559,6 +569,7 @@ func TestIntegrationAssignStep(t *testing.T) {
 		"name":             "Assign Project",
 		"source_language":  "en",
 		"target_languages": []string{"es"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, ownerID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -625,7 +636,8 @@ func TestIntegrationRejectWithReason(t *testing.T) {
 
 	// Create template + steps
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Reason Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Reason Template",
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -659,6 +671,7 @@ func TestIntegrationRejectWithReason(t *testing.T) {
 		"name":             "Reason Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -750,7 +763,8 @@ func TestIntegrationDefaultAssigneeOnAdvance(t *testing.T) {
 
 	// Create template + workflow steps with default_assignee on review step
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "DefAssign Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "DefAssign Template",
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -784,6 +798,7 @@ func TestIntegrationDefaultAssigneeOnAdvance(t *testing.T) {
 		"name":             "DefAssign Project",
 		"source_language":  "en",
 		"target_languages": []string{"de"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 	}, translatorID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -936,7 +951,7 @@ func TestIntegration_WorkflowHandlers_CrossTenantReturns404(t *testing.T) {
 
 	// Template + steps for tenant A.
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates",
-		map[string]any{"name": "WFX Template"}, userA, tenantA)
+		map[string]any{"workflow_id": testutil.LibraryWorkflow(t, q, tenantA), "name": "WFX Template"}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {
 		Data struct {
@@ -967,6 +982,7 @@ func TestIntegration_WorkflowHandlers_CrossTenantReturns404(t *testing.T) {
 		"name":             "WFX Project",
 		"source_language":  "en",
 		"target_languages": []string{"de"},
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantA),
 	}, userA, tenantA)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var projResp struct {

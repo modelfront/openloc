@@ -29,10 +29,12 @@ type projectOpsTools interface {
 	GetFile(ctx context.Context, in FileRef) (FileDetail, error)
 	RenameFile(ctx context.Context, in RenameFileIn) (FileDetail, error)
 	AttachUploadedFile(ctx context.Context, in AttachUploadedFileIn) (AttachedFileOut, error)
+	AttachUploadedFiles(ctx context.Context, in AttachUploadedFilesIn) (AttachedFilesOut, error)
 	UploadTextFile(ctx context.Context, in UploadTextFileIn) (AttachedFileOut, error)
 	PreviewReimportXLIFF(ctx context.Context, in ReimportXLIFFIn) (Preview, error)
 	ReimportXLIFF(ctx context.Context, in ReimportXLIFFIn) (ReimportOut, error)
 	ExportFile(ctx context.Context, in ExportFileIn) (ExportFileOut, error)
+	ReadUploadedFile(ctx context.Context, in ReadUploadedFileIn) (UploadedFileTextOut, error)
 	DownloadSource(ctx context.Context, in FileRef) (DownloadOut, error)
 
 	// Labels
@@ -102,11 +104,15 @@ type ProjectSettingsOut struct {
 	MTOnUpload            bool    `json:"mt_on_upload"`
 	AutoComplete          bool    `json:"auto_complete"`
 	InlineHTML            bool    `json:"inline_html"`
+	LinguistTerms         string  `json:"linguist_terms"`
 	QAProfileID           *int64  `json:"qa_profile_id"`
-	MTRouterID            *int64  `json:"mt_router_id"`
-	MTRouterName          string  `json:"mt_router_name"`
-	WorkflowID            *int64  `json:"workflow_id"`
-	WorkflowName          string  `json:"workflow_name"`
+	// SegmentationProfileID is the profile new uploads are split with.
+	SegmentationProfileID   *int64 `json:"segmentation_profile_id"`
+	SegmentationProfileName string `json:"segmentation_profile_name"`
+	MTRouterID              *int64 `json:"mt_router_id"`
+	MTRouterName            string `json:"mt_router_name"`
+	WorkflowID              *int64 `json:"workflow_id"`
+	WorkflowName            string `json:"workflow_name"`
 	// TMProfile is set when the project follows a TM profile; its TMs and
 	// scoring then come from the profile and cannot be edited on the project.
 	TMProfile     *TMProfileOut       `json:"tm_profile"`
@@ -164,12 +170,14 @@ type UpdateProjectSettingsIn struct {
 	MTOnUpload            *bool    `json:"mt_on_upload,omitempty" jsonschema:"pre-translate new uploads with machine translation"`
 	AutoComplete          *bool    `json:"auto_complete,omitempty" jsonschema:"complete the project automatically when its last job completes"`
 	InlineHTML            *bool    `json:"inline_html,omitempty" jsonschema:"strings in JSON, PO, TXT and Excel files are HTML: their tags become protected tags. Applies to files uploaded afterwards"`
+	LinguistTerms         *string  `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved"`
 	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score to use, as a fraction: 0.75 is 75%. Refused while the project follows a TM profile."`
 	SublanguagePenaltyPct *int32   `json:"sublanguage_penalty_pct,omitempty" jsonschema:"TM penalty for a sublanguage match, 0-100. Refused while the project follows a TM profile."`
 	NearExactPenaltyPct   *int32   `json:"near_exact_penalty_pct,omitempty" jsonschema:"TM penalty for a near-exact match, 0-100. Refused while the project follows a TM profile."`
 	QAProfileID           *int64   `json:"qa_profile_id,omitempty" jsonschema:"QA profile to use; 0 removes it"`
 	MTRouterID            *int64   `json:"mt_router_id,omitempty" jsonschema:"MT router to use, from openloc_list_mt_routers; 0 removes it"`
 	TMProfileID           *int64   `json:"tm_profile_id,omitempty" jsonschema:"link the project to this TM profile: its TMs and match scoring then come from the profile"`
+	SegmentationProfileID *int64   `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile new uploads are split with, from openloc_list_segmentation_profiles with the project's source language; files already uploaded keep their segments"`
 }
 
 type TMAssignmentIn struct {
@@ -192,7 +200,7 @@ type TermAssignmentIn struct {
 	TermBaseID     int64  `json:"term_base_id" jsonschema:"a term base id"`
 	SourceLanguage string `json:"source_language" jsonschema:"source language code the term base serves on this project"`
 	TargetLanguage string `json:"target_language" jsonschema:"target language code"`
-	Mode           string `json:"mode,omitempty" jsonschema:"read or read_write (default read)"`
+	Mode           string `json:"mode,omitempty" jsonschema:"read, write or read_write (default read_write); only a term base with write takes terms added from the editor"`
 	Priority       int32  `json:"priority,omitempty" jsonschema:"lower is consulted first"`
 }
 
@@ -293,6 +301,41 @@ type AttachUploadedFileIn struct {
 	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated. Translations are written back into their own cells"`
 }
 
+// MaxAttachFiles caps one openloc_attach_uploaded_files call; the assistant
+// panel takes the same number of files per message.
+const MaxAttachFiles = 10
+
+type AttachUploadedFilesIn struct {
+	ProjectID int64          `json:"project_id" jsonschema:"the project to add the documents to"`
+	Files     []AttachUpload `json:"files" jsonschema:"the attached files to add, 1 to 10, each upload_id once"`
+	Analyze   bool           `json:"analyze,omitempty" jsonschema:"run the automatic analysis once the jobs exist"`
+}
+
+type AttachUpload struct {
+	UploadRef
+	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated"`
+}
+
+// AttachedFilesOut has one row per requested upload, in request order. Each
+// file is added on its own, so a row with Error leaves the others in place.
+type AttachedFilesOut struct {
+	Files []AttachedFileResult `json:"files"`
+	Added int                  `json:"added"`
+	// Draft is true when the project is a draft: the files are stored and
+	// segmented, and their jobs are created when the project is published.
+	Draft bool `json:"draft"`
+}
+
+type AttachedFileResult struct {
+	UploadID string      `json:"upload_id"`
+	File     *FileDetail `json:"file,omitempty"`
+	Warnings []string    `json:"warnings"`
+	Error    string      `json:"error,omitempty"`
+	// NotStarted marks a file the call had no time left for; nothing was
+	// added for it, so attaching it again is safe.
+	NotStarted bool `json:"not_started,omitempty"`
+}
+
 type UploadTextFileIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"the project to add the document to"`
 	Filename  string `json:"filename" jsonschema:"the file's name with its extension, such as brochure.html; the extension decides the format"`
@@ -332,6 +375,18 @@ type ReimportOut struct {
 	SkippedApprovedKeys   []string `json:"skipped_approved_keys"`
 	ExtraInUploadKeys     []string `json:"extra_in_upload_keys"`
 	MissingFromUploadKeys []string `json:"missing_from_upload_keys"`
+}
+
+type ReadUploadedFileIn struct {
+	UploadRef
+}
+
+type UploadedFileTextOut struct {
+	Filename string `json:"filename"`
+	Format   string `json:"format"`
+	// Text is the file's text, one piece per line, without its markup; a
+	// translation the file carries (XLIFF, PO) follows its source after a tab.
+	Text string `json:"text"`
 }
 
 type ExportFileIn struct {

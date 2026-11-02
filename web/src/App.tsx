@@ -42,6 +42,7 @@ import PromptDetailPage from './pages/ai/PromptDetailPage'
 import TemplateList from './pages/TemplateList'
 import QAProfiles from './pages/QAProfiles'
 import TemplateDetail from './pages/TemplateDetail'
+import TemplateCreate from './pages/TemplateCreate'
 import WorkflowList from './pages/workflows/WorkflowList'
 import StepLibrary from './pages/workflows/StepLibrary'
 import LoginPage from './pages/LoginPage'
@@ -75,6 +76,8 @@ import { SharedChartPage } from './pages/SharedChartPage'
 import TasksPage from './pages/TasksPage'
 import LearnPage from './pages/LearnPage'
 import VendorsPage from './pages/org/VendorsPage'
+import SegmentationProfilesPage from './pages/segmentation/SegmentationProfilesPage'
+import SegmentationProfilePage from './pages/segmentation/SegmentationProfilePage'
 import { ORG_VENDORS_PATH } from './pages/org/org-paths'
 import { ChatPanel } from './components/chat/ChatPanel'
 import { ChatDemoPanel } from './components/chat/ChatDemoPanel'
@@ -346,6 +349,10 @@ export default function App() {
                   <Route path="/ai/prompts/:promptId" element={linguistBlock(<PromptDetailPage purpose="qe_ape" />)} />
                   <Route path="/templates" element={linguistBlock(<TemplateList />)} />
                   <Route path="/quality" element={linguistBlock(<QAProfiles />)} />
+                  <Route path="/file-configurations" element={<Navigate to="/file-configurations/segmentation-profiles" replace />} />
+                  <Route path="/file-configurations/segmentation-profiles" element={linguistBlock(<SegmentationProfilesPage />)} />
+                  <Route path="/file-configurations/segmentation-profiles/new" element={linguistBlock(<SegmentationProfilePage />)} />
+                  <Route path="/file-configurations/segmentation-profiles/:profileId" element={linguistBlock(<SegmentationProfilePage />)} />
                   <Route path="/labels" element={linguistBlock(<LabelsPage />)} />
                   {/* /customers redirects to /labels so an
                       existing bookmark or link still lands. */}
@@ -367,6 +374,7 @@ export default function App() {
                       chart that was sent to them. */}
                   <Route path="/shared/charts/:token" element={<SharedChartPage />} />
                   <Route path="/vendors" element={<Navigate to={ORG_VENDORS_PATH} replace />} />
+                  <Route path="/templates/new" element={linguistBlock(<TemplateCreate />)} />
                   <Route path="/templates/:templateId" element={linguistBlock(<TemplateDetail />)} />
                   <Route path="/templates/:templateId/workflow" element={linguistBlock(<TemplateDetail />)} />
                   {/* Step + workflow libraries. A workflow is

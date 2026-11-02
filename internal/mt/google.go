@@ -9,6 +9,8 @@ import (
 	"net/http"
 	neturl "net/url"
 	"slices"
+
+	"openloc/internal/ai"
 )
 
 // Google calls the Google Cloud Translation API v2.
@@ -87,7 +89,7 @@ func (g Google) translateBatch(ctx context.Context, baseURL, srcLang, tgtLang st
 
 	resp, err := HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("google: request failed: %w", scrubURLError(err))
+		return nil, transportError(ctx, ai.ProviderGoogle, scrubURLError(err))
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -117,27 +119,50 @@ func (g Google) translateBatch(ctx context.Context, baseURL, srcLang, tgtLang st
 }
 
 func (g Google) parseError(statusCode int, body []byte) error {
-	// Try to extract Google's error message
 	var errResp struct {
 		Error struct {
 			Message string `json:"message"`
-			Code    int    `json:"code"`
+			Errors  []struct {
+				Reason string `json:"reason"`
+			} `json:"errors"`
+			Details []struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
 		} `json:"error"`
 	}
+	detail := string(body)
+	var reasons []string
 	if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
-		return fmt.Errorf("google: API error %d: %s", errResp.Error.Code, errResp.Error.Message)
+		detail = errResp.Error.Message
+		for _, e := range errResp.Error.Errors {
+			reasons = append(reasons, e.Reason)
+		}
+		for _, d := range errResp.Error.Details {
+			reasons = append(reasons, d.Reason)
+		}
 	}
+	pe := vendorError(ai.ProviderGoogle, statusCode, detail)
+	if kind := googleReasonKind(reasons); kind != "" {
+		pe.Kind = kind
+	}
+	return pe
+}
 
-	switch statusCode {
-	case 400:
-		return fmt.Errorf("google: bad request (400) — check language codes")
-	case 403:
-		return fmt.Errorf("google: authentication failed (403) — check your API key")
-	case 429:
-		return fmt.Errorf("google: rate limit exceeded (429) — too many requests")
-	default:
-		return &apiError{vendor: "google: API", status: statusCode, body: string(body)}
+// googleReasonKind reads the cause from Google's error reasons, since its
+// status alone misleads: an invalid key is a 400, a used-up quota a 403.
+// Empty when no reason decides it.
+func googleReasonKind(reasons []string) string {
+	for _, r := range reasons {
+		switch r {
+		case "API_KEY_INVALID", "keyInvalid", "API_KEY_EXPIRED", "keyExpired":
+			return ai.ProviderErrAuth
+		case "dailyLimitExceeded", "quotaExceeded":
+			return ai.ProviderErrQuota
+		case "rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED":
+			return ai.ProviderErrRateLimit
+		}
 	}
+	return ""
 }
 
 type googleRequest struct {

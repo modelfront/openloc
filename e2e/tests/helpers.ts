@@ -1,4 +1,33 @@
-import { Browser, BrowserContext, Page, Locator, Response, expect, request, test } from "@playwright/test";
+import {
+  type APIRequestContext, type Browser, type BrowserContext, type Locator, type Page, type Response,
+  expect, request, test as base,
+} from "@playwright/test";
+
+/**
+ * The browser contexts a test opened with `sessionAs` or `freshContext`, by
+ * test id, closed by the `sessions` fixture once the test is over. Before
+ * closing a context the runner exports its trace chunk and screenshots its
+ * pages, in calls the report never names, so a close inside the test body
+ * spends the test's own budget on them and under load ends in a bare "Test
+ * timeout exceeded" with no step. After the test function the runner
+ * discards a passing test's trace instead, and the fixture runs on the
+ * after-hooks clock.
+ */
+const openSessions = new Map<string, BrowserContext[]>();
+/** The token each session page signed in with, for `authHeaders` before the page has an origin. */
+const sessionTokens = new WeakMap<Page, string>();
+
+/** `test` with the `sessions` fixture; specs that call `sessionAs` or `freshContext` import it from here. */
+export const test = base.extend<{ sessions: void }>({
+  sessions: [async ({}, use, testInfo) => {
+    openSessions.set(testInfo.testId, []);
+    await use();
+    const contexts = openSessions.get(testInfo.testId) ?? [];
+    openSessions.delete(testInfo.testId);
+    await Promise.all(contexts.map((c) => c.close()));
+  }, { auto: true, timeout: 60_000 }],
+});
+export { expect };
 
 const API_BASE = "";
 
@@ -8,6 +37,12 @@ const API_BASE = "";
  */
 export const segmentEditor = (page: Page): Locator =>
   page.locator('[data-testid="segment-editor"] .ProseMirror');
+
+/**
+ * The CAT editor's reads of its segment index and its pages of rows: what it
+ * loads on open and refetches after a save invalidates them. For page.route.
+ */
+export const EDITOR_READS = /\/api\/jobs\/\d+\/editor\/(rows|index)(\?|$)/;
 
 /**
  * fill() until the editor holds exactly `text`. fill's select-all is a DOM
@@ -21,6 +56,34 @@ export async function fillEditorExactly(editor: Locator, text: string): Promise<
     await editor.fill(text);
     await expect(editor).toHaveText(text, { timeout: 500 });
   }).toPass({ timeout: 5000 });
+}
+
+/**
+ * The segment grid has stopped moving. After a long scroll, the rows that just
+ * loaded are shorter than their placeholders, so the list shrinks for a few
+ * frames and the browser clamps the scroll offset each time. A click in that
+ * window can press on one row and release on another, and no row opens.
+ * Settled = scroll offset and content height unchanged for 300 ms of frames:
+ * the shrink burst lasts about 250 ms, and a quiet frame inside it must not
+ * count as settled.
+ */
+export async function waitForSegmentGridToSettle(page: Page): Promise<void> {
+  await expect.poll(
+    () => page.evaluate(() => new Promise<boolean>(resolve => {
+      const grid = document.querySelector<HTMLElement>('[data-testid="segment-grid"]');
+      if (!grid) return resolve(false);
+      const top = grid.scrollTop;
+      const height = grid.scrollHeight;
+      const started = performance.now();
+      const tick = () => {
+        if (grid.scrollTop !== top || grid.scrollHeight !== height) return resolve(false);
+        if (performance.now() - started >= 300) return resolve(true);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })),
+    { timeout: 10_000 },
+  ).toBe(true);
 }
 
 /**
@@ -52,31 +115,88 @@ export async function signInWithToken(page: Page, token: string) {
 }
 
 /**
- * Sign `page` in as a seeded user: sign-in is dev or Google only, so this
- * dev-logs in AS that email (the dev-login endpoint takes an optional email).
+ * Dev-log `api` in as `email` (sign-in is dev or Google only; the dev-login
+ * endpoint takes an optional email). The answer's cookie lands in `api`;
+ * the body carries the token and the user.
  */
-export async function loginAs(page: Page, email: string) {
-  const res = await page.request.post("/api/auth/dev-login", { data: { email } });
+async function devLogin(api: APIRequestContext, email: string): Promise<{ token: string; user?: { id: number } }> {
+  const res = await api.post(`${API_BASE}/api/auth/dev-login`, { data: { email } });
   expect(res.ok(), `dev-login as ${email}: ${res.status()}`).toBe(true);
-  await signInWithToken(page, (await res.json()).token);
+  return res.json();
+}
+
+/** Sign `page` in as a seeded user. */
+export async function loginAs(page: Page, email: string) {
+  await signInWithToken(page, (await devLogin(page.request, email)).token);
+}
+
+/** A context without the seed owner's stored state, which every context starts with otherwise. */
+const blankContext = (browser: Browser) => browser.newContext({ storageState: { cookies: [], origins: [] } });
+
+/** `context` as one of the running test's sessions, closed by the `sessions` fixture after it. */
+function trackSession(context: BrowserContext): BrowserContext {
+  const contexts = openSessions.get(base.info().testId);
+  if (!contexts) {
+    throw new Error('this needs the sessions fixture: import { test } from "./helpers". A session shared across tests, or opened in a hook, is openSessionAs, closed by its caller.');
+  }
+  contexts.push(context);
+  return context;
+}
+
+/** A signed-out context for one test, closed after it by the `sessions` fixture. */
+export async function freshContext(browser: Browser): Promise<BrowserContext> {
+  return trackSession(await blankContext(browser));
 }
 
 /**
- * A new browser session signed in as `email`, beside the test's own page.
- * Dev-login also sets the session's auth cookie, which event streams sign in
- * with (EventSource cannot send a header), so they run as that user too. The
- * caller closes `context`.
+ * Sign `context` in as `email`. Dev-login sets the session's auth cookie,
+ * which event streams sign in with (EventSource cannot send a header), so
+ * they run as that user too. The token is stored before the app's first
+ * script runs: no page is loaded to store it, and the login page's own dev
+ * sign-in never gets to overwrite it.
  */
-export async function sessionAs(browser: Browser, email: string): Promise<{ page: Page; context: BrowserContext }> {
-  const context = await browser.newContext();
+async function signInContext(context: BrowserContext, email: string): Promise<{ page: Page; context: BrowserContext; token: string }> {
+  const { token } = await devLogin(context.request, email);
+  // Only while none is stored: the app's own writes (an org switch) win on later loads.
+  await context.addInitScript((t) => {
+    if (!localStorage.getItem("token")) localStorage.setItem("token", t);
+  }, token);
+  await context.route("**/api/auth/dev-login", (route) => route.abort());
   const page = await context.newPage();
-  await loginAs(page, email);
-  return { page, context };
+  sessionTokens.set(page, token);
+  return { page, context, token };
 }
 
-/** `sessionAs` for a test that leaves the session open until the run ends. */
+/**
+ * A browser session signed in as `email`, beside the test's own page, left
+ * open: for a session the tests of a serial journey share. The caller closes
+ * `context`, from a hook or a cleanup test, never from a test body.
+ */
+export async function openSessionAs(browser: Browser, email: string): Promise<{ page: Page; context: BrowserContext; token: string }> {
+  return signInContext(await blankContext(browser), email);
+}
+
+/**
+ * `openSessionAs` for one test: the context closes after the test, through
+ * the `sessions` fixture, so the spec imports `test` from here.
+ */
+export async function sessionAs(browser: Browser, email: string): Promise<{ page: Page; context: BrowserContext; token: string }> {
+  return signInContext(await freshContext(browser), email);
+}
+
+/** The page of a `sessionAs` session. */
 export async function pageAs(browser: Browser, email: string): Promise<Page> {
   return (await sessionAs(browser, email)).page;
+}
+
+/**
+ * API calls as `email`, signed in by the dev-login cookie, for a hook that
+ * has no page. Dispose it when done.
+ */
+export async function apiAs(email: string): Promise<APIRequestContext> {
+  const api = await request.newContext({ baseURL: base.info().project.use.baseURL });
+  await devLogin(api, email);
+  return api;
 }
 
 /**
@@ -274,6 +394,20 @@ export async function pickComboboxOption(page: Page, trigger: Locator, label: st
 }
 
 /**
+ * New project wizard: pick a library workflow. A fresh form starts with no
+ * workflow and no steps, and "Create project" refuses it until one is picked.
+ * The wizard applies the pick without a confirmation dialog; the steps arrive
+ * once the workflow's detail loads, so this waits for the first step row.
+ * The default matches the seed's "Standard" workflow by its option-name prefix.
+ */
+export async function pickProjectWorkflow(page: Page, name: string | RegExp = /^Standard/) {
+  const trigger = page.getByTestId("use-workflow-select");
+  await pickComboboxOption(page, trigger, name);
+  await expect(trigger).not.toContainText("Choose a workflow");
+  await expect(page.getByTestId("create-workflow-card").getByTestId("workflow-deadline-input-0")).toBeVisible();
+}
+
+/**
  * Pick a ui/combobox option by value. The trigger has `data-testid={triggerTestId}`
  * and each option `data-testid={`${triggerTestId}-option-${value}`}`.
  */
@@ -464,7 +598,7 @@ export async function assertProjectAssignments(
 
 /** Bearer header for `page.request` calls, from the logged-in page's token. */
 export async function authHeaders(page: Page): Promise<Record<string, string>> {
-  const token = await page.evaluate(() => localStorage.getItem("token"));
+  const token = sessionTokens.get(page) ?? await page.evaluate(() => localStorage.getItem("token"));
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -485,13 +619,11 @@ export async function inviteMember(
   // The dev-login answers with the member's session cookie, so it runs in a
   // request context of its own: the inviter's page keeps its cookie, which
   // its event streams sign in with.
-  const joinContext = await request.newContext({ baseURL: test.info().project.use.baseURL });
+  const joinContext = await request.newContext({ baseURL: base.info().project.use.baseURL });
   try {
-    const join = await joinContext.post(`${API_BASE}/api/auth/dev-login`, { data: { email } });
-    expect(join.ok(), `join via dev-login failed: ${join.status()}`).toBe(true);
-    const body = await join.json();
+    const body = await devLogin(joinContext, email);
     expect(body.token, "the member's token").toBeTruthy();
-    return { userId: body.user?.id, token: body.token };
+    return { userId: body.user?.id as number, token: body.token };
   } finally {
     await joinContext.dispose();
   }
@@ -741,7 +873,7 @@ export async function deleteRowViaHover(page: Page, rowText: string): Promise<vo
 export async function createProjectViaAPI(page: Page, name: string, extra: Record<string, unknown> = {}): Promise<number> {
   const res = await page.request.post(`${API_BASE}/api/projects`, {
     headers: await authHeaders(page),
-    data: { name, source_language: "en", target_languages: ["de"], ...extra },
+    data: await withDefaultWorkflow(page, { name, source_language: "en", target_languages: ["de"], ...extra }),
   });
   expect(res.ok(), `create project: ${res.status()} ${await res.text()}`).toBe(true);
   return (await res.json()).data.id;
@@ -882,7 +1014,7 @@ export async function createIsolatedCATJob(
   // 1. Create project — fresh settings_profile with template defaults.
   const projRes = await page.request.post(`${API_BASE}/api/projects`, {
     headers,
-    data: { name: projectName, source_language: sourceLanguage, target_languages: targetLanguages },
+    data: { name: projectName, source_language: sourceLanguage, target_languages: targetLanguages, workflow_id: await standardWorkflowId(page) },
   });
   expect(projRes.ok(), `create project: ${projRes.status()} ${await projRes.text()}`).toBe(true);
   const projectId: number = (await projRes.json()).data.id;
@@ -894,7 +1026,7 @@ export async function createIsolatedCATJob(
   // Also assign the first available QA profile so `Run QA` works. The freshly
   // created project's settings_profile may not inherit a qa_profile_id from
   // the default template; tests that exercise Run QA get a
-  // 400 "project has no QA profile assigned" without this. Pass `qaProfile:
+  // 409 "project has no QA profile assigned" without this. Pass `qaProfile:
   // null` to opt out (rare).
   const settingsPatch: Record<string, unknown> = {};
   if (!opts.preTranslate) {
@@ -1137,6 +1269,42 @@ export async function createWorkflowViaAPI(page: Page, name: string, steps: Step
   return (await res.json()).data.id;
 }
 
+/**
+ * The seed's "Standard" library workflow (Translation → Review). Tests send its
+ * id to give a project or a template Translation → Review steps.
+ */
+export async function standardWorkflow(page: Page): Promise<{ id: number; name: string; steps: { name: string; step_definition_id: number }[] }> {
+  const res = await page.request.get(`${API_BASE}/api/workflows`, { headers: await authHeaders(page) });
+  expect(res.ok(), `list workflows: ${res.status()} ${await res.text()}`).toBe(true);
+  const list = (await res.json()).data as { id: number; name: string; steps: { name: string; step_definition_id: number }[] }[];
+  const wf = list.find((w) => w.name === "Standard");
+  expect(wf, "seed must provide the Standard library workflow").toBeTruthy();
+  return wf!;
+}
+
+const standardWorkflowIds = new WeakMap<Page, Promise<number>>();
+
+/** The Standard workflow's id, looked up once per page. */
+export function standardWorkflowId(page: Page): Promise<number> {
+  let id = standardWorkflowIds.get(page);
+  if (!id) {
+    id = standardWorkflow(page).then((wf) => wf.id);
+    id.catch(() => standardWorkflowIds.delete(page));
+    standardWorkflowIds.set(page, id);
+  }
+  return id;
+}
+
+/**
+ * A live project needs a workflow, so a create body that names none
+ * (no workflow_id, workflow_steps or template_id) gets the Standard
+ * workflow. Drafts are left as they are.
+ */
+export async function withDefaultWorkflow(page: Page, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (body.status === "draft" || body.workflow_id != null || body.workflow_steps != null || body.template_id != null) return body;
+  return { ...body, workflow_id: await standardWorkflowId(page) };
+}
+
 export async function deleteWorkflowViaAPI(page: Page, id: number) {
   const res = await page.request.delete(`${API_BASE}/api/workflows/${id}`, { headers: await authHeaders(page) });
   expect([204, 404]).toContain(res.status());
@@ -1251,4 +1419,30 @@ export async function setDeadline(page: Page, trigger: Locator, value: string) {
   // click itself is a real one, as a mouse user would make it.
   await panel.getByRole("button", { name: "Done", includeHidden: true }).click();
   await expect(panel).toHaveCount(0, { timeout: 3000 });
+}
+
+/**
+ * Gives a job's rows drafts, in document order: `texts[i]` goes to the i-th
+ * row, and an empty text leaves that row untranslated. Returns the job's
+ * translations in document order. `headers` authenticate another session.
+ */
+export async function seedDrafts(
+  page: Page,
+  job: { jobId: number; fileId: number },
+  texts: string[],
+  headers: Record<string, string> = {},
+): Promise<{ id: number; segment_id: number }[]> {
+  const res = await page.request.get(`${API_BASE}/api/jobs/${job.jobId}/translations`, { headers });
+  expect(res.ok(), `list translations: ${res.status()}`).toBe(true);
+  const trs = ((await res.json()).data as { id: number; segment_id: number }[]).sort((a, b) => a.segment_id - b.segment_id);
+  const fixes = trs.flatMap((t, i) => (texts[i] ? [{ translation_id: t.id, human_text: texts[i] }] : []));
+  const put = await page.request.put(`${API_BASE}/api/files/${job.fileId}/translations/batch-draft`, { headers, data: { fixes } });
+  expect(put.ok(), `save drafts: ${put.status()} ${await put.text()}`).toBe(true);
+  return trs;
+}
+
+/** Locks one translation through the API; locking approves it. */
+export async function lockTranslationViaAPI(page: Page, job: { fileId: number }, translationId: number): Promise<void> {
+  const res = await page.request.post(`${API_BASE}/api/files/${job.fileId}/translations/${translationId}/lock`);
+  expect(res.ok(), `lock: ${res.status()}`).toBe(true);
 }

@@ -12,17 +12,45 @@ import { OverflowChip, STEP_TYPE_PRESETS } from '@/components/ui/chip-presets'
 import { CountMeta } from '@/components/ui/count-meta'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isAutomatedStep } from '@/lib/workflow-steps'
+import { pipelineBadge } from '@/lib/project-logic'
 
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 
 /**
- * When it is due, or when it was done, as a chip: the deadline's band colour,
- * or the completed state's green with the date it was done. An AI step runs by
- * itself and takes no deadline. `size`: small in a matrix cell, default in a
- * step table row.
+ * Where the task stands, as one chip, first match wins: a red Error (the
+ * message on hover); the job's running pipeline when this is its current task,
+ * the CAT editor's pulsing "Translating N / M"; the completed state's green
+ * with the date it was done; else the deadline's band colour. An automated
+ * step takes no deadline. `size`: small in a matrix cell, default in a step
+ * table row.
  */
-export function TaskDue({ cell, column, size = 'small' }: { cell: MatrixCell; column: MatrixColumn; size?: ChipProps['size'] }) {
+export function TaskStatus({ cell, column, size = 'small' }: { cell: MatrixCell; column: MatrixColumn; size?: ChipProps['size'] }) {
+  if (cell.errors.length > 0) {
+    return (
+      <ErrorTip errors={cell.errors}>
+        <Chip size={size} color="red" data-testid="task-error-chip">Error</Chip>
+      </ErrorTip>
+    )
+  }
+  // A row is one job, and its pipeline runs on the current task only.
+  const current = cell.tasks.find(t => t.task.id === t.job.workflow_step?.id)
+  const running = current && pipelineBadge(current.job)
+  if (running) {
+    return (
+      // An AI step's label can outgrow the column: it ends in "…", whole on
+      // hover. The counter's hover names the phase it counts.
+      <Chip
+        size={size}
+        color={running.color}
+        className={cn('max-w-full', running.pulse && 'animate-pulse')}
+        title={running.detail ?? running.label}
+        data-testid="task-progress-chip"
+      >
+        <span className="truncate">{running.label}</span>
+      </Chip>
+    )
+  }
   if (cell.state === 'completed') {
     return (
       <Chip

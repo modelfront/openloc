@@ -26,6 +26,7 @@ import (
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/demoorg"
+	"openloc/internal/docseo"
 	"openloc/internal/errtrack"
 	"openloc/internal/extension"
 	"openloc/internal/file"
@@ -41,6 +42,7 @@ import (
 	"openloc/internal/projectdelete"
 	"openloc/internal/publicapi"
 	"openloc/internal/secrets"
+	"openloc/internal/slack"
 	"openloc/internal/tenantdelete"
 	"openloc/internal/translationmemory"
 	"openloc/internal/worker"
@@ -158,7 +160,7 @@ func main() {
 	// the pod name in each object key keeps them from overwriting each other.
 	var llmDebugStore *llmdebug.Store
 	var llmDebugPruner *llmdebug.Pruner
-	var llmDebugReader llmdebug.Source
+	var llmDebugReader llmdebug.Log
 	if cfg.LLMDebugPersist {
 		llmDebugStore = llmdebug.NewStore(storage, llmdebug.StoreOpts{
 			FlushInterval: time.Duration(cfg.LLMDebugFlushSeconds) * time.Second,
@@ -308,8 +310,18 @@ func main() {
 
 	// Hourly purge of the files of deleted issue attachments.
 	issues.NewAttachmentPurger(queries, storage).RegisterHandlers(mux)
-	// The operator emails about new issues and replies, queued by the API.
-	issues.NewOperatorMailer(queries, emailSender, cfg.BaseURL).RegisterHandlers(mux)
+	// The emails to an issue's assignee, queued by the API.
+	issues.NewOperatorMailer(queries, emailSender, cfg.BaseURL, cfg.PlatformAdminEmails).RegisterHandlers(mux)
+	// The Slack posts about new issues and replies, queued by the API.
+	var issueSlack issues.SlackPoster
+	if cfg.SlackBotToken != "" {
+		issueSlack = slack.New(cfg.SlackBotToken)
+	}
+	issues.NewSlackNotifier(queries, issueSlack, cfg.IssueSlackChannel, cfg.BaseURL).RegisterHandlers(mux)
+	// The cards of issues an org or account delete removed, blanked hourly.
+	if issueSlack != nil {
+		issues.NewSlackBlankSweeper(queries, issueSlack).RegisterHandlers(mux)
+	}
 
 	// Sweep of expired segment holds.
 	hold.NewSweeper(queries).RegisterHandlers(mux)
@@ -470,6 +482,18 @@ func main() {
 	); err != nil {
 		fatal(ctx, err, "asynq scheduler register failed", "startup-scheduler-register-failed")
 	}
+	// A deleted org's issue cards stay queued in Slack; the hourly sweep
+	// blanks them.
+	if issueSlack != nil {
+		if _, err := asynqScheduler.Register(
+			"@hourly",
+			issues.NewSlackBlankSweepTask(),
+			asynq.Queue(taskQueue),
+			asynq.Unique(time.Hour),
+		); err != nil {
+			fatal(ctx, err, "asynq scheduler register failed", "startup-scheduler-register-failed")
+		}
+	}
 
 	// Use Start() (non-blocking) — NOT Run(), which installs its own
 	// SIGTERM/SIGINT handler and races with main's signal.NotifyContext
@@ -496,6 +520,8 @@ func main() {
 	if len(cfg.PlatformAdminEmails) > 0 {
 		log.Printf("Platform operators configured: %d", len(cfg.PlatformAdminEmails))
 	}
+	logging.Info(ctx, "issue notifications to the operators configured", "startup-issue-notifications",
+		logging.Label("issue.slack", strconv.FormatBool(issueSlack != nil)))
 	if cfg.DevAutoLogin {
 		log.Println("Dev auto-login enabled (DEV_AUTO_LOGIN=true)")
 	}
@@ -557,11 +583,13 @@ func main() {
 	if err != nil {
 		fatal(ctx, err, "API specification failed to load", "startup-api-spec-invalid")
 	}
+	docPages := api.DocPages(cfg.BaseURL, cfg.DocsHost, cfg.DeveloperHost, docsIndex, apiDocsIndex, apiSpec)
 
 	router := api.NewRouter(api.Deps{
 		Docs:                         docsIndex,
 		APIDocs:                      apiDocsIndex,
 		APISpec:                      apiSpec,
+		DocPages:                     docPages,
 		Draining:                     draining,
 		Queries:                      queries,
 		DB:                           pool,
@@ -581,6 +609,8 @@ func main() {
 		OAuthRelayDomain:             cfg.OAuthRelayDomain,
 		OpenAIAppsChallenge:          cfg.OpenAIAppsChallenge,
 		PlatformAdminEmails:          cfg.PlatformAdminEmails,
+		IssueSlack:                   issueSlack,
+		IssueSlackChannel:            cfg.IssueSlackChannel,
 		DemoOrg:                      cfg.DemoOrg,
 		TrustedProxyHops:             cfg.TrustedProxyHops,
 		NotificationService:          notifService,
@@ -605,7 +635,7 @@ func main() {
 	// API routes (/api/*, /health, /auth/*) take priority — this is a fallback.
 	if cfg.StaticDir != "" {
 		log.Printf("Serving static files from %s", cfg.StaticDir)
-		addSPAHandler(router, cfg.StaticDir)
+		addSPAHandler(router, cfg.StaticDir, docPages)
 	}
 
 	srv := &http.Server{
@@ -695,13 +725,20 @@ func main() {
 
 // addSPAHandler mounts a catch-all handler that serves static files from dir.
 // If the requested path matches a file on disk, it's served directly (JS, CSS, images).
-// Otherwise, index.html is served to support client-side SPA routing.
-func addSPAHandler(r chi.Router, dir string) {
+// Otherwise, index.html is served to support client-side SPA routing. On a
+// documentation host, index.html carries the page's title, meta tags and
+// content, for readers that run no JavaScript; pages may be nil.
+func addSPAHandler(r chi.Router, dir string, pages *docseo.Sites) {
 	absDir, _ := filepath.Abs(dir)
 	fileServer := http.FileServer(http.Dir(absDir))
 
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		reqPath := strings.TrimPrefix(r.URL.Path, "/")
+		if site := pages.ForHost(api.RequestHost(r)); site != nil && filepath.Ext(reqPath) == "" {
+			if serveDocPage(w, r, absDir, site) {
+				return
+			}
+		}
 		if reqPath == "" {
 			reqPath = "index.html"
 		}
@@ -735,6 +772,30 @@ func addSPAHandler(r chi.Router, dir string) {
 		setStaticCacheControl(w, "index.html")
 		http.ServeFile(w, r, indexPath)
 	})
+}
+
+// serveDocPage answers a documentation page with index.html filled in by
+// docseo: 200 with the page, or 404 with the plain shell when no anonymous
+// reader may see a page there. False when index.html cannot be read.
+func serveDocPage(w http.ResponseWriter, r *http.Request, dir string, site *docseo.Site) bool {
+	index, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		return false
+	}
+	status := http.StatusNotFound
+	if page, ok := site.Page(r.URL.Path); ok {
+		filled, err := docseo.Inject(index, page)
+		if err != nil {
+			logging.Error(r.Context(), err, "documentation page failed to render", "docs-page-render-failed")
+			return false
+		}
+		index, status = filled, http.StatusOK
+	}
+	setStaticCacheControl(w, "index.html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	w.Write(index)
+	return true
 }
 
 // setStaticCacheControl makes a deploy visible on the next navigation.

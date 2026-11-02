@@ -3,9 +3,11 @@ title: "Translation memory"
 summary: "Create translation memories, group them in TM profiles, assign them to projects, and import or export TMX."
 order: 30
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-29
 sources:
   - web/src/pages/TMList.tsx
+  - web/src/components/list/AssetFilterBar.tsx
+  - web/src/lib/name-filter.ts
   - web/src/pages/TMBrowser.tsx
   - web/src/hooks/useTMEntrySearch.ts
   - web/src/components/SearchOptions.tsx
@@ -41,7 +43,7 @@ A translation memory (TM) is a database of sentences you have already translated
 3. In the **Create translation memory** dialog, enter a **Name**, the **Source language**, one or more **Target languages**, and optionally a **Customer** so the TM is easy to find later.
 4. Click **Create**.
 
-The new TM appears in the list with its languages, customer, entry count, and who created it. The **Created by** filter shows only one colleague's TMs. The trash icon deletes a TM with all its entries; only owners and admins can do this.
+The new TM appears in the list with its languages, customer, entry count, and who created it. Type in **Search translation memories...** to narrow the list to TMs whose name contains your text, in any case and with or without accents ("medical" finds "Médical"). The **Created by** filter shows only one colleague's TMs. **Clear filters (N)** resets the search and the filter. Both are kept in the page address, so a reload keeps them. The trash icon deletes a TM with all its entries; only owners and admins can do this.
 
 ![The translation memories list](assets/tm-list.png)
 
@@ -50,9 +52,9 @@ The new TM appears in the list with its languages, customer, entry count, and wh
 Click a TM in the list to open the TM browser.
 
 - **Rename** the TM by clicking its name in the breadcrumb.
-- **Filter by language** with the target-language buttons above the table. **All** shows every entry.
+- **Filter by language** with the target-language choice above the table. **All** shows every entry.
 - **Search** with the **Search entries...** box. It finds entries that contain your text, in any case, and tints the hits yellow. The options sit next to the box: **Search in** Both, Source or Target (Both by default), **Exact** (the whole text equals your search), **Case sensitive**, and **Regex** (regular expressions, a pattern language for text). The **?** icon opens a cheat sheet. An invalid pattern, or a search that takes too long, shows a message and no entries.
-- **Edit an entry.** Click a source or target cell, change the text, and press Enter to save or Escape to cancel. Saving is immediate and has no undo. If a colleague saved a different version of the same cell in the meantime, a banner shows both versions and lets you pick one.
+- **Edit an entry.** Click a source or target cell, change the text or only its tags, and press Enter to save or Escape to cancel. Clicking away also saves. Saving is immediate and has no undo. If a colleague saved a different version of the same cell in the meantime, a banner shows both versions and lets you pick one.
 - **Tags.** If the target is missing tags from the source, a bar above the table lists them. Click a tag to insert it, or press F8 for the next one.
 - **View edit history.** The clock icon opens the **Edit history** dialog: the current text, then every past edit, newest first, with who made it.
 - **Delete an entry.** The trash icon asks for confirmation first.
@@ -98,7 +100,7 @@ Under the **TM profile** dropdown, one section holds the match scoring and the m
 
 In the **New project** wizard the dropdown starts empty. The match scoring and the memories table appear once you pick a profile or **From scratch**, and **Apply translation memory on start or upload** stays on but cannot be changed until then.
 
-To add a TM, pick it in the **Add translation memory** field at the top right of **Translation memories**, or choose **Create new TM...**. Only TMs whose source language matches the project are offered. Each row has:
+To add a TM, pick it in the **Add translation memory** field at the top right of **Translation memories**, or choose **Create new TM...**. Only TMs whose source language matches the project are offered. Each TM shows how many entries it holds, both in that field's list and under its name once added. A TM's name opens that TM in a new tab. Each row has:
 
 | Column | Meaning |
 | --- | --- |
@@ -119,17 +121,17 @@ A TM profile bundles a TM list — with read/write modes, order and penalties �
 2. Click **New TM profile**, give it a name and an optional description, and click **Create**.
 3. On the profile page, set the match scoring and add TMs in **Translation memories**, exactly like in project settings.
 
-The profile page says how many projects or templates follow it; the tab lists each profile's TM count, threshold and usage.
+The profile page says how many projects or templates follow it; the tab lists each profile's TM count, threshold and usage. **Search TM profiles...** narrows the list by profile name, the same way as on the **Memories** tab.
 
 ### Follow a profile from a project
 
-In the **Translation memory** card, pick the profile in the **TM profile** dropdown. The project's own TM list is cleared and the profile's values apply. The profile's name becomes a link to its page. Its scoring and TM rows sit behind a **Show profile settings** toggle with a one-line summary, collapsed by default.
+In the **Translation memory** card, pick the profile in the **TM profile** dropdown. The project's own TM list is cleared and the profile's values apply. The icon after the dropdown opens the profile's page in a new tab. Its scoring and TM rows sit behind a **Show profile settings** toggle with a one-line summary, collapsed by default.
 
 **When the rows are editable.** While nothing else follows the profile, you can still edit the scoring and TM rows right here; the edits go to the profile. Once a second project or template follows it, the block becomes read-only and you edit the profile on its own page. If someone starts following it while you edit, your change is refused with a message.
 
 ### Stop following: Detach and customise
 
-Click **Detach and customise** next to the profile link (or pick **From scratch** in the dropdown) and confirm. The profile's TMs and scoring are copied into the project, then the link is removed. The project keeps translating the same way, but later profile changes do not reach it.
+Click **Detach and customise** next to the **Show profile settings** toggle (or pick **From scratch** in the dropdown) and confirm. The profile's TMs and scoring are copied into the project, then the link is removed. The project keeps translating the same way, but later profile changes do not reach it.
 
 ### Turn a project's setup into a profile: Save as TM profile
 
@@ -143,8 +145,10 @@ Only owners and admins can delete a profile, from the **TM profiles** tab. The d
 
 Every **Approved** segment is written to the project's **Write** TMs for that language pair: when a linguist confirms it in the editor, and again when a workflow step or the job is completed. Segments an AI step auto-approved are never saved — see [why](/docs/concepts/quality-estimation#why-auto-approved-text-never-enters-the-translation-memory). If the project has no Write TM for the language pair, the completion message warns you and nothing is saved.
 
+When a segment is split or joined in the editor (see [The CAT editor](/docs/guides/cat-editor#split-and-join-segments)), each piece and each joined row looks up its own matches and becomes its own entry when confirmed. The split or join itself writes nothing to the TM.
+
 For the full rule, including what happens to exact matches that pre-translation confirmed on its own, see [What is written back, and when](/docs/concepts/tm-matching#what-is-written-back-and-when).
 
 ## Use TM matches while translating
 
-In the CAT editor, the **TM matches** section of the sidebar lists matches for the active segment with their scores; click one (or press Ctrl/Cmd+1 to 5) to insert it. The insert is saved as a **Draft** and **Match** shows the card's percentage, as after pre-translation. Press Cmd/Ctrl+K (or click **Concordance**) to search the project's TMs for a selected phrase. See [The CAT editor](/docs/guides/cat-editor).
+In the CAT editor, the **TM matches** section of the sidebar lists matches for the active segment with their scores; click one (or press Ctrl/Cmd+1 to 5) to insert it. The insert is saved as a **Draft** and **Match** shows the card's percentage, as after pre-translation; an exact match is then approved. Press Cmd/Ctrl+K (or click **Concordance**) to search the project's TMs for a selected phrase. See [The CAT editor](/docs/guides/cat-editor).

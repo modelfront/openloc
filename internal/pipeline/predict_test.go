@@ -3,12 +3,13 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/extension"
-	"openloc/internal/httputil"
+	"openloc/internal/logging"
 	"openloc/internal/ptr"
 )
 
@@ -296,6 +297,8 @@ func TestRunAIStep_EmptyPending_NoOp(t *testing.T) {
 
 // An error the extension returns must reach the user verbatim — the
 // actionable "why" (e.g. unsupported language pair) is what lets them fix it.
+// With no vendor answer behind it, it may as well be the extension's own
+// fault, so it is reported: an ExtensionFailure, a 502.
 func TestRunAIStep_PredictFailure_SurfacesExtensionError(t *testing.T) {
 	pred := &fakeExtPredictor{err: &extension.CallError{Msg: "unsupported language pair en -> de"}}
 
@@ -312,20 +315,22 @@ func TestRunAIStep_PredictFailure_SurfacesExtensionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when the extension fails")
 	}
-	msg, ok := httputil.AsClientError(err)
-	if !ok {
-		t.Fatalf("expected a ClientError, got %T: %v", err, err)
+	var failure *ExtensionFailure
+	if !errors.As(err, &failure) || failure.StatusCode() != http.StatusBadGateway {
+		t.Fatalf("expected a 502 ExtensionFailure, got %T: %v", err, err)
 	}
-	if !strings.Contains(msg, "unsupported language pair") || !strings.Contains(msg, "Mock QE") {
-		t.Fatalf("client error should name the extension and carry its message, got: %q", msg)
+	if msg := err.Error(); !strings.Contains(msg, "unsupported language pair") || !strings.Contains(msg, "Mock QE") {
+		t.Fatalf("the message should name the extension and carry its text, got: %q", msg)
 	}
 	if len(mq.updatePredictCalls) != 0 {
 		t.Fatalf("a failed batch wrote %d rows", len(mq.updatePredictCalls))
 	}
 }
 
-// A host failure (not the extension's own error) gets a generic message: its
-// text may describe the host, not the vendor.
+// A host failure (not the extension's own error) is ours: a 502, not a
+// ClientError (which would keep it out of error tracking), with a generic
+// message, since its text describes the host, not the vendor. The logs keep
+// the cause.
 func TestRunAIStep_HostFailure_GenericMessage(t *testing.T) {
 	pred := &fakeExtPredictor{err: errors.New("wasm trap: out of bounds memory access")}
 
@@ -339,12 +344,15 @@ func TestRunAIStep_HostFailure_GenericMessage(t *testing.T) {
 
 	svc, _ := newExtStepService(mq, pred)
 	_, err := svc.RunAIStep(context.Background(), 1, 5, nil)
-	msg, ok := httputil.AsClientError(err)
-	if !ok {
-		t.Fatalf("expected a ClientError, got %T: %v", err, err)
+	var failure *ExtensionFailure
+	if !errors.As(err, &failure) || failure.StatusCode() != http.StatusBadGateway {
+		t.Fatalf("expected a 502 ExtensionFailure, got %T: %v", err, err)
 	}
-	if strings.Contains(msg, "wasm trap") || !strings.Contains(msg, "did not respond") {
+	if msg := err.Error(); strings.Contains(msg, "wasm trap") || !strings.Contains(msg, "did not respond") {
 		t.Fatalf("host failure message = %q", msg)
+	}
+	if !strings.Contains(logging.SafeErrorMessage(err), "wasm trap") {
+		t.Errorf("the logs must keep the cause, got %q", logging.SafeErrorMessage(err))
 	}
 }
 

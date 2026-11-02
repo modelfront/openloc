@@ -15,11 +15,12 @@ describe('SaveAsTemplateDialog', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Summer template'))
   })
 
-  it('refuses an empty name without calling onSave', async () => {
+  it('keeps Save disabled for an empty name without calling onSave', async () => {
     const onSave = vi.fn()
     render(<SaveAsTemplateDialog open onOpenChange={vi.fn()} defaultName="" onSave={onSave} />)
-    await userEvent.click(screen.getByTestId('save-as-template-confirm'))
-    expect(await screen.findByText('Template name is required')).toBeInTheDocument()
+    const confirm = () => screen.getByTestId('save-as-template-confirm')
+    await waitFor(() => expect(confirm()).toHaveAttribute('aria-disabled', 'true'))
+    await userEvent.click(confirm())
     expect(onSave).not.toHaveBeenCalled()
   })
 

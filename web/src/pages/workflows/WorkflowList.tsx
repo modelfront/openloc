@@ -16,6 +16,7 @@ import { LoadFailed } from '@/components/layout/LoadFailed'
 import { hoverActionClass } from '@/components/list/hover-action'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Pencil } from 'lucide-react'
@@ -87,7 +88,7 @@ export default function WorkflowList() {
       )}
 
       <div className="mb-4">
-        <Button size="sm" onClick={() => setCreating(true)} disabled={!canCreate} data-testid="new-workflow" data-guide="workflows.new">New template</Button>
+        <CreateButton onClick={() => setCreating(true)} disabled={!canCreate} data-testid="new-workflow" data-guide="workflows.new">New template</CreateButton>
       </div>
 
       {loadFailed && <LoadFailed what="workflows" error={error} onRetry={refetch} />}

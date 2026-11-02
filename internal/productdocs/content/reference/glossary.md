@@ -3,7 +3,7 @@ title: "Glossary of terms"
 summary: "Short definitions of the words the TMS uses: segment, job, leverage, band, context match and more."
 order: 60
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-29
 sources:
   - docs/architecture.md
   - internal/mtrouter/**
@@ -11,6 +11,7 @@ sources:
   - internal/airouter/**
   - web/src/lib/segment-status.ts
   - web/src/components/SegmentRow.shared.tsx
+  - internal/placeable/**
   - web/src/components/ai/APITokensSection.tsx
   - web/src/components/ai/vendor-catalog.ts
 related:
@@ -48,6 +49,7 @@ The words you meet in the product, in alphabetical order.
 | **MT router** | What a project points at for machine translation. It maps target languages to MT engines, with an optional default engine for the rest. See [Machine translation](/docs/guides/machine-translation). |
 | **Organization** | Your company or team. Projects, memories, terms, members and settings belong to one organization. |
 | **Origin** | Where a segment's text came from when no person typed it: TM, MT, APE or File. Shown as a chip in the **Match** column. |
+| **Placeable** | A piece of the source that belongs in the translation unchanged: a number, date, time, measurement, amount, web or email address, software variable such as `{0}`, or product code. The editor underlines placeables with a dotted line in the source, and **F8** inserts the next missing tag or placeable. See [Insert placeables](/docs/guides/cat-editor#insert-placeables). |
 | **Pre-translation** | The automatic fill of a job: memory first, then machine translation. Runs on upload or with **Apply TM** and **Apply MT**. |
 | **Project** | One piece of work: a source language, target languages, files and the settings that decide how they are translated. |
 | **QA check** | One automatic test on a segment, for example **Empty target** or **Terminology**. See [Quality assurance](/docs/guides/quality-assurance). |
@@ -57,6 +59,7 @@ The words you meet in the product, in alphabetical order.
 | **Roles** | **Owner**, **Admin**, **Project manager** and **Linguist**. Owners and admins run the organization, project managers run projects, linguists work on assigned tasks. See [Roles and permissions](/docs/reference/roles-and-permissions). |
 | **Segment** | One unit of text in a file, usually a sentence or a paragraph. Translation happens segment by segment. |
 | **Source and target language** | The source language is the language of the uploaded file. Target languages are the ones you translate into. |
+| **Split and join** | **Split** cuts a segment in two at the cursor; **Join** puts the pieces of a split, or neighbouring sentences of one paragraph, back into one row. Either changes only the job you make it in, never the same file in another language. The pieces of a split are numbered 3, 3.1 and so on. See [the CAT editor](/docs/guides/cat-editor#split-and-join-segments). |
 | **Status** | How far a segment is: **Untranslated**, **Pretranslated**, **Draft**, **Auto-approved** or **Approved**. A person approves with Ctrl+Enter (Cmd+Enter on Mac); an exact memory match is approved for you. See [Segment statuses](/docs/reference/segment-statuses). |
 | **Tag** | A chip in a segment that stands for something that is not text: a link, a line break, bold. See [Work with tags](/docs/guides/cat-editor#work-with-tags). |
 | **Task** | One workflow step on one job, as seen by the person assigned to it. The **Tasks** page lists yours. |

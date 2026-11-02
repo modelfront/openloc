@@ -29,7 +29,12 @@ func (c *pptxCollector) altText(part string, doc *xmlDoc, nv *xmlNode) {
 	if !hasWords(alt.value) {
 		return
 	}
-	for _, rng := range SplitSentences(alt.value, nil) {
+	ranges, err := c.seg.Split(alt.value, nil)
+	if err != nil {
+		c.err = err
+		return
+	}
+	for _, rng := range ranges {
 		alt.sentences = append(alt.sentences, pptxSentence{rng: rng, text: alt.value[rng.Start:rng.End]})
 	}
 	if len(alt.sentences) == 0 {

@@ -104,6 +104,12 @@ type Term struct {
 	// "pending". It travels because a forbidden term is the one the model most
 	// needs to know about.
 	Status string `json:"status"`
+	// Definition and Domain come from the term's concept, Notes from the target
+	// term. They let the model tell apart two concepts that share one source
+	// term ("bank": a lender, a river's edge). Empty ones are left out.
+	Definition string `json:"definition,omitempty"`
+	Domain     string `json:"domain,omitempty"`
+	Notes      string `json:"notes,omitempty"`
 }
 
 // TMMatch is one translation memory entry close to the segment's source text.

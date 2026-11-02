@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateTermBaseDialog } from './CreateTermBaseDialog'
 import { queryKeys } from '../lib/query-keys'
@@ -87,13 +88,35 @@ describe('CreateTermBaseDialog', () => {
     })
   })
 
-  it('does not submit when name is empty', async () => {
+  it('says "term base" in sentence case when the create fails', async () => {
+    mockCreateTermBase.mockRejectedValue(new Error('name already taken'))
     const user = userEvent.setup()
-    renderDialog({ initialSrcLang: 'en', initialTgtLang: 'es' })
+    renderDialog({ initialSrcLang: 'en' })
 
+    await user.type(screen.getByPlaceholderText(/term base name/i), 'Legal TB')
     await user.click(screen.getByRole('button', { name: /^create$/i }))
 
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to create term base: name already taken')
+    })
+  })
+
+  it('keeps Create disabled until the name has more than spaces, and says why', async () => {
+    const user = userEvent.setup()
+    renderDialog({ initialSrcLang: 'en', initialTgtLang: 'es' })
+    // Re-query each time: the button is remounted when its disabled reason comes or goes.
+    const create = () => screen.getByRole('button', { name: /^create$/i })
+
+    await waitFor(() => expect(create()).toHaveAttribute('aria-disabled', 'true'))
+    await user.hover(create())
+    expect(await screen.findByText('Fill in the required fields first.')).toBeInTheDocument()
+    await user.click(create())
     expect(mockCreateTermBase).not.toHaveBeenCalled()
+
+    await user.type(screen.getByPlaceholderText(/term base name/i), '   ')
+    await waitFor(() => expect(create()).toHaveAttribute('aria-disabled', 'true'))
+    await user.type(screen.getByPlaceholderText(/term base name/i), 'Legal TB')
+    await waitFor(() => expect(create()).not.toHaveAttribute('aria-disabled'))
   })
 
   // POST /api/terminology returns the raw term_bases row —

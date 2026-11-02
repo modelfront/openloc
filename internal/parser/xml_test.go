@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"openloc/internal/segmentation"
 	"openloc/internal/wordcount"
 )
 
@@ -19,7 +20,7 @@ const (
 	st4ReferencePath = "testdata/st4_reference.xlf"
 )
 
-func readFixture(t *testing.T, path string) []byte {
+func readFixture(t testing.TB, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -68,7 +69,8 @@ var xliffTagRE = regexp.MustCompile(`</?[gx][^>]*>`)
 // existing TM would have been built from. A regression anywhere in the extraction rules shows up
 // here as a concrete diff rather than a vague behaviour change.
 func TestXMLParseMatchesReference(t *testing.T) {
-	segments, err := XML{}.Parse(readFixture(t, st4SourcePath))
+	// The conservative built-in set is the one that matches the reference.
+	segments, err := XML{Segmenter: segmentation.Conservative()}.Parse(readFixture(t, st4SourcePath))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

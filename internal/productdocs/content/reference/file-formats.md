@@ -3,9 +3,10 @@ title: "Supported file formats"
 summary: "Every file type you can upload, what comes back, and format-specific notes."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-26
 sources:
   - internal/parser/**
+  - internal/segmentation/**
   - sidecars/parser/**
   - web/src/lib/source-file-formats.ts
   - internal/pipeline/export.go
@@ -19,6 +20,7 @@ related:
   - guides/projects-and-files
   - guides/cat-editor
   - guides/translation-memory
+  - guides/segmentation
 ---
 You can upload the file types below to a project. The system splits each file into segments, and after translation it rebuilds the file in its original format. For the upload and download steps themselves see [Projects and files](/docs/guides/projects-and-files).
 
@@ -42,7 +44,16 @@ You can upload the file types below to a project. The system splits each file in
 
 ## How text is split into sentences
 
-Most formats cut long text into one segment per sentence, so the editor and the translation memory work sentence by sentence. A sentence ends at `.`, `!`, `?` or `:` followed by a space and a capital letter, a digit or an opening quote or bracket. Common abbreviations such as "e.g.", "etc." and "Dr." do not end a sentence, and neither does a period inside a number or a name. A sentence never ends inside a tag: when bold text or a link runs across two sentences, they stay one segment. In the translated file the sentences are put back together with the spacing of the original.
+Most formats cut long text into one segment per sentence, so the editor and the translation memory work sentence by sentence. Where a sentence ends is decided by the project's segmentation profile. See [Segmentation profiles](/docs/guides/segmentation), which also covers importing and exporting rules as SRX. A sentence never ends inside a tag or inside `{…}`: when bold text or a link runs across two sentences, they stay one segment. In the translated file the sentences are put back together with the spacing of the original.
+
+## Split and join in the editor
+
+How to split and join a segment is in the [CAT editor guide](/docs/guides/cat-editor#split-and-join-segments). What each format allows and writes back:
+
+- **Split:** any segment, except a Gettext plural form and an XLIFF segment whose tags hold escaped markup. On export the pieces go back into the original segment.
+- **Join of sentences of one paragraph or element:** written back over those sentences in Word, HTML, Markdown, plain text, JSON, generic XML and PowerPoint.
+- **Join in XLIFF that marks sentences inside a unit** (Trados SDLXLIFF and similar): the sentence marks are merged into one in the source and the target. The unit's own source text stays as it is, and the Trados segment entries of the merged-away sentences are removed. A join is refused when anything other than whitespace sits between the sentences.
+- **Gettext, Excel, Android resources, Apple strings, mqxliff, and XLIFF without sentence marks** have one segment per unit, so a join only puts back the pieces of a split.
 
 ## How the format is chosen
 

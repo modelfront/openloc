@@ -20,9 +20,13 @@ interface Props<V extends string> {
   'aria-label': string
   /** `sm` fits a row of small controls, such as the search options. */
   size?: 'default' | 'sm'
-  /** `primary` fills the checked option with the primary colour — for a
-   *  choice that heads a card and must read from across the page. */
+  /** `primary` outlines the checked option in the primary colour — only for
+   *  the choice that heads a card (the Workflow card's Workflow / Raw MT
+   *  mode). Never a fill. */
   tone?: 'default' | 'primary'
+  /** Stretches the pill to its container and shares the width among the
+   *  options — for a toggle that sits in a fixed-width column. */
+  fill?: boolean
   className?: string
   'data-testid'?: string
 }
@@ -33,7 +37,7 @@ interface Props<V extends string> {
  * answers "which of these?" — unlike `Tabs`, which switches visible panels.
  * Each option gets `data-testid="<group testid>-<value>"`.
  */
-export function ChoiceToggle<V extends string>({ value, onChange, options, size = 'default', tone = 'default', className, 'aria-label': ariaLabel, 'data-testid': testId }: Props<V>) {
+export function ChoiceToggle<V extends string>({ value, onChange, options, size = 'default', tone = 'default', fill = false, className, 'aria-label': ariaLabel, 'data-testid': testId }: Props<V>) {
   const sm = size === 'sm'
   const primary = tone === 'primary'
   return (
@@ -41,7 +45,7 @@ export function ChoiceToggle<V extends string>({ value, onChange, options, size 
       role="radiogroup"
       aria-label={ariaLabel}
       data-testid={testId}
-      className={cn('inline-flex max-md:max-w-full items-center gap-0.5 max-md:overflow-x-auto bg-muted text-muted-foreground', sm ? 'rounded-md p-0.5' : 'rounded-lg p-1', className)}
+      className={cn(fill ? 'flex w-full' : 'inline-flex', 'max-md:max-w-full items-center gap-0.5 max-md:overflow-x-auto bg-muted text-muted-foreground', sm ? 'rounded-md p-0.5' : 'rounded-lg p-1', className)}
     >
       {options.map((opt, i) => {
         const checked = opt.value === value
@@ -68,13 +72,14 @@ export function ChoiceToggle<V extends string>({ value, onChange, options, size 
             onClick={() => onChange(opt.value)}
             className={cn(
               'inline-flex items-center justify-center border border-transparent font-medium whitespace-nowrap transition-all',
+              fill && 'flex-1',
               sm ? 'h-6 gap-1 rounded-sm px-2 text-xs' : 'h-9 gap-2 rounded-md px-4 text-sm',
               'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
               'disabled:pointer-events-none disabled:opacity-50',
               checked
                 ? primary
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30'
+                  ? 'border-primary bg-background text-primary-ink shadow-sm dark:bg-input/30'
+                  : 'border-border bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30'
                 : 'text-foreground/60 hover:text-foreground',
             )}
           >
@@ -84,7 +89,7 @@ export function ChoiceToggle<V extends string>({ value, onChange, options, size 
                 steps", not "WorkflowHuman…"; a flex item, it takes no room. */}
             {opt.caption && ' '}
             {opt.caption && (
-              <span className={cn('font-normal', sm ? 'text-[11px]' : 'text-xs', checked && primary ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
+              <span className={cn('font-normal text-muted-foreground', sm ? 'text-[11px]' : 'text-xs')}>
                 {opt.caption}
               </span>
             )}

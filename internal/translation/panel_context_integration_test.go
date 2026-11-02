@@ -80,9 +80,11 @@ func TestIntegrationPanelInsert_ContextIgnoresForeignSegments(t *testing.T) {
 	f.setContext(t, tm, "Hello world", "First line.", "Last line.")
 
 	inContext := func(fileID int64, source string, at int32) db.Translation {
-		testutil.SeedSegment(t, f.q, fileID, "First line.", at)
+		first := testutil.SeedSegment(t, f.q, fileID, "First line.", at)
 		seg := testutil.SeedSegment(t, f.q, fileID, source, at+1)
-		testutil.SeedSegment(t, f.q, fileID, "Last line.", at+2)
+		last := testutil.SeedSegment(t, f.q, fileID, "Last line.", at+2)
+		testutil.SeedTranslation(t, f.q, first.ID, "es", db.TranslationStatusNeedsReview)
+		testutil.SeedTranslation(t, f.q, last.ID, "es", db.TranslationStatusNeedsReview)
 		return testutil.SeedTranslation(t, f.q, seg.ID, "es", db.TranslationStatusNeedsReview)
 	}
 

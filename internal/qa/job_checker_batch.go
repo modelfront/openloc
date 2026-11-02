@@ -74,7 +74,7 @@ func (c *JobChecker) CheckAndPersist(ctx context.Context, rows []CheckRow) (map[
 	for _, r := range rows {
 		var issues []Issue
 		if !c.js.rs.empty() {
-			issues = c.s.checkSegment(ctx, c.js.rs, lk, r.ID, r.Source, r.Target, r.SourceRich, r.TargetRich)
+			issues = c.s.checkSegment(ctx, c.js.rs, c.js.sc, lk, r.ID, r.Source, r.Target, r.SourceRich, r.TargetRich)
 		}
 		w.add(r.ID, issues)
 		out[r.ID] = CheckResult{Issues: applyIgnored(issues, ignored[r.ID]), ProfileAssigned: true}

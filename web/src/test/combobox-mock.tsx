@@ -5,7 +5,8 @@
 //   vi.mock('@/components/ui/combobox', async () => (await import('@/test/combobox-mock')).comboboxSelectMock)
 //
 // `comboboxSelectMock` renders Combobox as a <select> (drive it with
-// `selectOptions`; each action is an option valued `__action__:<key>` that
+// `selectOptions`; a string `chip` lands on its option as `data-chip`; each
+// action is an option valued `__action__:<key>` that
 // runs the action when picked) and MultiCombobox as a comma-joined <input>.
 // `comboboxInputMock` renders both as <input>s for forms that are driven by
 // typing a code.
@@ -40,7 +41,7 @@ function SelectCombobox({ value, onChange, options, actions, disabled, className
           select would silently pick the first option instead. */}
       {!hasEmptyOption && <option value="">{placeholder ?? 'Select…'}</option>}
       {options.map((o) => (
-        <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+        <option key={o.value} value={o.value} disabled={o.disabled} data-chip={typeof o.chip === 'string' ? o.chip : undefined}>{o.label}</option>
       ))}
       {actions?.map((a) => (
         <option key={a.key} value={`__action__:${a.key}`}>{a.label}</option>

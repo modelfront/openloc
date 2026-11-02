@@ -6,6 +6,9 @@ import { queryKeys } from '../lib/query-keys'
 import { formatDate } from '../utils'
 import { useCRUDList } from '../hooks/use-crud-list'
 import { useCreatedByParam } from '../hooks/use-created-by-param'
+import { useDebouncedUrlParam } from '../hooks/useDebouncedUrlParam'
+import { useUrlParamSetters } from '../hooks/useUrlParamSetters'
+import { filterByNameAndCreator } from '../lib/name-filter'
 import { distinctCreators } from '../lib/creators'
 import { CreateTermBaseDialog } from '../components/CreateTermBaseDialog'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -14,18 +17,20 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { LoadFailed } from '@/components/layout/LoadFailed'
-import { CreatedByFilterChip } from '@/components/list'
+import { AssetFilterBar } from '@/components/list'
 import { CreatorLabel } from '@/components/user/CreatorLabel'
-import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { listCardClass, listCardHeaderClass, listCardTitleClass } from '@/components/list/list-row'
 import { LanguagePair } from '@/components/ui/language-code'
-import { TM_LANGS_SHOWN } from '@/lib/tm-display'
+import { TM_LANGS_SHOWN, conceptsLabel } from '@/lib/tm-display'
 
 export default function TerminologyList() {
   const navigate = useNavigate()
   const [createdBy, setCreatedBy] = useCreatedByParam()
+  const [search, setSearch] = useDebouncedUrlParam('q')
+  const { clearParams } = useUrlParamSetters()
   const { data: me } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
 
   const {
@@ -44,12 +49,10 @@ export default function TerminologyList() {
     entityName: 'Term base',
   })
 
-  // Client-side creator filter — the list is fetched whole (a handful of rows
-  // per tenant), so there's no server-side filter to add.
-  const bases = useMemo(
-    () => createdBy == null ? allBases : allBases?.filter(b => b.created_by === createdBy),
-    [allBases, createdBy],
-  )
+  // Client-side name and creator filters — the list is fetched whole (a
+  // handful of rows per tenant), so there's no server-side filter to add.
+  const bases = useMemo(() => filterByNameAndCreator(allBases, search, createdBy), [allBases, search, createdBy])
+  const filtered = search !== '' || createdBy != null
 
   // Creator options come from the rows themselves, not the org member list —
   // see lib/creators.ts for why.
@@ -63,9 +66,9 @@ export default function TerminologyList() {
         <PageHeader
           title="Terminology"
           actions={
-            <Button onClick={() => setShowForm(true)} data-guide="terminology.new">
+            <CreateButton onClick={() => setShowForm(true)} data-guide="terminology.new">
               New term base
-            </Button>
+            </CreateButton>
           }
         />
 
@@ -76,21 +79,17 @@ export default function TerminologyList() {
           onCreated={(id) => { setShowForm(false); navigate(`/terminology/${id}`) }}
         />
 
-        {/* Creator filter. Shown when there's something to actually
-            distinguish (2+ known creators), or when a filter is already active
-            — otherwise a URL-set filter would have no way to be cleared from
-            the UI. */}
-        {(creators.length > 1 || createdBy != null) && (
-          <div className="flex items-center gap-2 mb-4" data-testid="term-base-filter-bar">
-            <CreatedByFilterChip
-              value={createdBy}
-              myUserId={me?.id ?? null}
-              options={creators}
-              onChange={setCreatedBy}
-              testId="term-base-filter-created-by"
-            />
-          </div>
-        )}
+        <AssetFilterBar
+          total={allBases?.length ?? 0}
+          search={search}
+          onSearchChange={setSearch}
+          placeholder="Search term bases..."
+          searchTestId="term-base-list-search"
+          createdBy={{ value: createdBy, onChange: setCreatedBy, myUserId: me?.id ?? null, options: creators, testId: 'term-base-filter-created-by' }}
+          onClear={() => clearParams(['q', 'created_by'])}
+          clearTestId="term-base-filter-clear"
+          testId="term-base-filter-bar"
+        />
 
         {loadFailed && <LoadFailed what="term bases" error={error} onRetry={refetch} />}
 
@@ -117,7 +116,7 @@ export default function TerminologyList() {
                   <div className="font-medium text-gray-900 dark:text-gray-100 shrink-0">{base.name}</div>
                   <LanguagePair source={base.source_language} targets={targets} separator="|" max={TM_LANGS_SHOWN} className="text-gray-500 dark:text-gray-400" />
                   <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
-                    {base.entry_count} {base.entry_count === 1 ? 'concept' : 'concepts'}
+                    {conceptsLabel(base.entry_count)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 ml-3 shrink-0">
@@ -143,7 +142,7 @@ export default function TerminologyList() {
           })}
           {bases?.length === 0 && (
             <EmptyState
-              message={createdBy != null
+              message={filtered
                 ? 'No term bases match the current filter.'
                 : 'No term bases yet. Create one to get started.'}
             />

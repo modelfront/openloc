@@ -22,8 +22,9 @@
 #                                                         problems; web/src imports
 #                                                         production deps only)
 #   6. vitest        — `cd web && npm test`              (FE unit + component)
-#   7. scripts       — every `scripts/*.test.sh` and     (the queue the
-#                      `scripts/lib/*.test.sh`            throwaway stacks
+#   7. scripts       — every `scripts/*.test.sh`,        (the queue the
+#                      `scripts/lib/*.test.sh` and       throwaway stacks
+#                      `.claude/skills/*/*.test.sh`
 #                                                         wait in, and the
 #                                                         other script tests;
 #                                                         no Docker; also under
@@ -225,6 +226,13 @@ if [ "$only_selected" -eq 1 ]; then
   run_go_build=$sel_go_build; run_codegen=$sel_codegen; run_go_test=$sel_go_test; run_tsc=$sel_tsc
   run_guards=$sel_guards; run_vitest=$sel_vitest; run_scripts=$sel_scripts; run_e2e=$sel_e2e
   run_journeys=$sel_journeys
+fi
+
+# If scripts/gate-snapshot.sh exists and is executable, a local run (not CI,
+# not --on-dev) hands over to it, and it runs this script on a copy of the
+# staged tree.
+if [ -x scripts/gate-snapshot.sh ] && [ "${GATE_SNAPSHOT:-}" != "$(pwd -P)" ] && [ -z "${CI:-}" ] && [ "$isolated" -eq 1 ]; then
+  exec scripts/gate-snapshot.sh "$@"
 fi
 
 # ── Output paths ───────────────────────────────────────────────────────────
@@ -460,12 +468,13 @@ fi
 [ "$run_tsc"       -eq 1 ] && run_suite "tsc"      "cd web && npx tsc -b"
 [ "$run_guards"    -eq 1 ] && run_suite "guards"   "scripts/lint-guards.sh"
 [ "$run_vitest"    -eq 1 ] && run_suite "vitest"   "cd web && npm test"
-# The script tests are the scripts/*.test.sh and scripts/lib/*.test.sh files,
+# The script tests are the scripts/*.test.sh, scripts/lib/*.test.sh and
+# .claude/skills/*/*.test.sh files (the last are private),
 # run with bash whatever their mode. The gate's scripts run under whichever
 # bash a machine has: on macOS without a newer one that is /bin/bash 3.2,
 # which behaves differently, so the tests run under it too.
 script_tests=""
-for t in scripts/*.test.sh scripts/lib/*.test.sh; do
+for t in scripts/*.test.sh scripts/lib/*.test.sh .claude/skills/*/*.test.sh; do
   [ -f "$t" ] && script_tests="$script_tests $t"
 done
 scripts_cmd=""

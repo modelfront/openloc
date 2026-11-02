@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { closeChat, openChat } from '../../lib/chat-bus'
 import { RECORDING_MAX_MS, clearHeldRecording, startRecording } from '../../lib/watch-recording'
 import type { ChatSend } from './chat-ask'
-import { ChatAskCard, WAIT_FOR_ANSWER } from './ChatCard'
+import { ChatAskCard } from './ChatCard'
 
 /** The messages the panel sends for the user's answer: never the recording itself. */
 export const RECORDING_ATTACHED = 'I repeated the steps. The recording is attached to the report for the support team.'
@@ -30,7 +30,7 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export function ChatRepeatRequest({ reason, disabled, onSend }: { reason: string; disabled?: boolean; onSend: ChatSend }) {
+export function ChatRepeatRequest({ reason, disabledReason: waitReason, onSend }: { reason: string; disabledReason?: string; onSend: ChatSend }) {
   const [state, setState] = useState<State>('idle')
   const [left, setLeft] = useState(RECORDING_MAX_MS)
   const stopRef = useRef<(() => void) | null>(null)
@@ -75,7 +75,7 @@ export function ChatRepeatRequest({ reason, disabled, onSend }: { reason: string
     setState('skipped')
   }
 
-  const waitReason = disabled ? WAIT_FOR_ANSWER : undefined
+  const disabled = waitReason !== undefined
 
   return (
     <ChatAskCard reason={reason} state={state} status={STATUS[state]} testId="chat-ask-repeat">

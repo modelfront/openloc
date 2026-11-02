@@ -50,7 +50,8 @@ func TestIntegrationFullTranslationFlow(t *testing.T) {
 
 	// Step 3: Create template
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Flow Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Flow Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -300,7 +301,8 @@ func TestIntegrationTerminologyE2EFlow(t *testing.T) {
 
 	// Step 4: Create template and assign term base
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Terminology Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "Terminology Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
@@ -551,7 +553,7 @@ func TestIntegrationTermAssignmentFanOut(t *testing.T) {
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
 	// Template + project en → {de, fr, es}.
-	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Fan-out Template"}, userID, tenantID)
+	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"workflow_id": testutil.LibraryWorkflow(t, db.New(pool), tenantID), "name": "Fan-out Template"}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {
 		Data struct {
@@ -638,7 +640,7 @@ func TestIntegrationTermLookupDedupsMultipleAssignments(t *testing.T) {
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 
-	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"name": "Dup Template"}, userID, tenantID)
+	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{"workflow_id": testutil.LibraryWorkflow(t, db.New(pool), tenantID), "name": "Dup Template"}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {
 		Data struct {
@@ -735,6 +737,7 @@ func TestIntegrationQACheckFlow(t *testing.T) {
 
 	// Step 5: Create template with QA profile
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
+		"workflow_id":     testutil.LibraryWorkflow(t, q, tenantID),
 		"name":            "QA Template",
 		"mt_on_upload":    false,
 		"fuzzy_threshold": 0.5,
@@ -970,7 +973,8 @@ func TestIntegrationDraftSaveRichTextQA(t *testing.T) {
 
 	// Create template with QA profile
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "DraftQA Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
+		"name":        "DraftQA Template",
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {
@@ -1236,6 +1240,7 @@ func TestIntegrationWorkflowFlow(t *testing.T) {
 
 	// Step 2: Create template
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
+		"workflow_id":     testutil.LibraryWorkflow(t, q, tenantID),
 		"name":            "WF Template",
 		"mt_on_upload":    false,
 		"fuzzy_threshold": 0.5,
@@ -1772,7 +1777,7 @@ func TestIntegrationProjectAsCore(t *testing.T) {
 
 	// Step 3: Create template with settings + assignments
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "Core Template", "mt_on_upload": true, "fuzzy_threshold": 0.85,
+		"name": "Core Template", "mt_on_upload": true, "fuzzy_threshold": 0.85, "workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var tmplResp struct {
@@ -1829,6 +1834,7 @@ func TestIntegrationProjectAsCore(t *testing.T) {
 	// Step 4: Create project WITHOUT a template — gets defaults, no assignments
 	rec = testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "Core Plain Project", "source_language": "en", "target_languages": []string{"es"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var plainResp struct {
@@ -1935,6 +1941,7 @@ func TestIntegrationProjectAsCore(t *testing.T) {
 	// Step 7: Save a form with the customized settings as a new template (the
 	// New project page sends the same payload POST /api/projects takes).
 	rec = testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
+		"workflow_id":      testutil.LibraryWorkflow(t, q, tenantID),
 		"name":             "From Project",
 		"settings":         map[string]any{"fuzzy_threshold": 0.6, "mt_on_upload": false, "mt_router_id": mtRouterID},
 		"tm_assignments":   []map[string]any{{"tm_id": tmID, "mode": "read_write", "priority": 0}},

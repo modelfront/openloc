@@ -14,6 +14,7 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/pipeline"
 	"openloc/internal/settings"
+	"openloc/internal/stepdef"
 	"openloc/internal/systemworkflow"
 	"openloc/internal/testutil"
 	"openloc/internal/worker"
@@ -188,6 +189,11 @@ func TestIntegrationPretranslateOnlyWorkflow(t *testing.T) {
 	})
 
 	// A library workflow to switch between, and the steps a profile has.
+	// A provisioned org has the default step definitions; RegisterUser skips
+	// provisioning, so the test adds them.
+	if err := stepdef.EnsureDefaults(ctx, q, tenantID); err != nil {
+		t.Fatal(err)
+	}
 	review, err := q.GetStepDefinitionByName(ctx, db.GetStepDefinitionByNameParams{TenantID: tenantID, Name: "Review"})
 	if err != nil {
 		t.Fatal(err)
@@ -422,7 +428,7 @@ func TestIntegrationPretranslateOnlyWorkflow(t *testing.T) {
 	})
 
 	t.Run("a template takes it with MT forced on", func(t *testing.T) {
-		rec := asPM("POST", "/api/templates", map[string]any{"name": "Pre-translate template"})
+		rec := asPM("POST", "/api/templates", map[string]any{"workflow_id": testutil.LibraryWorkflow(t, q, tenantID), "name": "Pre-translate template"})
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var tmpl idResp
 		testutil.DecodeJSON(t, rec, &tmpl)

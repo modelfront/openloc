@@ -5,7 +5,7 @@ import { queryKeys } from '../lib/query-keys'
 import { useTMMatches, TM_LOOKUP_DEBOUNCE_MS } from '../hooks/useTMMatches'
 import { isTermApplied } from '../lib/cat-editor-logic'
 import { countWordOccurrences } from '../lib/term-match'
-import { PanelRightClose, Check, AlertTriangle, ArrowRight } from 'lucide-react'
+import { PanelRightClose, Check, AlertTriangle, ArrowRight, Plus } from 'lucide-react'
 import CommentPanel from './CommentPanel'
 import QAFindingsSection from './QAFindingsSection'
 import { EditorSidebarTMSection } from './EditorSidebarTMSection'
@@ -16,8 +16,10 @@ import { qaIssuesEqual, type QaFinding } from '../lib/qa-findings'
 import type { PanelInsert } from '../lib/panel-insert'
 import { SegmentText } from './SegmentRow.shared'
 import { Button } from '@/components/ui/button'
+import { tableHeaderRowClass } from '@/components/list/list-row'
 import { Chip } from '@/components/ui/chip'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { altKey } from '@/lib/platform'
 import { TERM_STATUS_COLOR, TERM_STATUS_ICON, termStatusLabel } from '@/lib/term-status'
 import { isSectionVisible, loadSidebarLayout, saveSidebarLayout, visibleSections, type SidebarLayout, type SidebarSectionId } from '@/lib/sidebar-sections'
 
@@ -55,7 +57,7 @@ export interface SegmentReference {
   /** Its current translation; '' while untranslated. */
   target: string
   /** 1-based row number of the defining segment, as shown in the # column. */
-  segmentNumber: number | null
+  segmentNumber: string | null
 }
 
 interface Props {
@@ -83,6 +85,8 @@ interface Props {
   translationId?: number | null
   /** The file's strings are plain text: MT inserts its plain text, never tags. */
   plainText?: boolean
+  /** Opens the term quick-add; no + button without it. */
+  onAddTerm?: () => void
 }
 
 export function editorSidebarEqual(prev: Props, next: Props): boolean {
@@ -98,6 +102,7 @@ export function editorSidebarEqual(prev: Props, next: Props): boolean {
     prev.translationId === next.translationId &&
     prev.onMatchHover === next.onMatchHover &&
     prev.plainText === next.plainText &&
+    prev.onAddTerm === next.onAddTerm &&
     // Structural, not by reference: an ignore flip rewrites the array in place
     // of the same length, and that flip is exactly what the section re-renders
     // for. Reference equality would also miss it — the parent rebuilds the
@@ -108,7 +113,7 @@ export function editorSidebarEqual(prev: Props, next: Props): boolean {
 
 export default memo(function EditorSidebar({
   jobId, sourceText, editText, terms, references, qaIssues,
-  onInsertMatch, onTermClick, onTermHover, onJumpToReference, onQARefresh, onClose, onMatchHover, translationId, plainText = false,
+  onInsertMatch, onTermClick, onTermHover, onJumpToReference, onQARefresh, onClose, onMatchHover, translationId, plainText = false, onAddTerm,
 }: Props) {
   const [mtOpen, setMtOpen] = useState(true)
   const [termOpen, setTermOpen] = useState(true)
@@ -240,6 +245,21 @@ export default memo(function EditorSidebar({
           open={termOpen}
           onToggle={() => setTermOpen(v => !v)}
           meta={displayTerms.length}
+          action={onAddTerm && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              // Keeps focus, and so the selection, in the editor.
+              onMouseDown={e => e.preventDefault()}
+              onClick={onAddTerm}
+              data-testid="add-term-btn"
+              className="mr-1 text-gray-400"
+              title={`Add term (${altKey}⇧G)`}
+              aria-label="Add term"
+            >
+              <Plus className="w-3 h-3" />
+            </Button>
+          )}
           bodyClassName="space-y-0.5"
         >
           {displayTerms.length === 0 && (
@@ -363,10 +383,10 @@ export default memo(function EditorSidebar({
   }
 
   return (
-    <div data-testid="editor-sidebar" data-guide="editor.sidebar" className="flex flex-col h-full bg-card border-l border-border overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted">
-        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Resources</span>
+    <div data-testid="editor-sidebar" data-guide="editor.sidebar" className="flex flex-col h-full bg-card rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+      {/* Same band and height as the segment table's header row beside it. */}
+      <div className={`flex items-center justify-between px-3 py-1 ${tableHeaderRowClass}`}>
+        <span>Resources</span>
         <div className="flex items-center">
           <EditorSidebarCustomizer layout={layout} onChange={updateLayout} />
           <Button variant="ghost" size="icon-xs" onClick={onClose} title="Close sidebar">

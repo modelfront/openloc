@@ -30,7 +30,7 @@ interface Props {
   loading?: boolean
   initialName: string
   /** Seeds the step draft. Pass a stable reference — a new array reseeds the
-   *  editor, dropping edits in progress. */
+   *  draft, dropping edits in progress. */
   initialSteps: WorkflowStep[]
   onSubmit: (input: { name: string; steps: WorkflowStep[] }) => Promise<unknown>
   /** `<prefix>-dialog`, `<prefix>-name` and `<prefix>-save` test ids. */
@@ -92,11 +92,7 @@ export function WorkflowFormDialog({
             </FormField>
             <div>
               {stepsHint && <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">{stepsHint}</p>}
-              <WorkflowStepsEditor
-                steps={initialSteps}
-                initialEditing
-                onDraftChange={setDrafts}
-              />
+              <WorkflowStepsEditor steps={drafts} onChange={setDrafts} />
             </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>Cancel</Button>

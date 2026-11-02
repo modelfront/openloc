@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { deleteProjectViaAPI, login, openJob, setProjectWorkflowStepsViaAPI, uploadFileViaAPI } from "./helpers";
+import { deleteProjectViaAPI, login, openJob, setProjectWorkflowStepsViaAPI, standardWorkflowId, uploadFileViaAPI } from "./helpers";
 
 const API = "";
 
@@ -23,7 +23,7 @@ async function createIsolatedWorkflowJob(page: Page, suffix: string): Promise<{
 
   const projRes = await page.request.post(`${API}/api/projects`, {
     headers,
-    data: { name: `Workflow E2E ${suffix} ${Date.now()}`, source_language: "en", target_languages: ["es"] },
+    data: { name: `Workflow E2E ${suffix} ${Date.now()}`, source_language: "en", target_languages: ["es"], workflow_id: await standardWorkflowId(page) },
   });
   expect(projRes.ok(), `create project: ${projRes.status()}`).toBe(true);
   const projectId: number = (await projRes.json()).data.id;

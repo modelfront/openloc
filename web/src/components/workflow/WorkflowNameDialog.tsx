@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 import { useScrollToError } from '../../hooks/useScrollToError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { Button, MISSING_REQUIRED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
 import { errorText } from '@/lib/error-text'
@@ -27,8 +27,9 @@ interface Props {
 /** Name prompt for "Save as workflow…" on a project or template. The caller
  *  owns the request; a failure stays in the dialog as a toast. */
 export function WorkflowNameDialog({ open, onClose, title, submitLabel, hint, onSubmit }: Props) {
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<WorkflowNameValues>({
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting, isValid } } = useForm<WorkflowNameValues>({
     resolver: zodResolver(workflowNameSchema),
+    mode: 'onTouched',
     defaultValues: { name: '' },
   })
   useScrollToError(errors)
@@ -58,7 +59,7 @@ export function WorkflowNameDialog({ open, onClose, title, submitLabel, hint, on
           </FormField>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
-            <Button type="submit" disabled={isSubmitting} data-testid="save-as-workflow-submit">{submitLabel}</Button>
+            <Button type="submit" disabled={isSubmitting || !isValid} disabledReason={isValid ? undefined : MISSING_REQUIRED_REASON} data-testid="save-as-workflow-submit">{submitLabel}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -9,7 +9,9 @@ import {
   getSeedTMId,
   login,
   pickComboboxValue,
+  pickProjectWorkflow,
   selectLanguage,
+  sourceLanguageTrigger,
   selectTargetLanguages,
   startFromTemplate,
   submitProjectWizard,
@@ -18,6 +20,8 @@ import {
   addLabelValueViaAPI,
   projectLabelsViaAPI,
   pickComboboxOption,
+  standardWorkflow,
+  authHeaders,
 } from "./helpers";
 
 test.describe("Templates", () => {
@@ -33,7 +37,7 @@ test.describe("Templates", () => {
     const name = `${UNBREAKABLE_NAME}Tpl${Date.now()}`;
     let templateId: number | undefined;
     try {
-      const res = await page.request.post(`/api/templates`, { headers, data: { name } });
+      const res = await page.request.post(`/api/templates`, { headers, data: { name, workflow_id: (await standardWorkflow(page)).id } });
       expect(res.status(), `create template: ${await res.text()}`).toBe(201);
       templateId = (await res.json()).data.id;
 
@@ -83,18 +87,19 @@ test.describe("Templates", () => {
     let templateId: number | undefined;
     try {
       await page.getByRole("button", { name: /new template/i }).click();
-      const nameInput = page.getByPlaceholder(/template name/i);
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill(templateName);
+      await expect(page).toHaveURL(/\/templates\/new$/);
+      await page.getByTestId("new-template-name").fill(templateName);
+      await pickProjectWorkflow(page);
       const [createRes] = await Promise.all([
         page.waitForResponse(r => /\/api\/templates\/?$/.test(r.url()) && r.request().method() === "POST"),
-        page.getByRole("button", { name: /^create$/i }).click(),
+        page.getByRole("button", { name: /^create template$/i }).click(),
       ]);
       expect(createRes.status(), `create template: ${await createRes.text()}`).toBe(201);
       templateId = (await createRes.json()).data.id as number;
 
-      // Create stays on the list and the new row appears in it.
-      await expect(page).toHaveURL(/\/templates$/);
+      // Create opens the new template.
+      await expect(page).toHaveURL(new RegExp(`/templates/${templateId}$`));
+      await page.goto("/templates");
       const row = page.getByTestId(`template-${templateId}`);
       await expect(row).toContainText(templateName);
 
@@ -109,6 +114,115 @@ test.describe("Templates", () => {
       // 404 (already gone) when the UI delete above succeeded; removes the template when it did not.
       if (templateId) await deleteViaAPI(page, `/api/templates/${templateId}`, `template ${templateId}`);
     }
+  });
+
+  test.describe("New template page", () => {
+    let templateId: number | undefined;
+    let profileId: number | undefined;
+    test.afterEach(async ({ page }) => {
+      if (templateId) await deleteViaAPI(page, `/api/templates/${templateId}`, `template ${templateId}`);
+      templateId = undefined;
+      if (profileId) await deleteViaAPI(page, `/api/segmentation-profiles/${profileId}`, `segmentation profile ${profileId}`);
+      profileId = undefined;
+    });
+
+    test("Create template needs a name; without a workflow the template has no steps", async ({ page }) => {
+      let createPosts = 0;
+      page.on("request", r => {
+        if (/\/api\/templates\/?$/.test(r.url()) && r.method() === "POST") createPosts++;
+      });
+
+      await page.goto("/templates/new");
+      const submit = page.getByRole("button", { name: /^create template$/i });
+      await expect(page.getByTestId("use-workflow-select")).toContainText("Choose a workflow");
+      await submit.click();
+      await expect(page.getByText("Template name is required")).toBeVisible();
+      expect(createPosts, "a refused form sends no create request").toBe(0);
+
+      // The project fields travel with the create; the workflow is optional.
+      const name = `E2E NewTemplatePage ${Date.now()}`;
+      await page.getByTestId("new-template-name").fill(name);
+      const projectName = page.getByTestId("template-project-name-edit");
+      await projectName.fill("Ads project");
+      await projectName.blur();
+      await selectTargetLanguages(page, page.locator('[data-field="target_languages"] button').first(), ["fr"]);
+      const [createRes] = await Promise.all([
+        page.waitForResponse(r => /\/api\/templates\/?$/.test(r.url()) && r.request().method() === "POST"),
+        submit.click(),
+      ]);
+      expect(createRes.status(), `create template: ${await createRes.text()}`).toBe(201);
+      const created = (await createRes.json()).data;
+      templateId = created.id as number;
+      expect(createPosts).toBe(1);
+      expect(created.name).toBe(name);
+      expect(created.project_name).toBe("Ads project");
+      expect(created.target_languages).toEqual(["fr"]);
+      expect(created.workflow_id).toBeNull();
+      await expect(page).toHaveURL(new RegExp(`/templates/${templateId}$`));
+
+      const stepsRes = await page.request.get(`/api/templates/${templateId}/workflow-steps`, { headers: await authHeaders(page) });
+      expect(stepsRes.ok()).toBe(true);
+      expect((await stepsRes.json()).data).toEqual([]);
+    });
+
+    test("A segmentation pick that stops suiting the source language falls back to the suggested profile", async ({ page }) => {
+      const profilesFor = async (lang: string) => {
+        const res = await page.request.get(`/api/segmentation-profiles?source_language=${lang}`, { headers: await authHeaders(page) });
+        expect(res.ok()).toBe(true);
+        return (await res.json()).data as { id: number; suggested?: boolean; source_languages?: string[] }[];
+      };
+      const suggestedEnglish = (await profilesFor("en")).find(p => p.suggested);
+      const german = (await profilesFor("de")).find(p => p.suggested);
+      expect(suggestedEnglish, "a suggested profile for English").toBeTruthy();
+      expect(german, "a suggested profile for German").toBeTruthy();
+      // An English-only profile that is not the suggested one, so picking it
+      // changes what the form holds.
+      const created = await page.request.post("/api/segmentation-profiles", {
+        headers: await authHeaders(page),
+        data: { name: `E2E English only ${Date.now()}`, source_languages: ["en"], from: suggestedEnglish!.id },
+      });
+      expect(created.ok(), `create profile: ${created.status()}`).toBe(true);
+      const english = (await created.json()).data as { id: number };
+      profileId = english.id;
+      expect((await profilesFor("de")).some(p => p.id === english.id), "the English profile does not suit German").toBe(false);
+
+      await page.goto("/templates/new");
+      await page.getByTestId("new-template-name").fill(`E2E NewTemplateSegmentation ${Date.now()}`);
+      await selectLanguage(page, sourceLanguageTrigger(page), "en");
+      await pickComboboxValue(page, "segmentation-profile-select", String(english.id));
+      await expect(page.getByTestId("segmentation-profile-select")).not.toContainText("built-in");
+      // German makes the English pick unsuitable; the form sends what it shows.
+      await selectLanguage(page, sourceLanguageTrigger(page), "de");
+      const [createRes] = await Promise.all([
+        page.waitForResponse(r => /\/api\/templates\/?$/.test(r.url()) && r.request().method() === "POST"),
+        page.getByRole("button", { name: /^create template$/i }).click(),
+      ]);
+      expect(createRes.status(), `create template: ${await createRes.text()}`).toBe(201);
+      const template = (await createRes.json()).data;
+      templateId = template.id as number;
+      expect(template.segmentation_profile_id).toBe(german!.id);
+    });
+
+    test("A workflow picked on the New template page becomes the template's steps", async ({ page }) => {
+      const standard = await standardWorkflow(page);
+      await page.goto("/templates/new");
+      await page.getByTestId("new-template-name").fill(`E2E NewTemplateWorkflow ${Date.now()}`);
+      await pickProjectWorkflow(page);
+      const [createRes] = await Promise.all([
+        page.waitForResponse(r => /\/api\/templates\/?$/.test(r.url()) && r.request().method() === "POST"),
+        page.getByRole("button", { name: /^create template$/i }).click(),
+      ]);
+      expect(createRes.status(), `create template: ${await createRes.text()}`).toBe(201);
+      const created = (await createRes.json()).data;
+      templateId = created.id as number;
+      expect(created.workflow_id).toBe(standard.id);
+
+      const stepsRes = await page.request.get(`/api/templates/${templateId}/workflow-steps`, { headers: await authHeaders(page) });
+      expect(stepsRes.ok()).toBe(true);
+      const steps = (await stepsRes.json()).data as { name: string; step_definition_id: number }[];
+      expect(steps.map(s => [s.name, s.step_definition_id]))
+        .toEqual(standard.steps.map(s => [s.name, s.step_definition_id]));
+    });
   });
 
   test("template customer + domain: edited on the template page, pre-filled on New project", async ({ page }) => {
@@ -126,7 +240,7 @@ test.describe("Templates", () => {
       const customerValueId = await addLabelValueViaAPI(page, customerLabelId, `E2E Meta Customer ${stamp}`);
       const domainValueId = await addLabelValueViaAPI(page, domainLabelId, "Patents");
       const createResp = await page.request.post("/api/templates", {
-        headers, data: { name: templateName },
+        headers, data: { name: templateName, workflow_id: (await standardWorkflow(page)).id },
       });
       expect(createResp.ok()).toBe(true);
       templateId = (await createResp.json()).data.id;
@@ -279,7 +393,7 @@ test.describe("Templates", () => {
     const headers = { Authorization: `Bearer ${token}` };
     let templateId: number | undefined;
     try {
-      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E AutoComplete ${stamp}` } });
+      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E AutoComplete ${stamp}`, workflow_id: (await standardWorkflow(page)).id } });
       expect(createResp.ok()).toBe(true);
       templateId = (await createResp.json()).data.id;
 
@@ -316,7 +430,7 @@ test.describe("Templates", () => {
     test("the switch toggles and persists on a template", async ({ page }) => {
       const token = await page.evaluate(() => localStorage.getItem("token"));
       const headers = { Authorization: `Bearer ${token}` };
-      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E InlineHTML ${Date.now()}` } });
+      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E InlineHTML ${Date.now()}`, workflow_id: (await standardWorkflow(page)).id } });
       expect(createResp.ok()).toBe(true);
       templateId = (await createResp.json()).data.id;
 
@@ -348,6 +462,7 @@ test.describe("Templates", () => {
       tmIds.push(await createTMViaAPI(page, `E2E template order TM B ${stamp}`));
       const createResp = await page.request.post("/api/templates", { headers, data: {
         name: `E2E LookupOrder ${stamp}`,
+        workflow_id: (await standardWorkflow(page)).id,
         tm_assignments: tmIds.map((tm_id, priority) => ({ tm_id, mode: "read_write", priority })),
       } });
       expect(createResp.ok()).toBe(true);
@@ -395,7 +510,7 @@ test.describe("Templates", () => {
       const headers = { Authorization: `Bearer ${token}` };
 
       const createResp = await page.request.post("/api/templates", {
-        headers, data: { name: sourceName, mt_on_upload: true, fuzzy_threshold: 0.8 },
+        headers, data: { name: sourceName, mt_on_upload: true, fuzzy_threshold: 0.8, workflow_id: (await standardWorkflow(page)).id },
       });
       expect(createResp.ok()).toBe(true);
       sourceId = (await createResp.json()).data.id;

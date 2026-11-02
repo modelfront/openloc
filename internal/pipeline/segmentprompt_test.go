@@ -218,6 +218,35 @@ func TestRunAIStep_ResolvesTerms(t *testing.T) {
 	}
 }
 
+// Two concepts sharing one source term both reach the model, each with its own
+// definition, domain and notes, so it can pick the sense the segment means.
+func TestRunAIStep_TermsCarrySenseInfo(t *testing.T) {
+	mq := llmStepFixture(t, segmentprompt.KeyTerms)
+	mq.settingsTerms[langKey(10, "en", "de")] = []db.LookupSettingsTermsByTokensRow{
+		{ConceptID: 1, SourceTerm: "Hello", TargetTerm: "Hallo", Status: "approved",
+			Definition: "a greeting", Domain: "general", Notes: "informal"},
+		{ConceptID: 2, SourceTerm: "Hello", TargetTerm: "Guten Tag", Status: "approved",
+			Definition: "a formal greeting", Domain: "business"},
+	}
+
+	bodies := runStep(t, mq)
+
+	terms, ok := decodeBody(t, bodies[0])["terms"].([]any)
+	if !ok || len(terms) != 2 {
+		t.Fatalf("want both senses of Hello, got: %s", bodies[0])
+	}
+	first, second := terms[0].(map[string]any), terms[1].(map[string]any)
+	if first["definition"] != "a greeting" || first["domain"] != "general" || first["notes"] != "informal" {
+		t.Errorf("first sense = %v, want its definition, domain and notes", first)
+	}
+	if second["definition"] != "a formal greeting" || second["domain"] != "business" {
+		t.Errorf("second sense = %v, want its definition and domain", second)
+	}
+	if _, has := second["notes"]; has {
+		t.Errorf("empty notes must be left out, got %v", second)
+	}
+}
+
 // One query for the whole batch, not one per segment — the per-segment lookup
 // the CAT sidebar uses would be llmBatchSize queries per request.
 func TestRunAIStep_BatchesTermQueries(t *testing.T) {

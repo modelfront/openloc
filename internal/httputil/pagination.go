@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 )
@@ -51,4 +52,20 @@ func Paginated(w http.ResponseWriter, items any, nextCursor int64, hasMore bool,
 		resp["total"] = total
 	}
 	JSON(w, http.StatusOK, resp)
+}
+
+// WholeFileCap caps the routes that return every row of a file in one
+// response. A larger file is read page by page through the CAT editor routes
+// (/api/jobs/{jobID}/editor/*).
+const WholeFileCap = 5000
+
+// RefuseWholeFile answers 422 when a whole-file list came back with more than
+// WholeFileCap rows; the query reads one row past the cap to tell.
+func RefuseWholeFile(w http.ResponseWriter, rows int) bool {
+	if rows <= WholeFileCap {
+		return false
+	}
+	ErrorCode(w, http.StatusUnprocessableEntity, "file_too_large",
+		fmt.Sprintf("the file has more than %d segments; read it page by page", WholeFileCap))
+	return true
 }

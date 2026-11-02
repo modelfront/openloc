@@ -144,16 +144,31 @@ func Register(r chi.Router, h Handlers) {
 		})
 	})
 
+	// Every member reads segmentation profiles; managers write them.
+	r.Route("/segmentation-profiles", func(r chi.Router) {
+		r.Get("/", h.listSegmentationProfiles)
+		r.Get("/{profileID}", h.getSegmentationProfile)
+		r.Get("/{profileID}/srx", h.Segmentation.HandleExportSRX)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireManager())
+			r.Post("/", h.createSegmentationProfile)
+			r.Put("/{profileID}", h.replaceSegmentationProfile)
+			r.Delete("/{profileID}", h.Segmentation.HandleDelete)
+		})
+	})
+
 	r.Route("/jobs/{jobID}", func(r chi.Router) {
 		r.Use(auth.RequireJobOwnership(h.Queries))
 		r.Use(auth.RequireLinguistJobAccess(h.Queries))
 		r.Get("/", h.getJob)
 		r.Get("/export", h.Jobs.HandleExport)
 		r.Get("/segments", h.listSegments)
+		r.Post("/segments/join", h.joinSegments)
 		r.Route("/segments/{translationID}", func(r chi.Router) {
 			r.Use(h.requireSegmentInJob)
 			r.Put("/draft", h.saveSegmentDraft)
 			r.Post("/confirm", h.confirmSegment)
+			r.Post("/split", h.splitSegment)
 			r.Get("/comments", h.listComments)
 			r.Post("/comments", h.addComment)
 			r.Delete("/comments/{commentID}", h.deleteComment)

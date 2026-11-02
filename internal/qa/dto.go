@@ -4,6 +4,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/qa/numeric"
 )
 
 // ResultDTO is the wire shape of one stored QA finding. It is the single
@@ -40,6 +41,9 @@ type ReportSummary struct {
 type ReportDTO struct {
 	Summary ReportSummary `json:"summary"`
 	Results []ResultDTO   `json:"results"`
+	// ProfileAssigned is false when the job's project has no QA profile, so a
+	// QA run cannot start.
+	ProfileAssigned bool `json:"profile_assigned"`
 }
 
 func tsPtr(ts pgtype.Timestamptz) *string {
@@ -111,4 +115,46 @@ func summaryFromBuckets(rows []db.CountQAIssuesByJobRow) ReportSummary {
 		}
 	}
 	return s
+}
+
+// RegexRuleConfig is the stored config of a regex rule. Pattern is matched
+// against the target, or against the source in source_must_not_match mode;
+// SourcePattern is used only by source_match_target_not. Text is matched as the
+// editor shows it: each inline tag is its label (<1>, </1>, {1}).
+type RegexRuleConfig struct {
+	Name            string   `json:"name"`
+	Mode            string   `json:"mode"`
+	Pattern         string   `json:"pattern"`
+	SourcePattern   string   `json:"source_pattern,omitempty"`
+	Message         string   `json:"message"`
+	TargetLanguages []string `json:"target_languages"`
+	IgnoreCase      bool     `json:"ignore_case"`
+}
+
+// NumberFormatConfig is the config of the number_format rule. Mode "allow"
+// (the default) accepts the source number's separators or the target
+// language's; "require" accepts only the target language's. While the rule is
+// on, Languages replace a language's CLDR separators wherever the Numbers group
+// reads a number; while it is off they are kept but not used.
+type NumberFormatConfig struct {
+	Mode      string                 `json:"mode"`
+	Languages []NumberFormatLanguage `json:"languages,omitempty"`
+
+	separators map[string]numeric.Separators // normalized code → separators
+}
+
+// NumberFormatLanguage is how one language writes numbers. A bare language
+// ("es") covers all its locales, a locale ("es-mx") only itself.
+type NumberFormatLanguage struct {
+	Language string `json:"language"`
+	Decimal  string `json:"decimal"` // "." or ","
+	Group    string `json:"group"`   // ",", ".", " ", "'" or "" for none
+}
+
+// PlaceablesConfig picks which placeables the placeables rule compares. A
+// field left out of a stored config is on.
+type PlaceablesConfig struct {
+	URLsEmails bool `json:"urls_emails"`
+	Codes      bool `json:"codes"`
+	Variables  bool `json:"variables"`
 }

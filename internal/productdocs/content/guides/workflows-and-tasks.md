@@ -3,7 +3,7 @@ title: "Workflows and tasks"
 summary: "Define steps and workflows in the library, pick a workflow for a project, follow and assign its tasks, and work from the Tasks page."
 order: 60
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-29
 sources:
   - internal/autostep/**
   - web/src/pages/TasksPage.tsx
@@ -45,6 +45,7 @@ sources:
   - internal/settings/step_deadlines.go
 limitations:
   - deadline-zone-outside-picker
+  - workflow-draft-lost-on-navigation
 related:
   - guides/projects-and-files
   - guides/cat-editor
@@ -84,7 +85,7 @@ Use the pencil on a row to change a step's name, type or AI router. Projects and
 
 Open **Workflows** in the left menu. Each workflow is listed with its steps numbered in order, with the step type, the AI router (Hybrid and AI steps; its name opens the AI page at that router) and the default assignee. Every organization starts with one workflow, **Default**, built from those two steps. It is an ordinary workflow — rename it, reshape it or delete it like any other.
 
-1. Click **New workflow**. The dialog opens with Translation → Review filled in. It is the same dialog the **New project** form opens.
+1. Click **New template**. The **New workflow** dialog opens with Translation → Review filled in. It is the same dialog the **New project** form opens.
 2. Type a **Name**.
 3. In each row, pick a step from the library. The row shows a **Default assignee** picker; leave **No default** to assign per job later. An AI step shows **Automated** instead.
 4. Click **Add step** for more rows, drag the handle on the left to reorder, and use the trash icon to remove a row. A workflow can have up to 9 steps.
@@ -94,31 +95,39 @@ The pencil on a row opens the same dialog on the saved workflow, with **Save** i
 
 ## Choose a project's workflow
 
-Open the project and go to the **Workflow** tab. The **Workflow** dropdown lists the library workflows, each with its steps. The same card sits on a template's **Workflow** tab.
+Open the project and go to the **Workflow** tab. The **Workflow** dropdown lists the library workflows, each with its steps. The same card sits on a template's **Workflow** tab. When a library workflow is chosen, an icon at the end of the dropdown's line opens the **Workflows** page in a new browser tab with that workflow's **Edit workflow** dialog open; hover it to read **Open workflow**. A workflow that is not in the library, such as Raw MT's **Pre-translation**, has no icon.
 
-Pick a workflow and confirm with **Use workflow**. The project gets a copy of the steps and lists them under the dropdown as a numbered rail, each with its type, its AI router if it has one (its name opens the AI page with that router's card highlighted), and who picks it up — **Automated** on an AI step. When machine translation fills in files on upload and the project has an MT router, an unnumbered **Pre-translation** row heads the rail; the router's name there takes you to the **Machine translation** card, where the router is chosen, and highlights it. The copy belongs to the project.
+Pick a workflow and confirm with **Use workflow**. The project gets a copy of the steps and lists them under the dropdown, numbered, each with who picks it up — **Automated** on an AI step — and when it is due. When machine translation fills in files on upload and the project has an MT router, an unnumbered **Pre-translation** row heads the list; the router's name there takes you to the **Machine translation** card, where the router is chosen, and highlights it. The copy belongs to the project. On a running project, steps that jobs have reached keep their place: a workflow that swaps or drops one is refused with a message naming the step.
 
-Jobs that are already running set the limits. A step some job has reached keeps its place: a workflow that swaps or drops it is refused with a message naming the step. Steps no job has reached yet change freely, and a step at the end is added to every job that is not completed yet, with the workflow's default assignee. A different default assignee also applies to the jobs currently sitting on that step. Removing a step removes the current assignments on it.
+![A project's Workflow tab: the workflow picker over the project's steps, each with who picks it up and when it is due](assets/workflow-steps.png)
 
-![A project's Workflow tab: the workflow picker with the steps it copied, each with its type, who picks it up and when it is due](assets/workflow-steps.png)
+In the **New project** form the same card applies your choice straight away, because nothing is running yet. A fresh form has no workflow chosen, and a project cannot be created without one: **Create project** points at the empty dropdown and frames it red. Its dropdown also has **New template** at the top, which builds a workflow on the spot: type a **Name**, edit the steps (they start as the ones on screen, if any) and click **Create and use** — the workflow is added to your library and used for this project. Steps that arrive with a [template](/docs/guides/templates) or a duplicated project are listed under an empty field until you pick a workflow to replace them.
 
-In the **New project** form the same card applies your choice straight away, because nothing is running yet. Its dropdown also has **New template** at the top, which builds a workflow on the spot: type a **Name**, edit the steps (they start as the ones on screen) and click **Create and use** — the workflow is added to your library and used for this project. Steps that arrive with a [template](/docs/guides/templates) or a duplicated project are listed under an empty field until you pick a workflow to replace them.
+## Change a running project's steps
+
+On a project's **Workflow** tab the steps are listed with who picks each one up and when it is due. Click **Edit steps** to change them: pick another step from the library, drag a row by its grip to move it, remove it with the trash icon, click **Add step** (up to 9 steps), or change a step's default assignee or deadline.
+
+Steps that jobs have already reached are locked. A lock takes the place of the grip; hover it to see how many jobs reached the step. A locked step can't be swapped, moved or removed, and nothing goes in front of it, but its default assignee and its deadline still change. A step stays reached when a rejection or a clear sends the job back past it.
+
+Nothing is saved until you say so: **Save changes** and **Discard** sit under the list while you edit, and the **Workflow** dropdown stays shut until you use one of them. **Discard** puts the steps back as they were. Changes you have not saved are lost when you go to another tab or page; your browser asks first only when you reload or close it. **Save changes** first says what the save does — how many steps it adds, changes or removes, how many jobs are in progress, and which jobs start a step at once. A job that had finished every step starts the first added step right away, and an added AI step then runs, which may cost money. Click **Save** to apply it. If a job reaches a step while you edit, the save is refused with a message naming the step, and the locks update.
+
+After the save, every job that is not completed follows the new steps when it gets to them, with each step's default assignee. A new default assignee also goes to the jobs sitting on that step. Once a save adds, changes, removes or moves a step, the dropdown shows **Edited** beside the workflow's name; a change to assignees or deadlines alone does not. Choosing a workflow there replaces the steps with its copy and clears the mark.
 
 ## Pre-translate only, with no linguist
 
 For files that need machine translation and nothing else, switch the **Workflow** card to **Raw MT**; the other choice is **Workflow**. The toggle heads the card in the **New project** form and on a template's **Workflow** tab, where you confirm with **Use Raw MT**. A project gets it when it is set up: once created, a project cannot switch to it or away from it. The steps become one **Pre-translation** step. Each uploaded file is pre-translated (translation memory as the project sets it, then machine translation), and the step then completes by itself, which completes the job. Nobody is assigned to the step and it has no due date. When the MT router has no engine for a job's target language, the step stays open and the file reads [**No MT**](/docs/guides/projects-and-files#upload-files) instead of completing with empty targets; once the router covers the language, **Pre-translate** > **Apply MT** completes it.
 
-Under Raw MT the card shows the **Pre-translation** row alone, with no dropdown. The row names the project's MT router (**No MT router yet** until one is chosen); click it to go to the **Machine translation** card, where the router is chosen. **Fill in machine translation on start or upload** stays on. The project needs an **MT router**: it cannot be created, or clear its router, without one. A draft or a template may leave it empty until then. Switching back to **Workflow** applies the workflow you had chosen before, or else the first one in the library. The workflow is built in, so it is not listed on the **Workflows** page.
+Under Raw MT the card shows the **Pre-translation** row alone, with no dropdown. The row names the project's MT router (**No MT router yet** until one is chosen); click it to go to the **Machine translation** card, where the router is chosen. **Fill in machine translation on start or upload** stays on. The project needs an **MT router**: it cannot be created, or clear its router, without one. A draft or a template may leave it empty until then. Switching back to **Workflow** applies the workflow you had chosen before. With none, the **New project** form and the **New template** page leave the field empty for you to pick one, and a saved template's **Workflow** tab takes the first one in the library. The workflow is built in, so it is not listed on the **Workflows** page.
 
 Nobody can edit the file while it is being pre-translated. After that, an owner, admin or project manager can still [reopen the task by editing a segment](#reopen-a-completed-task). If pre-translation fails, a successful [**Re-run**](#recover-from-a-failed-run) completes the step.
 
 ## Set deadlines
 
-Each step carries its own deadline, shown as a pill at the right-hand end of the step's row — on the project's **Workflow** tab and in the **New project** form alike. An **AI** or **Pre-translation** step runs by itself, so its row has no date.
+Each step carries its own deadline, shown as a pill at the right-hand end of the step's row — on the project's **Workflow** tab and in the **New project** form alike. An **AI** or **Pre-translation** step runs by itself, so its row has no date. On a project, click **Edit steps** first; until then the globe beside a pill lists the languages that have a date of their own.
 
 1. Click the pill beside a step. A step with no date yet reads **Set due date**. Pick a day in the calendar and a time below it — choose from the list in 15-minute steps, or type any time such as 17:40 (a new date starts at 17:00), then click **Done** or anywhere outside. Or click a quick pick on the left — **1 day**, **2 days** or **1 week** from now, at 17:00 — which sets the date and closes the calendar. **Clear** removes the date. The date counts for every target language.
 2. For a language due on a different date, click the globe beside the pill. Pick the languages and a date, and **Add override per language** for another set. A language with no override of its own uses the step's date. The globe is highlighted while a step has any, so a closed row still shows there are some.
-3. The dates save by themselves a moment after your last edit, and **Deadlines saved** confirms it.
+3. On a project, the dates are saved with your other changes when you click **Save changes**. In the **New project** form they are kept with the rest of the form.
 
 Deadlines show in your own browser's time zone. Hover a pill, or look at the project's **Deadline** field, for the exact time with its offset, for example *Sep 30, 2026, 5:00 PM GMT+2*. To enter a time given in another zone, such as 17:00 New York, pick that zone in the list under the calendar before you close it. The date is saved as that moment; the zone is not kept, so the next time you open it, it shows in your own zone.
 
@@ -133,7 +142,7 @@ The dates belong to the project: a library workflow and a [template](/docs/guide
 When a job reaches a Hybrid or AI step, the step's [AI router](/docs/guides/ai-engines-and-prompts#send-each-language-to-the-right-engine-with-an-ai-router) picks the QE+APE engine (quality estimation and automatic post-editing) for the job's target language and runs it. The engine checks every machine-translated segment and approves the good ones automatically. A target language the router has no rule and no default engine for is not checked: on a Hybrid step the assignee reviews everything, and an AI step completes itself with nothing approved. **Re-run AI step** on such a job says the router has no engine for the job's target language.
 
 - On a **Hybrid** step, the rest go to the assignee for review. While the AI runs, the task is locked: its card on the **Tasks** page shows a **QE+APE running** badge, and the job's own badge counts the batches, for example **AI step (QE+APE): 30 / 880**. It unlocks by itself when the check is done — no need to reload.
-- On an **AI** step, nobody is assigned. The step's tasks on the project's **Tasks** tab and the step list show **Automated**, and in the CAT editor the current-step chip's tooltip says the step completes itself. When the check is done, the step completes itself and the job moves on to the next step. The next step starts with every segment unconfirmed; the ones the AI approved show a grey **Auto-approved** chip. An AI step can also be the last step; the job is then completed.
+- On an **AI** step, nobody is assigned. The step's tasks on the project's **Tasks** tab and the step list show **Automated**, and in the CAT editor the current-step chip's tooltip says the step completes itself. When the check is done, the step completes itself and the job moves on to the next step. The next step starts with every segment unconfirmed; the ones the AI approved show a grey check with sparkles in the status column, as the [segment statuses](/docs/reference/segment-statuses) page describes. An AI step can also be the last step; the job is then completed.
 
 Managers can run the check again with **Re-run AI step** in the CAT editor toolbar, or halt a run that is still going with **Stop**. Read more in [Quality estimation](/docs/concepts/quality-estimation).
 
@@ -234,6 +243,8 @@ When a job's workflow is done, the editor opens on its last step, marked **Compl
 
 The project's **History** tab records that you reopened the step by editing it.
 
+Splitting or joining a segment does not reopen a completed task. Both need a task that takes edits, so reopen it by editing a segment first.
+
 ## Send a step back (reject)
 
 If the work from an earlier step is not good enough, you can send the job back to it. The **← Reject** button sits next to **Complete step** at the right end of the CAT editor's top line. It is not shown when there is no earlier step you can send the job to, nor on a task with an [error](#recover-from-a-failed-run).
@@ -245,9 +256,9 @@ If the work from an earlier step is not good enough, you can send the job back t
 3. Type a **Rejection reason** (optional but helpful).
 4. Click **Send back to** and the step's name.
 
-The step you picked opens again and its assignee gets a notification. The editor shows a red banner headed **Sent back from Review** with your reason. The steps between the two start again, in order, when the job moves forward. Each of them gets back the statuses it ended with on every segment nobody has changed since; a changed segment starts unconfirmed. The same rule applies as for completing: the assigned person or a manager.
+The step you picked opens again and its assignee gets a notification. The editor shows a red banner headed **Sent back from Review** with your reason. The steps between the two start again, in order, when the job moves forward. Each of them gets back the statuses it ended with on every segment nobody has changed since; a changed segment starts unconfirmed. The same rule applies as for completing: the assigned person or a manager. As when [completing a step](#complete-a-step), text that was typed but never confirmed gets a **History** entry under the name of the person who typed it, not marked **Approved**.
 
-The reopened step gets back the segment statuses it ended with. A segment whose text changed after that step comes back unconfirmed, without its AI score, and so does a segment an AI step after it scored.
+The reopened step gets back the segment statuses it ended with. A segment whose text changed after that step comes back unconfirmed, without its AI score, and so does a segment an AI step after it scored. A segment you split, or the result of a join, also comes back unconfirmed: a status the earlier text earned is not restored.
 
 ### Run the AI again
 

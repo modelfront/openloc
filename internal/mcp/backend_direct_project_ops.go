@@ -68,23 +68,26 @@ func (b *directBackend) GetProjectSettings(ctx context.Context, in ProjectRef) (
 	}
 	s := detail.Project
 	out := ProjectSettingsOut{
-		ProjectID:             s.ID,
-		FuzzyThreshold:        s.FuzzyThreshold,
-		SublanguagePenaltyPct: s.SublanguagePenaltyPct,
-		NearExactPenaltyPct:   s.NearExactPenaltyPct,
-		TMOnUpload:            s.TmOnUpload,
-		MTOnUpload:            s.MtOnUpload,
-		AutoComplete:          s.AutoComplete,
-		InlineHTML:            s.InlineHTML,
-		QAProfileID:           s.QaProfileID,
-		MTRouterID:            s.MTRouterID,
-		MTRouterName:          ptr.Deref(s.MTRouterName),
-		WorkflowID:            s.WorkflowID,
-		WorkflowName:          ptr.Deref(s.WorkflowName),
-		TMs:                   tmAssignmentsOut(detail.TMAssignments),
-		TermBases:             termAssignmentsOut(detail.TermAssignments),
-		WorkflowSteps:         workflowStepsOut(plainSteps(detail.WorkflowSteps)),
-		Labels:                labelPicksOut(picks),
+		ProjectID:               s.ID,
+		FuzzyThreshold:          s.FuzzyThreshold,
+		SublanguagePenaltyPct:   s.SublanguagePenaltyPct,
+		NearExactPenaltyPct:     s.NearExactPenaltyPct,
+		TMOnUpload:              s.TmOnUpload,
+		MTOnUpload:              s.MtOnUpload,
+		AutoComplete:            s.AutoComplete,
+		InlineHTML:              s.InlineHTML,
+		LinguistTerms:           s.LinguistTerms,
+		QAProfileID:             s.QaProfileID,
+		SegmentationProfileID:   s.SegmentationProfileID,
+		SegmentationProfileName: ptr.Deref(s.SegmentationProfileName),
+		MTRouterID:              s.MTRouterID,
+		MTRouterName:            ptr.Deref(s.MTRouterName),
+		WorkflowID:              s.WorkflowID,
+		WorkflowName:            ptr.Deref(s.WorkflowName),
+		TMs:                     tmAssignmentsOut(detail.TMAssignments),
+		TermBases:               termAssignmentsOut(detail.TermAssignments),
+		WorkflowSteps:           workflowStepsOut(plainSteps(detail.WorkflowSteps)),
+		Labels:                  labelPicksOut(picks),
 	}
 	if l := detail.TMProfile; l != nil {
 		out.TMProfile = &TMProfileOut{ID: l.ID, Name: l.Name, UsageCount: l.UsageCount}
@@ -202,9 +205,11 @@ func (b *directBackend) UpdateProjectSettings(ctx context.Context, in UpdateProj
 		NearExactPenaltyPct:   in.NearExactPenaltyPct,
 		AutoComplete:          in.AutoComplete,
 		InlineHTML:            in.InlineHTML,
+		LinguistTerms:         in.LinguistTerms,
 		QAProfileID:           in.QAProfileID,
 		MTRouterID:            in.MTRouterID,
 		TMProfileID:           in.TMProfileID,
+		SegmentationProfileID: in.SegmentationProfileID,
 	}); err != nil {
 		return ProjectSettingsOut{}, serviceErr(err, "update project settings")
 	}
@@ -296,29 +301,6 @@ func keptLanguageDeadlines(current settings.StepDeadlines, stepID int64) []setti
 	return out
 }
 
-// workflowImpact names what a workflow change reaches: the project's jobs
-// that are still open take changed assignees, and a step appended past where
-// a job stands starts on it.
-func (b *directBackend) workflowImpact(ctx context.Context, p db.Project) ([]string, error) {
-	// ListJobsByProject is project-scoped; p came from the tenant-scoped lookup.
-	jobs, err := b.q.ListJobsByProject(ctx, p.ID)
-	if err != nil {
-		return nil, fmt.Errorf("list jobs: %w", err)
-	}
-	open := 0
-	for _, j := range jobs {
-		if j.Status != "completed" {
-			open++
-		}
-	}
-	if open == 0 {
-		return []string{"No open jobs: only jobs created from now on use the new workflow."}, nil
-	}
-	return []string{
-		fmt.Sprintf("%s in progress: a position a job has reached must keep its step, changed assignees move onto them, and a step added after a finished position starts right away (an AI step runs, and may cost money).", plural(open, "job is", "jobs are")),
-	}, nil
-}
-
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one
@@ -340,16 +322,17 @@ func (b *directBackend) PreviewSetProjectWorkflowSteps(ctx context.Context, in S
 	if err != nil {
 		return Preview{}, err
 	}
-	if err := settings.ValidateStepInputs(ctx, b.q, tenantID, existing, inputs); err != nil {
-		return Preview{}, serviceErr(err, "validate workflow steps")
-	}
-	effects, err := b.workflowImpact(ctx, p)
+	ph, err := b.projects()
 	if err != nil {
 		return Preview{}, err
 	}
+	preview, err := ph.PreviewWorkflowSteps(ctx, tenantID, p.ID, inputs)
+	if err != nil {
+		return Preview{}, serviceErr(err, "preview workflow steps")
+	}
 	return Preview{
 		Summary: fmt.Sprintf("Replace the workflow of project “%s” with %s.", p.Name, plural(len(in.Steps), "step", "steps")),
-		Effects: effects,
+		Effects: preview.Effects,
 	}, nil
 }
 
@@ -391,13 +374,17 @@ func (b *directBackend) PreviewApplyWorkflow(ctx context.Context, in ApplyWorkfl
 		}
 		return Preview{}, fmt.Errorf("get workflow: %w", err)
 	}
-	effects, err := b.workflowImpact(ctx, p)
+	ph, err := b.projects()
 	if err != nil {
 		return Preview{}, err
 	}
+	preview, err := ph.PreviewApplyWorkflow(ctx, tenantID, p.ID, wf.ID)
+	if err != nil {
+		return Preview{}, serviceErr(err, "preview apply workflow")
+	}
 	return Preview{
 		Summary: fmt.Sprintf("Replace the workflow of project “%s” with a copy of the library workflow “%s”.", p.Name, wf.Name),
-		Effects: effects,
+		Effects: preview.Effects,
 	}, nil
 }
 
@@ -435,7 +422,7 @@ func (b *directBackend) PretranslateProject(ctx context.Context, in ProjectRef) 
 		return PretranslateOut{}, invalidf("pre-translation is not available on this server")
 	}
 	tenantID, _ := scope(ctx)
-	res, err := b.ops.Jobs.PretranslateProject(ctx, tenantID, in.ProjectID)
+	res, err := b.ops.Jobs.PretranslateProject(ctx, tenantID, in.ProjectID, job.PretranslateRequest{})
 	if err != nil {
 		return PretranslateOut{}, serviceErr(err, "pretranslate project")
 	}

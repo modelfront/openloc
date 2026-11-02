@@ -104,11 +104,7 @@ func (h *Handler) HandleTMFindReplace(w http.ResponseWriter, r *http.Request) {
 		httputil.ServerError(w, "load", "user")
 		return
 	}
-	updatedByLabel := user.Email
-	if updatedByLabel == "" {
-		updatedByLabel = user.Name
-	}
-	updated, replaced, err := h.ApplyFindReplace(r.Context(), fq, userID, updatedByLabel)
+	updated, replaced, err := h.ApplyFindReplace(r.Context(), fq, userID, auth.UserLabel(user.Name, user.Email))
 	if err != nil {
 		logging.Error(r.Context(), err, "TM find-replace failed", "tm-find-replace-failed", logging.TMID(tmID))
 		httputil.ServerError(w, "update", "TM entries")

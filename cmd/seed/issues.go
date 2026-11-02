@@ -85,15 +85,12 @@ func seedDemoIssues(ctx context.Context, q *db.Queries, tenantID, ownerID, opera
 // hasIssues reports whether the user already reported an issue in the org (or
 // the check failed, which also means: seed nothing).
 func hasIssues(ctx context.Context, q *db.Queries, tenantID, userID int64) bool {
-	existing, err := q.ListMemberIssuesNewest(ctx, db.ListMemberIssuesNewestParams{
-		TenantID: tenantID, ViewerID: userID, Statuses: []string{}, Kinds: []string{},
-		Areas: []string{}, Severities: []string{}, RowLimit: 1,
-	})
+	has, err := q.ReporterHasIssue(ctx, db.ReporterHasIssueParams{TenantID: tenantID, ReporterID: userID})
 	if err != nil {
 		log.Printf("⚠ Failed to check demo issues: %v", err)
 		return true
 	}
-	return len(existing) > 0
+	return has
 }
 
 // seedVendorIssue files one issue as the seed linguist, so a manager's

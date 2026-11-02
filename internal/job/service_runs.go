@@ -94,19 +94,21 @@ func (s *Service) claimJob(ctx context.Context, tenantID int64, job db.Job, step
 
 // restoreJobState undoes a claim after a pre-flight rejection: nothing ran,
 // so the job goes back exactly as the claim found it — status, step,
-// error_message (the claim nulled it) and updated_at. The query is
-// conditional on the claim's own step, so a concurrent writer that
-// legitimately moved the job since wins.
+// error_message, the progress counts (the claim nulled both) and updated_at.
+// The query is conditional on the claim's own step, so a concurrent writer
+// that legitimately moved the job since wins.
 func (s *Service) restoreJobState(ctx context.Context, jobID int64, prev db.ClaimJobPipelineRow, claimStep string) {
 	dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.queries.RestoreJobPipelineState(dbCtx, db.RestoreJobPipelineStateParams{
-		ID:           jobID,
-		Status:       prev.Status,
-		CurrentStep:  prev.CurrentStep,
-		ErrorMessage: prev.ErrorMessage,
-		UpdatedAt:    prev.UpdatedAt,
-		ClaimStep:    claimStep,
+		ID:              jobID,
+		Status:          prev.Status,
+		CurrentStep:     prev.CurrentStep,
+		ErrorMessage:    prev.ErrorMessage,
+		TranslatedCount: prev.TranslatedCount,
+		TotalCount:      prev.TotalCount,
+		UpdatedAt:       prev.UpdatedAt,
+		ClaimStep:       claimStep,
 	}); err != nil {
 		logging.Error(ctx, err, "failed to restore job state after pre-flight rejection", "job-pipeline-restore-failed", logging.JobID(jobID))
 	}
@@ -124,7 +126,9 @@ func (s *Service) runFailed(ctx, runCtx context.Context, tenantID, jobID int64, 
 	logging.Error(ctx, err, label+" failed", "job-pipeline-run-failed", logging.JobID(jobID))
 	s.markJobError(jobID, err)
 	s.notifyFailure(ctx, tenantID, jobID, err)
-	if _, ok := httputil.AsClientError(err); ok {
+	// A message for the user (400), or a vendor outage with its own status (502).
+	var coded httputil.CodedError
+	if _, ok := httputil.AsClientError(err); ok || errors.As(err, &coded) {
 		return err
 	}
 	// An engine that cannot run (switched off, key or extension removed) is
@@ -229,7 +233,7 @@ func (s *Service) ApplyPhases(ctx context.Context, tenantID int64, job db.Job, s
 	}
 	// The pipeline no-ops a phase with no configuration (right for the upload
 	// hook); a user who asked for it gets a message they can act on.
-	if msg := phaseUnactionableMessage(phases, outcome, sourceLang, job.TargetLanguage); msg != "" {
+	if msg := outcome.UnactionableMessage(phases, sourceLang, job.TargetLanguage); msg != "" {
 		s.restoreJobState(ctx, job.ID, claimed, claimStep)
 		return PhaseRunResult{}, httputil.NewClientError(msg)
 	}

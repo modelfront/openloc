@@ -27,18 +27,13 @@ tour:
   - anchor: ai_settings.connect
     page: ai_settings
     title: From your own AI tools
-    body: "Paste this address into Claude or ChatGPT and sign in. The tool works as you, in this workspace."
-    say: "The same abilities work outside the app, through the Model Context Protocol, or M C P. Here in A I settings you copy one address, paste it into Claude or ChatGPT, and approve. No key to copy or keep secret."
+    body: "Paste this address into Claude or ChatGPT and sign in. The tool works as you, and is then listed here."
+    say: "The same abilities work outside the app, through the Model Context Protocol, or M C P. Here in A I settings you copy one address, paste it into Claude or ChatGPT, and approve. No key to copy or keep secret. Every app you connect is listed here, and you can disconnect it at any time."
   - anchor: ai_settings.tokens
     page: ai_settings
     title: Access keys
     body: "For a tool that cannot sign in, or your own scripts: create a personal access key."
-    say: "Some tools cannot sign in, and your own scripts never do. For those, create a personal access key here. Give it a name and an expiry date, choose read only or read and write, and keep it secret, because anyone who has the key acts as you."
-  - anchor: settings.connected_apps
-    page: settings
-    title: Connected apps
-    body: "Claude, ChatGPT and other apps you connected by signing in. Disconnect one here at any time."
-    say: "Every app you connected by signing in is listed here, and you can disconnect one at any time. That is the assistant: your whole workspace, one question away, in the app or in the tools you already use."
+    say: "Some tools cannot sign in, and your own scripts never do. For those, create a personal access key here, and keep it secret: anyone who has the key acts as you. That is the assistant: your whole workspace, one question away, in the app or in the tools you already use."
 
 ---
 Use this when someone asks what the assistant can do, whether it can change things, or how to use OpenLoc from Claude, ChatGPT or another AI tool (MCP).

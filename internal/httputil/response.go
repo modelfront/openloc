@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,29 @@ import (
 // ParseID extracts an int64 URL parameter from a chi route.
 func ParseID(r *http.Request, param string) (int64, error) {
 	return strconv.ParseInt(chi.URLParam(r, param), 10, 64)
+}
+
+// ParseIDList reads a comma-separated list of positive ids from query
+// parameter name. Absent or empty → (nil, nil). More than max ids, or any
+// entry that is not a positive integer, is an error naming the parameter.
+func ParseIDList(r *http.Request, name string, max int) ([]int64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > max {
+		return nil, fmt.Errorf("%s: at most %d ids", name, max)
+	}
+	ids := make([]int64, len(parts))
+	for i, p := range parts {
+		id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("%s: %q is not a positive id", name, p)
+		}
+		ids[i] = id
+	}
+	return ids, nil
 }
 
 func JSON(w http.ResponseWriter, status int, data any) {

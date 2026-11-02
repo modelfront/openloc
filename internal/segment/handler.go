@@ -26,9 +26,13 @@ func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 	segments, err := h.queries.ListSegmentsByFileTenant(r.Context(), db.ListSegmentsByFileTenantParams{
 		FileID:   fileID,
 		TenantID: tenantID,
+		RowLimit: httputil.WholeFileCap + 1,
 	})
 	if err != nil {
 		httputil.ServerError(w, "list", "segments")
+		return
+	}
+	if httputil.RefuseWholeFile(w, len(segments)) {
 		return
 	}
 	httputil.Data(w, segments)

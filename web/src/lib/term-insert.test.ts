@@ -586,3 +586,35 @@ describe('edge cases: real-world terminology scenarios', () => {
     expect(result!.newText).toBe('暗証番号を入力してください')
   })
 })
+
+describe('length-changing case folding', () => {
+  // NFKD expands a Hangul syllable to 2-3 jamo and "…" to "...": the match must
+  // still point at the term in the original text.
+  it('finds a term after Hangul text', () => {
+    expect(findTermInText('한국어 password', 'password', true)).toEqual({ index: 4, length: 8 })
+  })
+
+  it('replaces a Hangul term after Hangul text', () => {
+    expect(replaceTermInText('안녕 비밀번호를 입력', '비밀번호', '암호')!.newText).toBe('안녕 암호를 입력')
+  })
+
+  it('finds a term after an ellipsis', () => {
+    const text = 'Wait… reset your password'
+    const m = findTermInText(text, 'password', true)!
+    expect(text.slice(m.index, m.index + m.length)).toBe('password')
+  })
+
+  it('covers a decomposed accent that ends the match', () => {
+    const text = 'un café noir'
+    const m = findTermInText(text, 'café', true)!
+    expect(text.slice(m.index, m.index + m.length)).toBe('café')
+  })
+
+  it('does not match part of one expanded character', () => {
+    expect(findTermInText('½ cup', '1')).toBeNull()
+  })
+
+  it('smartReplace overwrites the term, not its neighbours, after Hangul', () => {
+    expect(smartReplace('서버 server 설정', 'server', '서버', { start: 0, end: 0 }).newText).toBe('서버 서버 설정')
+  })
+})

@@ -78,10 +78,12 @@ func registerProjects(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 		description: "Create a translation project. If the name, source language, or target " +
 			"languages are missing or ambiguous, ASK the user before calling — and restate " +
 			"what you'll create in one line for confirmation. Prefer template_id when the " +
-			"org has templates: it copies TM/MT/terminology/workflow/QA settings; without " +
-			"one the project gets sensible defaults the user can change later. After " +
+			"org has templates: it copies TM/MT/terminology/workflow/QA settings. The project " +
+			"needs a workflow: pass workflow_id (openloc_list_workflows) unless the template " +
+			"brings one; ask the user which when unsure. After " +
 			"creating, add a document the user attached in the chat with " +
-			"openloc_attach_uploaded_file, a text file you can read with openloc_upload_text_file, " +
+			"openloc_attach_uploaded_file (several at once with openloc_attach_uploaded_files), " +
+			"a text file you can read with openloc_upload_text_file, " +
 			"or open the project with navigate_to so they can upload there.",
 		requireManager: true,
 		requireWrite:   true,

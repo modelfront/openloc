@@ -14,6 +14,7 @@ import (
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
 	"openloc/internal/seedid"
+	"openloc/internal/settings"
 	"openloc/internal/wordcount"
 )
 
@@ -37,9 +38,11 @@ type Spec struct {
 	TargetLangs []string
 	Steps       []Step
 	Files       []File
-	// Translations writes a translation row per segment and language, from
-	// each scenario's TextPlan, so the editor can save edits. Without it the
-	// segments have no rows and the grid reads "Click to translate".
+	// Translations fills the translation rows from each scenario's TextPlan.
+	// Without it every row is empty, as after an upload with no
+	// pre-translation. Either way each segment gets a row per language, as an
+	// upload makes them: a job's rows are the segments with a translation in
+	// its language.
 	Translations bool
 }
 
@@ -198,10 +201,12 @@ func seedFile(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, projectID 
 		if err := seedJob(ctx, q, pool, file.ID, lang, int32(words), sc, stepIDs, people, now); err != nil {
 			return fmt.Errorf("%s (%s): %w", lang, sc.Name, err)
 		}
+		plan := TextPlan{}
 		if spec.Translations {
-			if err := seedTranslations(ctx, pool, segs, lang, sc.Text, owner); err != nil {
-				return fmt.Errorf("%s (%s) translations: %w", lang, sc.Name, err)
-			}
+			plan = sc.Text
+		}
+		if err := seedTranslations(ctx, pool, segs, lang, plan, owner); err != nil {
+			return fmt.Errorf("%s (%s) translations: %w", lang, sc.Name, err)
 		}
 	}
 	return nil
@@ -339,7 +344,7 @@ func ensureProject(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, tenan
 		}
 		return p, nil
 	}
-	sp, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75})
+	sp, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{TenantID: tenantID, FuzzyThreshold: 0.75}, "en")
 	if err != nil {
 		return db.Project{}, fmt.Errorf("settings profile: %w", err)
 	}

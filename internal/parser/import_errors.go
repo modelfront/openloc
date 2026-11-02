@@ -3,6 +3,8 @@ package parser
 import (
 	"errors"
 	"strings"
+
+	"openloc/internal/segmentation"
 )
 
 // importMessages maps the parse errors a user can fix to the message the
@@ -24,6 +26,7 @@ var importMessages = []struct {
 	{ErrXLSXOutOfGrid, msgXLSXMalformed},
 	{ErrXLSXEmpty, "This workbook has no text to translate."},
 	{ErrXLSXLegacy, msgXLSXLegacy},
+	{segmentation.ErrTooCostly, "The rules of this project's segmentation profile take too long to run on this file. An owner, admin or project manager can pick another profile in the project's settings, or make the profile's patterns more specific under File configurations → Segmentation profiles."},
 }
 
 const (

@@ -169,6 +169,9 @@ func TestIntegrationRerun_Refusals(t *testing.T) {
 	})
 
 	t.Run("enqueue fails", func(t *testing.T) {
+		if _, err := f.pool.Exec(ctx, "UPDATE jobs SET translated_count = 120, total_count = 404 WHERE id = $1", f.jobID); err != nil {
+			t.Fatal(err)
+		}
 		router := testutil.NewTestRouterWithEnqueuer(f.pool, &testutil.RecordingEnqueuer{Err: errors.New("redis down")})
 		if code := f.rerun(t, router, f.ownerID, f.tenantID, "owner"); code != http.StatusInternalServerError {
 			t.Errorf("status %d, want 500", code)
@@ -179,6 +182,9 @@ func TestIntegrationRerun_Refusals(t *testing.T) {
 		}
 		if job.Status != "failed" || job.ErrorMessage == nil || !strings.Contains(*job.ErrorMessage, "MT provider 500") {
 			t.Errorf("a failed enqueue must leave the task errored; status=%q error=%v", job.Status, job.ErrorMessage)
+		}
+		if job.TranslatedCount == nil || *job.TranslatedCount != 120 || job.TotalCount == nil || *job.TotalCount != 404 {
+			t.Errorf("a failed enqueue must keep the failed run's progress 120 / 404; got %v / %v", job.TranslatedCount, job.TotalCount)
 		}
 	})
 }

@@ -106,13 +106,13 @@ describe('runGuide', () => {
   }
 
   it('scrolls back to the element when content above pushes it off the screen', async () => {
-    document.body.innerHTML = '<div data-guide="settings.connected_apps">Connected apps</div>'
-    const el = document.querySelector<HTMLElement>('[data-guide="settings.connected_apps"]')!
+    document.body.innerHTML = '<div data-guide="ai_settings.tokens">Connected apps</div>'
+    const el = document.querySelector<HTMLElement>('[data-guide="ai_settings.tokens"]')!
     let top = 100
     el.getBoundingClientRect = () => rectAt(top)
     const scroll = vi.fn()
     el.scrollIntoView = scroll
-    runGuide([{ anchor: 'settings.connected_apps', body: 'Apps.' }], vi.fn())
+    runGuide([{ anchor: 'ai_settings.tokens', body: 'Apps.' }], vi.fn())
     await vi.waitFor(() => expect(el.classList.contains('driver-active-element')).toBe(true))
     // The highlight settles (driver's animation) before the page moves.
     await new Promise(r => setTimeout(r, 600))
@@ -123,13 +123,13 @@ describe('runGuide', () => {
   })
 
   it('scrolls to the element when it left the screen before the step settled', async () => {
-    document.body.innerHTML = '<div data-guide="settings.connected_apps">Connected apps</div>'
-    const el = document.querySelector<HTMLElement>('[data-guide="settings.connected_apps"]')!
+    document.body.innerHTML = '<div data-guide="ai_settings.tokens">Connected apps</div>'
+    const el = document.querySelector<HTMLElement>('[data-guide="ai_settings.tokens"]')!
     let top = 100
     el.getBoundingClientRect = () => rectAt(top)
     const scroll = vi.fn()
     el.scrollIntoView = scroll
-    runGuide([{ anchor: 'settings.connected_apps', body: 'Apps.' }], vi.fn())
+    runGuide([{ anchor: 'ai_settings.tokens', body: 'Apps.' }], vi.fn())
     await vi.waitFor(() => expect(el.classList.contains('driver-active-element')).toBe(true))
     // Pushed down during the highlight animation, and it stays there.
     top = window.innerHeight + 400
@@ -157,13 +157,13 @@ describe('runGuide', () => {
   })
 
   it('leaves the page alone once the user scrolls it', async () => {
-    document.body.innerHTML = '<div data-guide="settings.connected_apps">Connected apps</div>'
-    const el = document.querySelector<HTMLElement>('[data-guide="settings.connected_apps"]')!
+    document.body.innerHTML = '<div data-guide="ai_settings.tokens">Connected apps</div>'
+    const el = document.querySelector<HTMLElement>('[data-guide="ai_settings.tokens"]')!
     let top = 100
     el.getBoundingClientRect = () => rectAt(top)
     const scroll = vi.fn()
     el.scrollIntoView = scroll
-    runGuide([{ anchor: 'settings.connected_apps', body: 'Apps.' }], vi.fn())
+    runGuide([{ anchor: 'ai_settings.tokens', body: 'Apps.' }], vi.fn())
     await vi.waitFor(() => expect(el.classList.contains('driver-active-element')).toBe(true))
     // The highlight settles (driver's animation) before the page moves.
     await new Promise(r => setTimeout(r, 600))

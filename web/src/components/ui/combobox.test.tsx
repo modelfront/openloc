@@ -622,3 +622,38 @@ describe('the create-option divider', () => {
     expect(sep().length).toBeGreaterThan(0)
   })
 })
+
+describe('MultiCombobox groups', () => {
+  it('lists each group together, groups in the order they first appear, a line between them', async () => {
+    const user = userEvent.setup()
+    const grouped: ComboboxOption[] = [
+      { value: 'org:1', label: 'Acme', group: 'orgs' },
+      { value: 'user:7', label: 'Rita', group: 'people' },
+      { value: 'org:2', label: 'Globex', group: 'orgs' },
+      { value: 'user:8', label: 'Carl', group: 'people' },
+    ]
+    render(<MultiCombobox value={[]} onChange={() => {}} options={grouped} data-testid="r" />)
+    await user.click(screen.getByTestId('r'))
+    const list = document.querySelector('[data-slot="command-list"]')!
+    const rows = Array.from(list.querySelectorAll('[data-slot="command-item"], [data-slot="command-separator"]'))
+      .map(e => (e.getAttribute('data-slot') === 'command-separator' ? '---' : e.textContent))
+    expect(rows).toEqual(['Acme', 'Globex', '---', 'Rita', 'Carl'])
+  })
+
+  it('keeps picks in their group, so the group line is the only line', async () => {
+    const user = userEvent.setup()
+    const grouped: ComboboxOption[] = [
+      { value: 'org:1', label: 'Acme', group: 'orgs' },
+      { value: 'org:2', label: 'Globex', group: 'orgs' },
+      { value: 'user:7', label: 'Rita', group: 'people' },
+      { value: 'user:8', label: 'Carl', group: 'people' },
+    ]
+    render(<MultiCombobox value={['org:2', 'user:8']} onChange={() => {}} options={grouped} data-testid="r" />)
+    await user.click(screen.getByTestId('r'))
+    const list = document.querySelector('[data-slot="command-list"]')!
+    const rows = Array.from(list.querySelectorAll('[data-slot="command-item"], [data-slot="command-separator"]'))
+      .map(e => (e.getAttribute('data-slot') === 'command-separator' ? '---' : e.textContent))
+    expect(rows).toEqual(['Acme', 'Globex', '---', 'Rita', 'Carl'])
+  })
+})
+

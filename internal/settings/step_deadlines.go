@@ -107,10 +107,15 @@ func (d StepDeadlines) For(step db.WorkflowStep, targetLanguage string) pgtype.T
 type StepWithDeadlines struct {
 	db.WorkflowStep
 	LanguageDeadlines []LanguageDeadline `json:"language_deadlines"`
+	// Locked: jobs have reached this step or one after it, so it keeps its
+	// place (see StepLocks). ReachedJobs counts the jobs that reached it.
+	Locked      bool `json:"locked"`
+	ReachedJobs int  `json:"reached_jobs"`
 }
 
-// ListStepsWithDeadlines reads a profile's steps and their language overrides.
-func ListStepsWithDeadlines(ctx context.Context, q db.Querier, profileID int64) ([]StepWithDeadlines, error) {
+// ListStepsWithDeadlines reads a profile's steps, their language overrides
+// and which of them are locked.
+func ListStepsWithDeadlines(ctx context.Context, q db.Querier, tenantID, profileID int64) ([]StepWithDeadlines, error) {
 	steps, err := q.ListSettingsWorkflowSteps(ctx, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("list workflow steps: %w", err)
@@ -119,8 +124,12 @@ func ListStepsWithDeadlines(ctx context.Context, q db.Querier, profileID int64) 
 	if err != nil {
 		return nil, err
 	}
+	locks, err := LoadStepLocks(ctx, q, tenantID, profileID, steps)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]StepWithDeadlines, 0, len(steps))
-	for _, s := range steps {
+	for i, s := range steps {
 		// Never nil: the client renders the list directly, and a JSON null
 		// would make every consumer guard before iterating.
 		lds := []LanguageDeadline{}
@@ -128,7 +137,7 @@ func ListStepsWithDeadlines(ctx context.Context, q db.Querier, profileID int64) 
 			lds = append(lds, LanguageDeadline{TargetLanguage: lang, Deadline: ts.Time.UTC().Format(time.RFC3339)})
 		}
 		sort.Slice(lds, func(i, j int) bool { return lds[i].TargetLanguage < lds[j].TargetLanguage })
-		out = append(out, StepWithDeadlines{WorkflowStep: s, LanguageDeadlines: lds})
+		out = append(out, StepWithDeadlines{WorkflowStep: s, LanguageDeadlines: lds, Locked: locks.Locked(i), ReachedJobs: locks.ReachedJobs[s.ID]})
 	}
 	return out, nil
 }

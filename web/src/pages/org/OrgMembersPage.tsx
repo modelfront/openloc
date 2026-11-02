@@ -88,9 +88,10 @@ export default function OrgMembersPage() {
     control: controlInvite,
     handleSubmit: handleInviteSubmit,
     reset: resetInvite,
-    formState: { errors: inviteErrors, isSubmitting: inviteSending },
+    formState: { errors: inviteErrors, isSubmitting: inviteSending, isValid: inviteValid },
   } = useForm<InviteFormValues>({
     resolver: zodResolver(inviteSchema),
+    mode: 'onTouched',
     defaultValues: { email: '', role: 'admin' },
   })
   useScrollToError(inviteErrors)
@@ -238,7 +239,11 @@ export default function OrgMembersPage() {
               )}
             />
           </FormField>
-          <Button type="submit" disabled={inviteSending}>
+          <Button
+            type="submit"
+            disabled={inviteSending || !inviteValid}
+            disabledReason={inviteValid ? undefined : 'Enter a valid email address first.'}
+          >
             {inviteSending ? 'Sending...' : 'Send invite'}
           </Button>
         </form>

@@ -70,7 +70,7 @@ When the support team resolves an issue, the organization's owners, admins and p
 
 ## Get notifications by email
 
-Every workflow event above is also sent as an email to the address shown in your personal Settings, unless you or your organization switched it off (see the next two sections). The email subject follows the same pattern as the in-app title, for example "You've been assigned to Review — brochure.docx (de)". Emails about an issue, to you as the reporter or to the support team, all use the subject "Issue #<id>: <title>", so your mail app keeps one issue's emails in one conversation. The bell keeps its own wording, "Update on your issue: …".
+Every workflow event above is also sent as an email to the address shown in your personal Settings, unless you or your organization switched it off (see the next two sections). The email subject is the project name, for example "[OpenLoc] Spring catalog", so all emails about one project stay in one conversation in your inbox. The file, the language and what happened are in the email itself. Emails about an issue, to you as the reporter or to the support team, all use the subject "Issue #<id>: <title>", so your mail app keeps one issue's emails in one conversation. The bell keeps its own wording, such as "Workflow completed: brochure.docx (de)" or "Update on your issue: …".
 
 The email lists the project, file and language. Its button opens the job in the editor: **Open task** for an assignment, **Open job** for the other events. The **Notification settings** link at the bottom goes to your personal Settings.
 

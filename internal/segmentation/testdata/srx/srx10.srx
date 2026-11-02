@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<srx xmlns="http://www.lisa.org/srx" version="1.0">
+  <header segmentsubflows="yes"/>
+  <body>
+    <languagerules>
+      <languagerule languagerulename="German">
+        <rule break="no">
+          <beforebreak>\bz\.B\.</beforebreak>
+          <afterbreak>\s</afterbreak>
+        </rule>
+        <rule break="yes">
+          <beforebreak>[.!?]</beforebreak>
+          <afterbreak>\s</afterbreak>
+        </rule>
+      </languagerule>
+    </languagerules>
+    <maprules>
+      <maprule maprulename="Default">
+        <languagemap languagepattern="DE.*" languagerulename="German"/>
+      </maprule>
+    </maprules>
+  </body>
+</srx>

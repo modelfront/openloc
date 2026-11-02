@@ -2,13 +2,10 @@ package issues
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"openloc/internal/auth"
@@ -21,26 +18,19 @@ import (
 	"openloc/internal/sliceutil"
 )
 
-// How many issues one user may file in an hour.
-const (
-	rateLimit       = 10
-	rateLimitWindow = time.Hour
-	// How many comments one member may write in an hour. Operators are not
-	// limited.
-	commentRateLimit = 30
-)
-
 // Service files issues, runs both sides of their conversation and notifies the
 // other side.
 type Service struct {
-	pool      *pgxpool.Pool
-	store     file.BlobStore // nil: issues without attachments only
-	notifier  *notification.Service
-	sender    notification.Sender
-	operators []string      // platform admin emails, as configured
-	opSet     auth.EmailSet // the same, as a set: who may be assigned
-	queue     TaskEnqueuer  // nil: operator emails are sent in the request
-	baseURL   string
+	pool         *pgxpool.Pool
+	store        file.BlobStore // nil: issues without attachments only
+	notifier     *notification.Service
+	sender       notification.Sender
+	operators    []string      // platform admin emails, as configured
+	opSet        auth.EmailSet // the same, as a set: who may be assigned
+	queue        TaskEnqueuer  // nil: operator emails and Slack posts are sent in the request
+	slack        SlackPoster   // nil: no Slack posts
+	slackChannel string
+	baseURL      string
 	// verifyKey signs the assistant's checks of the reports it writes.
 	verifyKey []byte
 	now       func() time.Time
@@ -145,25 +135,8 @@ func (s *Service) Check(in NewIssue) error {
 // an issue.
 var ErrDisabled = httputil.NewClientError("This OpenLoc installation does not take issue reports.")
 
-// rateLimitedError is a per-member limit reached: msg says which.
-type rateLimitedError struct{ msg string }
-
-var (
-	errTooManyIssues   = rateLimitedError{"You have reported many issues in the last hour. Please try again later."}
-	errTooManyComments = rateLimitedError{"You have written many comments in the last hour. Please try again later."}
-)
-
-// IsRateLimited reports whether err is a per-member limit reached.
-func IsRateLimited(err error) bool {
-	var r rateLimitedError
-	return errors.As(err, &r)
-}
-
-func (e rateLimitedError) Error() string   { return e.msg }
-func (rateLimitedError) StatusCode() int   { return http.StatusTooManyRequests }
-func (rateLimitedError) ErrorCode() string { return "issue_rate_limited" }
-
-// Create files an issue with its files and emails the operators.
+// Create files an issue with its files and posts it to Slack when that is
+// set up.
 func (s *Service) Create(ctx context.Context, m Member, in NewIssue) (IssueView, error) {
 	if !s.Enabled() {
 		return IssueView{}, ErrDisabled
@@ -175,15 +148,6 @@ func (s *Service) Create(ctx context.Context, m Member, in NewIssue) (IssueView,
 	issueContext, err := buildContext(in.Context, m.Role, in.Via)
 	if err != nil {
 		return IssueView{}, fmt.Errorf("build issue context: %w", err)
-	}
-	recent, err := db.New(s.pool).CountRecentIssuesByReporter(ctx, db.CountRecentIssuesByReporterParams{
-		ReporterID: m.UserID, Since: timestamptz(s.now().Add(-rateLimitWindow)),
-	})
-	if err != nil {
-		return IssueView{}, fmt.Errorf("count recent issues: %w", err)
-	}
-	if recent >= rateLimit {
-		return IssueView{}, errTooManyIssues
 	}
 
 	files, err := s.storeFiles(ctx, m.TenantID, in.Files)
@@ -228,45 +192,46 @@ func (s *Service) Create(ctx context.Context, m Member, in NewIssue) (IssueView,
 		return IssueView{}, err
 	}
 	logging.Info(ctx, "reported an issue", "issue-created", logging.IssueID(issue.ID))
-	s.emailOperatorsNewIssue(ctx, issue)
+	s.notifyNewIssue(ctx, issue)
 	view := issueView(issue)
 	view.Attachments = attachments
 	view.CanDelete = m.mayDelete(issue.ReporterID, m.Role)
 	return view, nil
 }
 
-// List is the org's issues the member may see, filtered and ordered by f,
-// from cursor on.
-func (s *Service) List(ctx context.Context, m Member, f Filter, cursor Cursor, limit int32) ([]IssueView, error) {
+// List is one page of the org's issues the member may see, filtered and
+// ordered by f: up to limit issues after cursor, and the next page's cursor
+// ("" at the end).
+func (s *Service) List(ctx context.Context, m Member, f Filter, cursor string, limit int32) ([]IssueView, string, error) {
 	if err := f.check(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	p := db.ListMemberIssuesNewestParams{
-		TenantID: m.TenantID, ViewerID: m.UserID, AllMembers: m.seesAllMembers(),
-		Statuses: sliceutil.NonNil(f.Statuses), Kinds: sliceutil.NonNil(f.Kinds), Areas: sliceutil.NonNil(f.Areas),
-		Severities: sliceutil.NonNil(f.Severities), Search: likePattern(f.Search),
-		CursorAt: cursor.at(), CursorID: cursor.ID, RowLimit: limit,
-	}
-	q := db.New(s.pool)
-	var rows []db.ListMemberIssuesNewestRow
-	var err error
-	if f.OldestFirst {
-		var old []db.ListMemberIssuesOldestRow
-		old, err = q.ListMemberIssuesOldest(ctx, db.ListMemberIssuesOldestParams(p))
-		for _, r := range old {
-			rows = append(rows, db.ListMemberIssuesNewestRow(r))
-		}
-	} else {
-		rows, err = q.ListMemberIssuesNewest(ctx, p)
-	}
+	rows, next, err := s.listPage(ctx, memberListBase, memberListArgs(m, f), f, false, cursor, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list issues: %w", err)
+		return nil, "", err
 	}
 	out := make([]IssueView, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueRow(r).memberView(m))
+		out = append(out, r.memberView(m))
 	}
-	return out, nil
+	return out, next, nil
+}
+
+// Count is how many issues List shows the member under f, over every page.
+func (s *Service) Count(ctx context.Context, m Member, f Filter) (int64, error) {
+	if err := f.check(); err != nil {
+		return 0, err
+	}
+	return s.countRows(ctx, memberListBase, memberListArgs(m, f))
+}
+
+// memberListArgs is memberListBase's parameters: the member's scope and f.
+func memberListArgs(m Member, f Filter) pgx.NamedArgs {
+	return pgx.NamedArgs{
+		"tenant_id": m.TenantID, "viewer_id": m.UserID, "all_members": m.seesAllMembers(),
+		"statuses": sliceutil.NonNil(f.Statuses), "kinds": sliceutil.NonNil(f.Kinds), "areas": sliceutil.NonNil(f.Areas),
+		"severities": sliceutil.NonNil(f.Severities), "search": likePattern(f.Search),
+	}
 }
 
 // Get is one of the issues the member may see, with its conversation and files.
@@ -323,7 +288,11 @@ func (s *Service) Delete(ctx context.Context, m Member, id int64) error {
 // duplicates back to the support team's queue, each with an entry its org
 // sees: with their original gone, nothing tracks their problem. It holds the
 // duplicate lock, so no request picks the issue as an original meanwhile.
+// After the commit, the Slack cards of the issue and of its reopened
+// duplicates are refreshed; the issue's card is also queued for the blank
+// sweep.
 func (s *Service) softDelete(ctx context.Context, id int64, del func(q *db.Queries) (int64, error)) error {
+	var reopened []int64
 	_, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		if err := q.LockIssueDuplicates(ctx); err != nil {
 			return db.Issue{}, fmt.Errorf("lock duplicates: %w", err)
@@ -335,12 +304,24 @@ func (s *Service) softDelete(ctx context.Context, id int64, del func(q *db.Queri
 		if n == 0 {
 			return db.Issue{}, pgx.ErrNoRows
 		}
+		if err := q.QueueIssueSlackBlank(ctx, id); err != nil {
+			return db.Issue{}, fmt.Errorf("queue slack blank: %w", err)
+		}
+		if reopened, err = q.ListDuplicatesToReopen(ctx, id); err != nil {
+			return db.Issue{}, fmt.Errorf("list duplicates: %w", err)
+		}
 		if err := q.ReopenDuplicatesOf(ctx, id); err != nil {
 			return db.Issue{}, fmt.Errorf("reopen duplicates: %w", err)
 		}
 		return db.Issue{}, nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	for _, issueID := range append([]int64{id}, reopened...) {
+		s.refreshSlack(ctx, issueID)
+	}
+	return nil
 }
 
 // inTx runs fn in a transaction and returns the issue it produced.
@@ -359,7 +340,5 @@ func (s *Service) inTx(ctx context.Context, fn func(q *db.Queries) (db.Issue, er
 	}
 	return issue, nil
 }
-
-func timestamptz(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
 func clientError(msg string) error { return httputil.NewClientError(msg) }

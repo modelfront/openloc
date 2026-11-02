@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
 	settingspkg "openloc/internal/settings"
@@ -24,6 +26,21 @@ type JobTMMatch struct {
 	// Percent is what the Match column shows for this entry after
 	// pre-translation or an insert: 101 for an in-context exact match.
 	Percent int16 `json:"percent"`
+	// Exact marks a byte-identical source with no penalty, the match
+	// pre-translation approves; choosing it in the panel approves it too.
+	Exact bool `json:"exact"`
+	// When the entry was added and last changed, and by whom. A user is the
+	// stored label ("Name <email>" for an editor change, a TMX
+	// creationid/changeid for an import), without its email unless the caller
+	// is a manager, and empty when no person is recorded — as for the creator
+	// of every entry the editor wrote.
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedBy string    `json:"created_by"`
+	UpdatedBy string    `json:"updated_by"`
+	// Penalties explains how Percent falls short of the text similarity;
+	// absent when nothing docked the match.
+	Penalties []Penalty `json:"penalties,omitempty"`
 	// TMEntryID is the matched entry; the panel's insert token carries it.
 	TMEntryID int64 `json:"-"`
 }
@@ -88,6 +105,10 @@ func (h *Handler) JobTMMatches(ctx context.Context, tenantID, jobID int64, sourc
 	}
 	penalties = penalties.WithTMs(tmAssignments)
 	segment := h.segmentContext(ctx, tenantID, job, sourceText, translationID)
+	withEmail := false
+	if c, ok := auth.ClaimsFromContext(ctx); ok {
+		withEmail = auth.IsManagerRole(c.Role)
+	}
 
 	type dedupKey struct{ src, tgt string }
 	matches := []JobTMMatch{}
@@ -112,7 +133,7 @@ func (h *Handler) JobTMMatches(ctx context.Context, tenantID, jobID int64, sourc
 			if seen[key] {
 				continue
 			}
-			score := HitScore(h.scorer, penalties, sourceText, tmID, project.SourceLanguage, job.TargetLanguage, hit)
+			score, info := HitScoreInfo(h.scorer, penalties, sourceText, tmID, project.SourceLanguage, job.TargetLanguage, hit)
 			if score < float64(threshold) {
 				continue
 			}
@@ -127,6 +148,12 @@ func (h *Handler) JobTMMatches(ctx context.Context, tenantID, jobID int64, sourc
 				TMID:           tmID,
 				TMEntryID:      hit.ID,
 				Percent:        HitPercent(sourceText, hit, score, segment),
+				Exact:          IsExactHit(sourceText, hit, score),
+				Penalties:      penalties.Breakdown(info),
+				CreatedAt:      hit.CreatedAt.Time,
+				UpdatedAt:      hit.UpdatedAt.Time,
+				CreatedBy:      entryUserLabel(hit.CreatedBy, withEmail),
+				UpdatedBy:      entryUserLabel(hit.UpdatedBy, withEmail),
 			})
 		}
 	}
@@ -180,11 +207,27 @@ func (h *Handler) segmentContext(ctx context.Context, tenantID int64, job db.Job
 	if seg.SourceText != sourceText {
 		return nil
 	}
-	nb, err := h.queries.GetSegmentNeighborSources(ctx, t.SegmentID)
+	nb, err := h.queries.GetSegmentNeighborSources(ctx, db.GetSegmentNeighborSourcesParams{
+		SegmentID: t.SegmentID, TargetLanguage: t.TargetLanguage,
+	})
 	if err != nil {
 		logging.Warn(ctx, err, "TM matches: neighbour lookup failed, no in-context match", "tm-matches-context-failed", logging.TranslationID(translationID))
 		return nil
 	}
 	nc := NewNeighborContext(nb.PrevSource, nb.NextSource)
 	return &nc
+}
+
+// entryUserLabel is a TM entry's stored user label as a caller sees it: empty
+// when no person is behind it, and without the email for a caller who may not
+// see colleagues' emails.
+func entryUserLabel(label string, withEmail bool) string {
+	switch {
+	case label == auth.NoUserLabel:
+		return ""
+	case withEmail:
+		return label
+	default:
+		return auth.LabelName(label)
+	}
 }

@@ -155,14 +155,18 @@ type Leverage struct {
 }
 
 type Segment struct {
-	TranslationID int64  `json:"translation_id"`
-	SegmentID     int64  `json:"segment_id"`
-	Position      int32  `json:"position"`
-	SourceText    string `json:"source_text"`
-	TargetText    string `json:"target_text"`
-	Status        string `json:"status"`
-	Origin        string `json:"origin"`
-	TMMatch       *int16 `json:"tm_match_percent"`
+	TranslationID int64 `json:"translation_id"`
+	SegmentID     int64 `json:"segment_id"`
+	Position      int32 `json:"position"`
+	// SubPosition orders the pieces of a split at one position (0 for the
+	// first); Number is the segment number the editor shows ("3", "3.1").
+	SubPosition int32  `json:"sub_position"`
+	Number      string `json:"number"`
+	SourceText  string `json:"source_text"`
+	TargetText  string `json:"target_text"`
+	Status      string `json:"status"`
+	Origin      string `json:"origin"`
+	TMMatch     *int16 `json:"tm_match_percent"`
 	// UpdatedAt is the optimistic-locking version. It MUST be returned here:
 	// without it a caller has no way to populate expected_updated_at on a write,
 	// which silently turns concurrency protection off and reintroduces lost

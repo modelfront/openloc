@@ -3,12 +3,11 @@
 // depend on jsdom (and stays green regardless of jsdom's transitive-dep state).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Mock errtrack: keeps this file honest under the node environment (the real
-// module pulls in the browser Honeybadger SDK) and lets the reload test
-// assert the report without a window.
-vi.mock('@/lib/errtrack', () => ({ notifyThen: vi.fn() }))
-import { notifyThen } from '@/lib/errtrack'
-import { isChunkLoadError, shouldReloadForChunkError, reportStaleChunkAndReload } from './lazy-reload'
+// Mock errtrack: the real module pulls in the browser Honeybadger SDK, which
+// needs a window; the reload test asserts it sends no notice.
+vi.mock('@/lib/errtrack', () => ({ notify: vi.fn() }))
+import { notify } from '@/lib/errtrack'
+import { isChunkLoadError, shouldReloadForChunkError, reloadForStaleChunk } from './lazy-reload'
 
 describe('isChunkLoadError', () => {
   it('matches the Chromium "Failed to fetch dynamically imported module" message', () => {
@@ -103,29 +102,16 @@ describe('shouldReloadForChunkError', () => {
   })
 })
 
-describe('reportStaleChunkAndReload', () => {
+describe('reloadForStaleChunk', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('reports a StaleChunkReload notice with a per-chunk fingerprint, reload deferred to notifyThen', () => {
+  it('reloads at once and sends no notice: a stale chunk is expected in every deploy window', () => {
     const reload = vi.fn()
     vi.stubGlobal('window', { location: { reload } })
-    const err = new TypeError('Failed to fetch dynamically imported module')
-    reportStaleChunkAndReload(err, 'CATEditor')
-    expect(notifyThen).toHaveBeenCalledWith(
-      err,
-      {
-        name: 'StaleChunkReload',
-        fingerprint: 'stale-chunk-CATEditor',
-        context: { chunkKey: 'CATEditor' },
-      },
-      expect.any(Function),
-    )
-    // The reload only runs when notifyThen invokes its callback.
-    expect(reload).not.toHaveBeenCalled()
-    const callback = vi.mocked(notifyThen).mock.calls.at(-1)?.[2] as () => void
-    callback()
+    reloadForStaleChunk()
     expect(reload).toHaveBeenCalledTimes(1)
+    expect(notify).not.toHaveBeenCalled()
   })
 })

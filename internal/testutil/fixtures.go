@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/settings"
 )
 
 // RegisterUser bootstraps a test tenant + owner in one call: creates a tenant
@@ -158,14 +159,14 @@ func SeedMembership(t testing.TB, q db.Querier, userID, tenantID int64, role str
 // SeedProject creates a project with the given languages and a default settings profile.
 func SeedProject(t testing.TB, q db.Querier, tenantID int64, name, srcLang string, tgtLangs []string) db.Project {
 	t.Helper()
-	sp, err := q.CreateSettingsProfile(context.Background(), db.CreateSettingsProfileParams{
+	sp, err := settings.CreateProfileFor(context.Background(), q, db.CreateSettingsProfileParams{
 		TenantID:       tenantID,
 		FuzzyThreshold: 0.75,
 		MtOnUpload:     false,
 		TmOnUpload:     false,
-	})
+	}, srcLang)
 	if err != nil {
-		t.Fatalf("SeedProject(%q) CreateSettingsProfile: %v", name, err)
+		t.Fatalf("SeedProject(%q) settings profile: %v", name, err)
 	}
 	project, err := q.CreateProject(context.Background(), db.CreateProjectParams{
 		Name:              name,
@@ -221,14 +222,14 @@ func SeedProjectSystemLabel(t testing.TB, q db.Querier, tenantID, projectID int6
 // SeedTemplate creates a template with default fuzzy threshold (0.75).
 func SeedTemplate(t testing.TB, q db.Querier, tenantID int64, name string) db.Template {
 	t.Helper()
-	sp, err := q.CreateSettingsProfile(context.Background(), db.CreateSettingsProfileParams{
+	sp, err := settings.CreateProfileFor(context.Background(), q, db.CreateSettingsProfileParams{
 		TenantID:       tenantID,
 		FuzzyThreshold: 0.75,
 		MtOnUpload:     false,
 		TmOnUpload:     false,
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("SeedTemplate(%q) CreateSettingsProfile: %v", name, err)
+		t.Fatalf("SeedTemplate(%q) settings profile: %v", name, err)
 	}
 	tmpl, err := q.CreateTemplate(context.Background(), db.CreateTemplateParams{
 		Name:              name,
@@ -328,6 +329,21 @@ func SeedSegment(t testing.TB, q db.Querier, fileID int64, sourceText string, po
 	})
 	if err != nil {
 		t.Fatalf("SeedSegment(%q): %v", sourceText, err)
+	}
+	return seg
+}
+
+// SeedLanguageSegment creates a segment that belongs to one language's job,
+// as a split or join makes it: position and subPosition place it, exportKey
+// is the original key it rebuilds on export.
+func SeedLanguageSegment(t testing.TB, q db.Querier, fileID int64, lang, sourceText string, position, subPosition int32, exportKey string) db.Segment {
+	t.Helper()
+	seg, err := q.CreateLanguageSegment(context.Background(), db.CreateLanguageSegmentParams{
+		FileID: fileID, TargetLanguage: lang, SourceText: sourceText,
+		Position: position, SubPosition: subPosition, ExportKey: exportKey,
+	})
+	if err != nil {
+		t.Fatalf("SeedLanguageSegment(%q): %v", sourceText, err)
 	}
 	return seg
 }

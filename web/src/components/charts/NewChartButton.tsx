@@ -3,8 +3,7 @@
 // Both open a dialog, as a "New …" button does. Describing a chart in words
 // is the chat's job (create_chart), which the builder links to.
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { useGuideReveal } from '@/lib/guide-reveal'
 import { CreateDashboardDialog } from './CreateDashboardDialog'
 import { ChartBuilderDialog } from './ChartBuilderDialog'
@@ -17,9 +16,9 @@ export function NewDashboardButton({ personal, canShare }: {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Button data-testid="new-dashboard" onClick={() => setOpen(true)}>
-        <Plus /> New dashboard
-      </Button>
+      <CreateButton data-testid="new-dashboard" onClick={() => setOpen(true)}>
+        New dashboard
+      </CreateButton>
       <CreateDashboardDialog open={open} onClose={() => setOpen(false)} personal={personal} canShare={canShare} />
     </>
   )
@@ -36,9 +35,9 @@ export function NewChartButton({ dashboardId, dashboardName }: { dashboardId: nu
   useGuideReveal(CHART_BUILDER_ANCHORS, () => { setOpen(true); setGuided(true) }, close)
   return (
     <>
-      <Button data-testid="new-chart" onClick={() => setOpen(true)}>
-        <Plus /> New chart
-      </Button>
+      <CreateButton data-testid="new-chart" onClick={() => setOpen(true)}>
+        New chart
+      </CreateButton>
       <ChartBuilderDialog open={open} onClose={close} dashboardId={dashboardId} dashboardName={dashboardName} guided={guided} />
     </>
   )

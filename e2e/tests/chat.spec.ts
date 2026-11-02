@@ -174,6 +174,19 @@ test.describe("Built-in chat", () => {
     await page.getByTestId("chat-send").click();
   }
 
+  // A guarded tool's confirm request and the SSE event that carries it.
+  const confirmRequired = (request: { tool: string; args: Record<string, unknown>; summary: string }) => {
+    const confirm = { ...request, token: "1790000000.test-token", expires_at: "2026-09-24T12:10:00Z" };
+    return { confirm, event: `event: confirm_required\ndata: ${JSON.stringify({ type: "confirm_required", tool: confirm.tool, confirm })}` };
+  };
+
+  async function stubConfirmEndpoint(page: import("@playwright/test").Page, onPost?: (body: Record<string, unknown>) => void) {
+    await page.route("**/api/chat/confirm", async (route) => {
+      onPost?.(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { ok: true, message: "done" } }) });
+    });
+  }
+
   test("highlight spotlights the real element with the caption", async ({ page }) => {
     await ask(
       page,
@@ -217,24 +230,16 @@ test.describe("Built-in chat", () => {
   });
 
   test("a guarded tool shows a confirm card; only the user's click posts the token", async ({ page }) => {
-    const confirm = {
+    const { confirm, event } = confirmRequired({
       tool: "openloc_delete_custom_palette",
       args: { id: "ocean" },
       summary: 'Delete your custom palette "Ocean". The colours cannot be recovered.',
-      token: "1790000000.test-token",
-      expires_at: "2026-09-24T12:10:00Z",
-    };
-    let posted: Record<string, unknown> | null = null;
-    await page.route("**/api/chat/confirm", async (route) => {
-      posted = route.request().postDataJSON();
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { ok: true, message: "done" } }) });
     });
+    let posted: Record<string, unknown> | null = null;
+    await stubConfirmEndpoint(page, (body) => { posted = body; });
     await ask(
       page,
-      sse(
-        `event: confirm_required\ndata: ${JSON.stringify({ type: "confirm_required", tool: confirm.tool, confirm })}`,
-        'event: text\ndata: {"type":"text","text":"Confirm in the card to delete it."}',
-      ),
+      sse(event, 'event: text\ndata: {"type":"text","text":"Confirm in the card to delete it."}'),
       "delete my ocean palette",
     );
 
@@ -247,5 +252,49 @@ test.describe("Built-in chat", () => {
     await page.getByRole("button", { name: "Delete" }).click();
     await expect(card).toHaveAttribute("data-state", "done");
     expect(posted).toEqual({ conversation_id: 7, tool: confirm.tool, args: { id: "ocean" }, confirm_token: confirm.token });
+  });
+
+  test("a toast's close button sits inside its top-right corner, clear of the text", async ({ page }) => {
+    await stubConfirmEndpoint(page);
+    const { event } = confirmRequired({ tool: "openloc_delete_custom_palette", args: { id: "ocean" }, summary: 'Delete your custom palette "Ocean".' });
+    await ask(page, sse(event), "delete my ocean palette");
+    await page.getByTestId("chat-confirm-review").click();
+    await page.getByRole("button", { name: "Delete" }).click();
+
+    // Measured once the toast has slid in: Sonner moves it up from below.
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Done." });
+    await expect(toast).toHaveAttribute("data-mounted", "true");
+    await toast.evaluate(async (el) => {
+      for (let a = el.getAnimations(); a.length; a = el.getAnimations()) await Promise.allSettled(a.map((x) => x.finished));
+    });
+    const toastBox = (await toast.boundingBox())!;
+    const closeBox = (await toast.getByRole("button", { name: "Close toast" }).boundingBox())!;
+    const textBox = (await toast.getByText("Done.").boundingBox())!;
+
+    expect(closeBox.x).toBeGreaterThanOrEqual(toastBox.x + toastBox.width / 2);
+    expect(closeBox.x + closeBox.width).toBeLessThanOrEqual(toastBox.x + toastBox.width);
+    expect(closeBox.y).toBeGreaterThanOrEqual(toastBox.y);
+    expect(closeBox.y + closeBox.height).toBeLessThanOrEqual(toastBox.y + toastBox.height / 2 + closeBox.height);
+    expect(textBox.x + textBox.width).toBeLessThanOrEqual(closeBox.x);
+  });
+
+  test("at the narrowest panel width the confirm card keeps its summary full-width and its buttons inside", async ({ page }) => {
+    await page.evaluate(() => localStorage.setItem("openloc-chat-panel-size", JSON.stringify({ w: 320, h: 560 })));
+    const { confirm, event } = confirmRequired({
+      tool: "openloc_report_issue",
+      args: { title: "Export fails", description: "The export button does nothing." },
+      summary: 'Report the issue "Export fails" with the details below.',
+    });
+    await ask(page, sse(event), "report a bug");
+
+    const card = page.getByTestId("chat-confirm");
+    await expect(card).toHaveAttribute("data-state", "pending");
+    const cardBox = (await card.boundingBox())!;
+    const summaryBox = (await card.getByText(confirm.summary).boundingBox())!;
+    const reviewBox = (await page.getByTestId("chat-confirm-review").boundingBox())!;
+
+    expect(summaryBox.width).toBeGreaterThan(cardBox.width * 0.8);
+    expect(summaryBox.y).toBeGreaterThanOrEqual(reviewBox.y + reviewBox.height);
+    expect(reviewBox.x + reviewBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
   });
 });

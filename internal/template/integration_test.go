@@ -22,7 +22,8 @@ func TestIntegrationTemplateCRUD(t *testing.T) {
 	user := testutil.SeedUser(t, q, tenant.ID, "user@test.com", "pass")
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/templates", map[string]any{
-		"name": "My Template",
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
+		"name":        "My Template",
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 

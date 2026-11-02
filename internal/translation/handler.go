@@ -70,9 +70,13 @@ func (h *Handler) HandleListByFile(w http.ResponseWriter, r *http.Request) {
 		FileID:         fileID,
 		TargetLanguage: lang,
 		TenantID:       tenantID,
+		RowLimit:       httputil.WholeFileCap + 1,
 	})
 	if err != nil {
 		httputil.ServerError(w, "list", "translations")
+		return
+	}
+	if httputil.RefuseWholeFile(w, len(translations)) {
 		return
 	}
 	httputil.Data(w, translations)
@@ -250,7 +254,7 @@ func (h *Handler) HandleUpdateHuman(w http.ResponseWriter, r *http.Request) {
 
 // WriteSegmentWriteError maps a Service error onto the REST response: the
 // task edit guard's refusals with their own status and code, 404 not found,
-// 409 locked / stale version, 422 QA block, 403 not in the first step, and
+// 409 locked / stale version, 422 QA block, 403 past the first human or hybrid step, and
 // anything else through httputil.ServiceError: a 500 whose cause reaches the
 // request's log line. lockedHint completes the locked-segment message
 // ("unlock before editing").
@@ -264,8 +268,8 @@ func (h *Handler) WriteSegmentWriteError(ctx context.Context, w http.ResponseWri
 		httputil.Error(w, http.StatusConflict, "segment is locked — "+lockedHint)
 	case errors.Is(err, ErrConflict):
 		h.writeConflictResponse(ctx, w, id, tenantID)
-	case errors.Is(err, ErrNotFirstStep):
-		httputil.Error(w, http.StatusForbidden, ErrNotFirstStep.Error())
+	case errors.Is(err, ErrPastClearStep):
+		httputil.Error(w, http.StatusForbidden, ErrPastClearStep.Error())
 	case errors.As(err, &qaBlock):
 		writeQABlocked(w, qaBlock.Issues)
 	default:

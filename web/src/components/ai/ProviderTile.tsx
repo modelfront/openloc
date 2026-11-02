@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { cn } from '@/lib/utils'
+import { capitalize, cn } from '@/lib/utils'
 import { rowButtonProps } from '@/components/list/row-button'
 import { ProviderIcon } from './ProviderIcon'
 
@@ -43,7 +43,7 @@ export function ProviderTile({
   className?: string
   'data-testid'?: string
 }) {
-  const label = name ?? (provider.charAt(0).toUpperCase() + provider.slice(1))
+  const label = name ?? capitalize(provider)
   const interactive = !!onClick
 
   return (

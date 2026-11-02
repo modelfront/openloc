@@ -18,6 +18,7 @@ import {
   createMTEngineViaAPI,
   deleteProjectViaAPI,
   deleteMTEngineViaAPI,
+  EDITOR_READS,
 } from "./helpers";
 
 const API = "";
@@ -138,13 +139,13 @@ test.describe.serial("J10 — Error Recovery", () => {
     // The bug: rapid Ctrl+Enter fires confirmAndAdvance() before the next
     // segment's translation data loads → `translation!.id` is undefined.
     //
-    // To actually trigger the race, we THROTTLE the translations API so the
+    // To actually trigger the race, we THROTTLE the editor row reads so the
     // React Query refetch after invalidation takes >500ms. Without throttling,
     // local dev responds in <50ms and the race never manifests.
     await login(page);
 
-    // Throttle translations API responses by 800ms to force the race window
-    await page.route("**/api/jobs/*/translations**", async (route) => {
+    // Throttle the editor index and row reads by 800ms to force the race window
+    await page.route(EDITOR_READS, async (route) => {
       await new Promise((r) => setTimeout(r, 800));
       await route.continue();
     });
@@ -177,7 +178,7 @@ test.describe.serial("J10 — Error Recovery", () => {
     await page.waitForTimeout(5000);
 
     // Remove throttle for cleanup
-    await page.unroute("**/api/jobs/*/translations**");
+    await page.unroute(EDITOR_READS);
 
     // OBSERVABLE OUTCOME: no JS errors
     const qa24Errors = jsErrors.filter(

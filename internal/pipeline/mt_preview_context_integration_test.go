@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/pipeline"
 	"openloc/internal/testutil"
 )
@@ -147,4 +148,58 @@ func TestIntegrationTranslateFile_TaggedSegmentTMMatchUsesPlainSource(t *testing
 		t.Fatalf("TranslateFile: %v", err)
 	}
 	assertSentTMMatch(t, lastSegments(), true)
+}
+
+// A glossary concept's definition and domain, and the target term's notes,
+// reach the model beside the term, so it can tell two senses of one source
+// term apart.
+func TestIntegrationMTPreview_TermsCarrySenseInfo(t *testing.T) {
+	srv, lastSegments := contextStub(t)
+	e := newAIUsageEnv(t, srv.URL)
+	ctx := context.Background()
+	engine := e.engine(t, "GPT translator", "mt", false)
+	if _, err := e.pool.Exec(ctx,
+		`UPDATE ai_prompts SET segment_context = '{terms}' WHERE tenant_id = $1`, e.tenant.ID); err != nil {
+		t.Fatalf("set segment_context: %v", err)
+	}
+	testutil.SeedMTRouterForProfile(t, e.q, e.tenant.ID, e.project.SettingsProfileID, nil, &engine.ID)
+
+	tb := testutil.SeedTermBase(t, e.q, e.tenant.ID, "Main glossary", "en", "fr")
+	if _, err := e.q.CreateSettingsTermAssignment(ctx, db.CreateSettingsTermAssignmentParams{
+		SettingsProfileID: e.project.SettingsProfileID, TermBaseID: tb.ID,
+		SourceLanguage: "en", TargetLanguage: "fr", Mode: "read", Priority: 1,
+	}); err != nil {
+		t.Fatalf("assign term base: %v", err)
+	}
+	concept, err := e.q.CreateTermConcept(ctx, db.CreateTermConceptParams{
+		TermBaseID: tb.ID, Definition: "a planet", Domain: "astronomy",
+	})
+	if err != nil {
+		t.Fatalf("CreateTermConcept: %v", err)
+	}
+	for _, term := range []db.CreateTermParams{
+		{ConceptID: concept.ID, Language: "en", Text: "world", Status: "approved"},
+		{ConceptID: concept.ID, Language: "fr", Text: "monde", Status: "approved", Notes: "masculine"},
+	} {
+		if _, err := e.q.CreateTerm(ctx, term); err != nil {
+			t.Fatalf("CreateTerm: %v", err)
+		}
+	}
+
+	if _, err := e.svc.MTPreview(ctx, e.tenant.ID, e.file.ID, "en", "fr", "Hello world", "", e.tr.ID); err != nil {
+		t.Fatalf("MTPreview: %v", err)
+	}
+	segs := lastSegments()
+	if len(segs) != 1 {
+		t.Fatalf("want one segment sent, got %v", segs)
+	}
+	terms, ok := segs[0]["terms"].([]any)
+	if !ok || len(terms) != 1 {
+		t.Fatalf("the request must carry the glossary term, sent: %v", segs[0])
+	}
+	got, _ := terms[0].(map[string]any)
+	if got["source"] != "world" || got["target"] != "monde" || got["definition"] != "a planet" ||
+		got["domain"] != "astronomy" || got["notes"] != "masculine" {
+		t.Errorf("terms[0] = %v, want world/monde with definition, domain and notes", got)
+	}
 }

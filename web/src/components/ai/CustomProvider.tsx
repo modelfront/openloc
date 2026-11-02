@@ -113,9 +113,10 @@ export function AddCustomProvider({ installed, onAdded }: {
         className="w-full flex-1"
         loading={upload.isPending}
         onClick={() => setOpen(true)}
+        startIcon={<Plus />}
         data-testid="ai-custom-provider-add"
       >
-        {!upload.isPending && <Plus />} {upload.isPending ? 'Uploading…' : 'Add custom provider'}
+        {upload.isPending ? 'Uploading…' : 'Add custom provider'}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md" data-testid="ai-custom-provider-dialog">

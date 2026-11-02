@@ -5,7 +5,8 @@
 import { Link } from 'react-router-dom'
 
 import type { Job } from '@/api'
-import { editorPath, EDITOR_LINK_TARGET } from '@/lib/editor-link'
+import { editorPath } from '@/lib/editor-link'
+import { NEW_TAB_ATTRS } from '@/lib/new-tab'
 import { isAIStepRunning } from '@/lib/project-logic'
 import { Button } from '@/components/ui/button'
 
@@ -40,7 +41,7 @@ export function OpenJobButton({ projectId, job, onOpen, className }: Props) {
     <Button
       {...openProps}
       nativeButton={false}
-      render={<Link to={editorPath(projectId, job.id)} {...EDITOR_LINK_TARGET} />}
+      render={<Link to={editorPath(projectId, job.id)} {...NEW_TAB_ATTRS} />}
       onClick={e => { e.stopPropagation(); onOpen() }}
       aria-label={`${openProps['aria-label']} (new tab)`}
     >

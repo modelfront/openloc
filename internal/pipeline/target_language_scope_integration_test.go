@@ -24,7 +24,7 @@ func TestIntegrationTranslateFile_ReadsOnlyItsTargetLanguage(t *testing.T) {
 
 	sources := []string{"One", "Two", "Three", "Four", "Five"}
 	tenantID, fileID, _ := seedTranslateContext(t, q, sources)
-	segs, err := q.ListSegmentSourcesByFile(ctx, fileID)
+	segs, err := q.ListSegmentSourcesByFile(ctx, db.ListSegmentSourcesByFileParams{FileID: fileID, TargetLanguage: "fr"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestIntegrationRunAIStep_ReadsOnlyItsTargetLanguage(t *testing.T) {
 		seg := testutil.SeedSegment(t, e.q, e.file.ID, "More text", int32(i))
 		testutil.SeedTranslation(t, e.q, seg.ID, "fr", db.TranslationStatusNeedsReview)
 	}
-	segs, err := e.q.ListSegmentSourcesByFile(ctx, e.file.ID)
+	segs, err := e.q.ListSegmentSourcesByFile(ctx, db.ListSegmentSourcesByFileParams{FileID: e.file.ID, TargetLanguage: "fr"})
 	if err != nil {
 		t.Fatal(err)
 	}

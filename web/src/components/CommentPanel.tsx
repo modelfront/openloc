@@ -4,6 +4,7 @@ import { listComments, createComment, deleteComment, type SegmentComment } from 
 import { queryKeys } from '../lib/query-keys'
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { Button } from '@/components/ui/button'
+import { Chip } from '@/components/ui/chip'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -63,7 +64,12 @@ export default function CommentPanel({ translationId }: Props) {
               <div className="flex justify-between items-start">
                 {/* Null author = AI/system comment — the
                     QE+APE step writes the LLM's `comment` output with no user. */}
-                <span className="font-medium text-gray-700 dark:text-gray-300">{c.author_name || c.author_email || 'AI'}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{c.author_name || c.author_email || 'AI'}</span>
+                  {c.from_segment && (
+                    <Chip size="small" data-testid="comment-from-segment">From segment {c.from_segment}</Chip>
+                  )}
+                </span>
                 <DeleteButton
                   size="icon-xs"
                   onClick={() => deleteMut.mutate(c.id)}

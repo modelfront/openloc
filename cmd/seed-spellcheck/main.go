@@ -398,12 +398,12 @@ func ensureProject(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, tenan
 }
 
 func createProject(ctx context.Context, q *db.Queries, tenantID, userID int64) (db.Project, error) {
-	sp, err := q.CreateSettingsProfile(ctx, db.CreateSettingsProfileParams{
+	sp, err := settings.CreateProfileFor(ctx, q, db.CreateSettingsProfileParams{
 		TenantID:       tenantID,
 		FuzzyThreshold: 0.75,
 		MtOnUpload:     false,
 		TmOnUpload:     false,
-	})
+	}, "en")
 	if err != nil {
 		return db.Project{}, fmt.Errorf("settings profile: %w", err)
 	}

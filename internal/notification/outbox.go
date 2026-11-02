@@ -27,9 +27,8 @@ type OutboxEmail struct {
 	Subject string    `json:"subject"`
 	Body    string    `json:"body"`
 	SentAt  time.Time `json:"sent_at"`
-	// ThreadID and ThreadRoot are the email's thread (emaillayout.Thread).
-	ThreadID   string `json:"thread_id,omitempty"`
-	ThreadRoot bool   `json:"thread_root,omitempty"`
+	// ThreadID is the email's thread (emaillayout.Thread).
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 // NewOutbox returns an Outbox holding at most capacity emails; older ones are
@@ -43,7 +42,7 @@ func (o *Outbox) record(to, subject string, body emaillayout.Email) {
 	defer o.mu.Unlock()
 	t := body.Thread()
 	o.emails = append(o.emails, OutboxEmail{To: to, Subject: subject, Body: body.HTML(), SentAt: time.Now(),
-		ThreadID: t.ID, ThreadRoot: t.Root})
+		ThreadID: t.ID})
 	if len(o.emails) > o.capacity {
 		o.emails = o.emails[len(o.emails)-o.capacity:]
 	}

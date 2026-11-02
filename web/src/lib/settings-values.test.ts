@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { projectSettingsToValues } from './settings-values'
-import type { ProjectSettings } from '../api'
-import type { WorkflowStep } from '../types/generated'
+import type { ProjectSettings, ProjectWorkflowStep } from '../api'
 
 const baseProject = {
   id: 1,
@@ -37,6 +36,15 @@ describe('projectSettingsToValues', () => {
     expect(v.qaProfileId).toBe(7)
   })
 
+  it('maps the segmentation profile and the name that names a deleted one', () => {
+    const v = projectSettingsToValues(settingsWith({ project: { ...baseProject, segmentation_profile_id: 12, segmentation_profile_name: 'Legal' } }))
+    expect(v.segmentationProfileId).toBe(12)
+    expect(v.segmentationProfileName).toBe('Legal')
+    const none = projectSettingsToValues(settingsWith({}))
+    expect(none.segmentationProfileId).toBeNull()
+    expect(none.segmentationProfileName).toBeUndefined()
+  })
+
   it('maps the MT router pointer and name, null when the project has none', () => {
     const v = projectSettingsToValues(settingsWith({ project: { ...baseProject, mt_router_id: 4, mt_router_name: 'Production MT' } }))
     expect(v.mtRouterId).toBe(4)
@@ -63,20 +71,20 @@ describe('projectSettingsToValues', () => {
   it('preserves workflow step ai_router_id and normalizes null assignee', () => {
     const v = projectSettingsToValues(settingsWith({
       workflow_steps: [
-        { id: 1, settings_profile_id: 9, name: 'translation', step_order: 0, default_assignee: null, ai_router_id: null } as unknown as WorkflowStep,
-        { id: 2, settings_profile_id: 9, name: 'ai review', step_order: 1, default_assignee: 5, ai_router_id: 12 } as unknown as WorkflowStep,
+        { id: 1, settings_profile_id: 9, name: 'translation', step_order: 0, default_assignee: null, ai_router_id: null } as unknown as ProjectWorkflowStep,
+        { id: 2, settings_profile_id: 9, name: 'ai review', step_order: 1, default_assignee: 5, ai_router_id: 12 } as unknown as ProjectWorkflowStep,
       ],
     }))
     expect(v.workflowSteps).toEqual([
-      { id: 1, step_definition_id: null, name: 'translation', step_type: 'human', default_assignee: undefined, deadline: null, ai_router_id: null, language_deadlines: {} },
-      { id: 2, step_definition_id: null, name: 'ai review', step_type: 'hybrid', default_assignee: 5, deadline: null, ai_router_id: 12, language_deadlines: {} },
+      { id: 1, step_definition_id: null, name: 'translation', step_type: 'human', default_assignee: undefined, deadline: null, ai_router_id: null, language_deadlines: {}, locked: false, reached_jobs: 0 },
+      { id: 2, step_definition_id: null, name: 'ai review', step_type: 'hybrid', default_assignee: 5, deadline: null, ai_router_id: 12, language_deadlines: {}, locked: false, reached_jobs: 0 },
     ])
   })
 
   it('preserves workflow step deadline', () => {
     const v = projectSettingsToValues(settingsWith({
       workflow_steps: [
-        { id: 1, settings_profile_id: 9, name: 'translation', step_type: 'human', step_definition_id: null, step_order: 0, created_at: '2026-08-26T00:00:00Z', deadline: '2026-08-27T14:50:00Z' } as unknown as WorkflowStep,
+        { id: 1, settings_profile_id: 9, name: 'translation', step_type: 'human', step_definition_id: null, step_order: 0, created_at: '2026-08-26T00:00:00Z', deadline: '2026-08-27T14:50:00Z' } as unknown as ProjectWorkflowStep,
       ],
     }))
     expect(v.workflowSteps[0].deadline).toBe('2026-08-27T14:50:00Z')
@@ -89,7 +97,7 @@ describe('projectSettingsToValues', () => {
           id: 1, settings_profile_id: 9, name: 'translation', step_type: 'human', step_definition_id: null,
           step_order: 0, created_at: '2026-08-26T00:00:00Z', deadline: '2026-08-27T14:50:00Z',
           language_deadlines: [{ target_language: 'de', deadline: '2026-08-25T09:00:00Z' }],
-        } as unknown as WorkflowStep,
+        } as unknown as ProjectWorkflowStep,
       ],
     }))
     expect(v.workflowSteps[0].language_deadlines).toEqual({ de: '2026-08-25T09:00:00Z' })

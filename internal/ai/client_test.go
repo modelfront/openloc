@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // texts builds index-ided TranslateInputs, the way the pipeline does for a
@@ -495,5 +496,40 @@ func TestRequestBody_KeepsMarkupCharacters(t *testing.T) {
 				t.Errorf("request body lost the prompt or the segment as written: %s", body)
 			}
 		})
+	}
+}
+
+// A user's Stop cancels the run's context mid-request; the error must still
+// read as a cancellation, not as the provider being unreachable, or the run is
+// recorded as failed (and reported as a vendor outage) instead of stopped.
+func TestTranslateBatch_CanceledStaysCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		cancel() // the Stop arrives while the provider is still answering
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	_, err := NewHTTPTranslator().TranslateBatch(ctx, TranslateConfig{
+		Provider: ProviderOpenAI, Model: "gpt-4-turbo", APIKey: "sk-test", BaseURL: srv.URL,
+		SourceLang: "en", TargetLang: "de",
+	}, texts("hello world"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled in the chain, got %T: %v", err, err)
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		t.Errorf("a canceled request is not a provider failure: %v", pe)
+	}
+}
+
+func TestProviderErrorUserFixable(t *testing.T) {
+	for kind, want := range map[string]bool{
+		ProviderErrAuth: true, ProviderErrQuota: true, ProviderErrRateLimit: true,
+		ProviderErrUnreachable: false, ProviderErrProvider: false,
+	} {
+		if got := (&ProviderError{Kind: kind}).UserFixable(); got != want {
+			t.Errorf("%s: UserFixable() = %v, want %v", kind, got, want)
+		}
 	}
 }

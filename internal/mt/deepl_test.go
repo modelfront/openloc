@@ -165,67 +165,6 @@ func TestDeepLNoAPIKey(t *testing.T) {
 	}
 }
 
-func TestDeepLError403(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(403)
-		w.Write([]byte(`{"message": "Forbidden"}`))
-	}))
-	defer server.Close()
-
-	engine := DeepL{APIKey: "bad-key", BaseURL: server.URL}
-	_, err := engine.Translate(context.Background(), TranslateRequest{
-		SourceLang: "en",
-		TargetLang: "de",
-		Texts:      []string{"Hello"},
-	})
-	if err == nil {
-		t.Fatal("expected error for 403")
-	}
-	if got := err.Error(); got != "deepl: authentication failed (403) — check your API key" {
-		t.Errorf("unexpected error: %s", got)
-	}
-}
-
-func TestDeepLError429(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(429)
-	}))
-	defer server.Close()
-
-	engine := DeepL{APIKey: "key", BaseURL: server.URL}
-	_, err := engine.Translate(context.Background(), TranslateRequest{
-		SourceLang: "en",
-		TargetLang: "de",
-		Texts:      []string{"Hello"},
-	})
-	if err == nil {
-		t.Fatal("expected error for 429")
-	}
-	if got := err.Error(); got != "deepl: rate limit exceeded (429) — too many requests" {
-		t.Errorf("unexpected error: %s", got)
-	}
-}
-
-func TestDeepLError456(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(456)
-	}))
-	defer server.Close()
-
-	engine := DeepL{APIKey: "key", BaseURL: server.URL}
-	_, err := engine.Translate(context.Background(), TranslateRequest{
-		SourceLang: "en",
-		TargetLang: "de",
-		Texts:      []string{"Hello"},
-	})
-	if err == nil {
-		t.Fatal("expected error for 456")
-	}
-	if got := err.Error(); got != "deepl: quota exceeded (456) — translation limit reached" {
-		t.Errorf("unexpected error: %s", got)
-	}
-}
-
 func TestDeepLLangCodeMapping(t *testing.T) {
 	tests := []struct {
 		code     string

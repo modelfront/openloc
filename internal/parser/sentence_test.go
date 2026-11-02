@@ -1,12 +1,32 @@
 package parser
 
-import "testing"
+import (
+	"reflect"
+	"testing"
 
-// sentencesOf is a test helper: SplitSentences returns byte ranges, but the
-// assertions read far better against the substrings they select.
+	"openloc/internal/segmentation"
+)
+
+// splitConservative splits text with the conservative built-in set and fails
+// when the oracle splits it differently, so every case in this file also
+// proves the two equal.
+func splitConservative(t *testing.T, text string, canBreak func(int) bool) []TextRange {
+	t.Helper()
+	got, err := segmentation.Conservative().Split(text, canBreak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := oracleSplitSentences(text, canBreak); !reflect.DeepEqual(got, want) {
+		t.Fatalf("conservative set split %q into %v, the oracle into %v", text, got, want)
+	}
+	return got
+}
+
+// sentencesOf returns the sentences the conservative set finds in text; the
+// assertions read far better against substrings than byte ranges.
 func sentencesOf(t *testing.T, text string) []string {
 	t.Helper()
-	ranges := SplitSentences(text, nil)
+	ranges := splitConservative(t, text, nil)
 	out := make([]string, 0, len(ranges))
 	for _, r := range ranges {
 		out = append(out, text[r.Start:r.End])
@@ -144,7 +164,7 @@ func TestSplitSentencesGuards(t *testing.T) {
 			want: []string{"Use the primary port, i.e. Port A on the left."},
 		},
 		{
-			// Deliberate trade-off (see endsWithAbbreviation): a single
+			// Deliberate trade-off (see the oracle's endsWithAbbreviation): a single
 			// uppercase letter DOES end a sentence, because "Type B." and
 			// "Revision T." are common in technical documentation while
 			// personal initials are not. The cost is that genuine initials
@@ -213,12 +233,12 @@ func TestSplitSentencesCanBreakVeto(t *testing.T) {
 	text := "First part. Second part."
 
 	// Without a veto the text splits in two.
-	if got := len(SplitSentences(text, nil)); got != 2 {
+	if got := len(splitConservative(t, text, nil)); got != 2 {
 		t.Fatalf("baseline split produced %d sentences, want 2", got)
 	}
 
 	// Vetoing every candidate collapses it to a single range.
-	ranges := SplitSentences(text, func(int) bool { return false })
+	ranges := splitConservative(t, text, func(int) bool { return false })
 	if len(ranges) != 1 {
 		t.Fatalf("veto-all produced %d sentences, want 1", len(ranges))
 	}
@@ -232,7 +252,7 @@ func TestSplitSentencesCanBreakVeto(t *testing.T) {
 // never overlap, so splicing translations in leaves the original spacing alone.
 func TestSplitSentencesRangesAreTight(t *testing.T) {
 	text := "  One.   Two.\n\nThree.  "
-	ranges := SplitSentences(text, nil)
+	ranges := splitConservative(t, text, nil)
 	if len(ranges) != 3 {
 		t.Fatalf("got %d ranges, want 3", len(ranges))
 	}

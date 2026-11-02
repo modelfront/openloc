@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"openloc/internal/segmentation"
 )
 
 func parseWith(t *testing.T, format, content string) []Segment {
@@ -412,12 +414,12 @@ func TestSentenceSegments_KeepsUnsafeBlocksWhole(t *testing.T) {
 		"chip across a stop": {Key: "e", Text: "One here. Two here.", RichText: `<g id="1" ctype="bold">One here. Two</g> here.`},
 	}
 	for name, b := range cases {
-		if plans := sentencePlans([]Segment{b}); len(plans) != 0 {
+		if plans, err := sentencePlans(segmentation.Conservative(), []Segment{b}); err != nil || len(plans) != 0 {
 			t.Errorf("%s: block split into %+v", name, plans[b.Key].parts)
 		}
 	}
 	// The same text with nothing in the way splits.
-	if plans := sentencePlans([]Segment{{Key: "f", Text: "One here. Two here."}}); len(plans["f"].parts) != 2 {
+	if plans, err := sentencePlans(segmentation.Conservative(), []Segment{{Key: "f", Text: "One here. Two here."}}); err != nil || len(plans["f"].parts) != 2 {
 		t.Errorf("a plain two-sentence block did not split: %+v", plans)
 	}
 }

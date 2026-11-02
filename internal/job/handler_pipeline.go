@@ -103,26 +103,6 @@ func phaseSkipReason(phases pipeline.TranslatePhases, outcome pipeline.Translate
 	return ""
 }
 
-// phaseUnactionableMessage returns a user-facing error message when a
-// requested phase was a no-op due to missing project configuration. Empty
-// string when every requested phase either ran or skipped for a non-config
-// reason (e.g., nothing to translate).
-func phaseUnactionableMessage(phases pipeline.TranslatePhases, outcome pipeline.TranslateOutcome, sourceLang, targetLang string) string {
-	if phases.UseTM && outcome.TMSkipReason == pipeline.PhaseSkipNoAssignment {
-		return fmt.Sprintf("No TM configured for %s → %s — add one in project settings", sourceLang, targetLang)
-	}
-	if phases.UseMT && outcome.MTSkipReason == pipeline.PhaseSkipNoAssignment {
-		return fmt.Sprintf("No MT engine configured for %s → %s — add one in project settings", sourceLang, targetLang)
-	}
-	if phases.UseMT && outcome.MTSkipReason == pipeline.PhaseSkipNoRoute {
-		return fmt.Sprintf("The project's MT router has no engine for %s — add a route for it, or a default engine, in MT → Routers", targetLang)
-	}
-	if phases.UseMT && outcome.MTSkipReason == pipeline.PhaseSkipNoProvider {
-		return fmt.Sprintf("The AI engine assigned for %s → %s has no connected provider — connect it in AI settings → Providers", sourceLang, targetLang)
-	}
-	return ""
-}
-
 // pipelineProgress mirrors the worker's makeProgressFunc for the synchronous
 // path: persist per-chunk progress (the FE's 2s poll renders it), bump
 // updated_at so the claim's staleness escape can never steal a live run, and
@@ -234,13 +214,14 @@ func (h *Handler) HandleMTPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.MTPreview(r.Context(), auth.TenantIDFromContext(r.Context()), job, sourceLang, sourceText, translationID)
 	if err != nil {
-		logging.Error(r.Context(), err, "MT preview failed", "mt-preview-failed", logging.JobID(job.ID))
-		// A pair the engine's catalog refuses is the user's to fix, not a bug.
-		if msg, ok := httputil.AsClientError(err); ok {
-			httputil.BadRequest(w, msg)
-			return
+		// A pair the catalog refuses or a vendor rejecting the key is the
+		// user's to fix (400); a vendor outage is a 502; the rest is a 500.
+		if _, ok := httputil.AsClientError(err); ok {
+			logging.Warn(r.Context(), err, "MT preview refused", "mt-preview-refused", logging.JobID(job.ID))
+		} else {
+			logging.Error(r.Context(), err, "MT preview failed", "mt-preview-failed", logging.JobID(job.ID))
 		}
-		httputil.ServerError(w, "fetch", "mt preview")
+		httputil.ServiceError(w, err, "fetch", "mt preview")
 		return
 	}
 	body := map[string]any{"text": res.Text, "rich_text": res.RichText, "engine": res.Engine}

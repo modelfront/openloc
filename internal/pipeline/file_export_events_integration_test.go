@@ -89,9 +89,11 @@ func TestIntegration_FileExport_NoEventWithoutDelivery(t *testing.T) {
 	}
 	// The bilingual XLIFF refuses a segment with no key: it could not be
 	// matched back on re-import.
-	if _, err := q.CreateSegment(context.Background(), db.CreateSegmentParams{FileID: file.ID, SourceText: "No key", Position: 2}); err != nil {
+	noKey, err := q.CreateSegment(context.Background(), db.CreateSegmentParams{FileID: file.ID, SourceText: "No key", Position: 2})
+	if err != nil {
 		t.Fatalf("seed a segment with no key: %v", err)
 	}
+	testutil.SeedTranslation(t, q, noKey.ID, "es", db.TranslationStatusNeedsReview)
 	if w := getFileExport(t, q, pool, stubStorage{byPath: fx.Contents}, file.ID, fx.TenantID, fx.UserID, "lang=es&format=xliff"); w.Code != http.StatusInternalServerError {
 		t.Errorf("failed XLIFF export: %d, want 500", w.Code)
 	}

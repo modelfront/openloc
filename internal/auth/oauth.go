@@ -364,7 +364,7 @@ func (h *Handler) devProvisionTenant(w http.ResponseWriter, r *http.Request, ema
 		httputil.ServerError(w, "create", "membership")
 		return
 	}
-	if err := ensureDefaultWorkflow(r.Context(), h.queries, tenant.ID); err != nil {
+	if err := EnsureDefaultWorkflow(r.Context(), h.queries, tenant.ID); err != nil {
 		httputil.ServerError(w, "create", "default workflow")
 		return
 	}

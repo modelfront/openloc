@@ -335,6 +335,7 @@ describe('DashboardsPage', () => {
     renderPage('/dashboards/mine')
     fireEvent.click(await screen.findByTestId('new-dashboard'))
     fireEvent.change(await screen.findByTestId('dashboard-name'), { target: { value: 'Scratch' } })
+    await waitFor(() => expect(screen.getByTestId('create-dashboard-submit')).toBeEnabled())
     fireEvent.click(screen.getByTestId('create-dashboard-submit'))
     await waitFor(() => expect(createDashboardMock).toHaveBeenCalledWith('Scratch', true))
   })
@@ -347,6 +348,7 @@ describe('DashboardsPage', () => {
     fireEvent.click(await screen.findByRole('link', { name: 'My dashboards' }))
     fireEvent.click(await screen.findByTestId('new-dashboard'))
     fireEvent.change(await screen.findByTestId('dashboard-name'), { target: { value: 'Later' } })
+    await waitFor(() => expect(screen.getByTestId('create-dashboard-submit')).toBeEnabled())
     fireEvent.click(screen.getByTestId('create-dashboard-submit'))
     await waitFor(() => expect(createDashboardMock).toHaveBeenCalledWith('Later', true))
   })
@@ -356,6 +358,7 @@ describe('DashboardsPage', () => {
     renderPage()
     fireEvent.click(await screen.findByTestId('new-dashboard'))
     fireEvent.change(await screen.findByTestId('dashboard-name'), { target: { value: 'Org wide' } })
+    await waitFor(() => expect(screen.getByTestId('create-dashboard-submit')).toBeEnabled())
     fireEvent.click(screen.getByTestId('create-dashboard-submit'))
     await waitFor(() => expect(createDashboardMock).toHaveBeenCalledWith('Org wide', false))
   })
@@ -371,13 +374,17 @@ describe('DashboardsPage', () => {
     expect(screen.queryByTestId('dashboard-side')).not.toBeInTheDocument()
   })
 
-  // Says which field is missing rather than only greying the button out.
+  // Create stays disabled, says why, and the field says what is missing.
   it('will not submit an unnamed dashboard, and says why', async () => {
     renderPage()
     fireEvent.click(await screen.findByTestId('new-dashboard'))
-    fireEvent.change(await screen.findByTestId('dashboard-name'), { target: { value: '   ' } })
-    fireEvent.click(screen.getByTestId('create-dashboard-submit'))
+    const name = await screen.findByTestId('dashboard-name')
+    fireEvent.change(name, { target: { value: '   ' } })
+    fireEvent.blur(name)
     expect(await screen.findByText('Name is required')).toBeInTheDocument()
+    const submit = screen.getByTestId('create-dashboard-submit')
+    expect(submit).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(submit)
     expect(createDashboardMock).not.toHaveBeenCalled()
   })
 

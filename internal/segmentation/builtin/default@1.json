@@ -1,0 +1,33 @@
+{
+  "id": "builtin:default@1",
+  "name": "Default",
+  "source_language": "",
+  "description": "Sentence-ending punctuation of many scripts. Full-width 。！？ end a sentence without a following space.",
+  "rule_set": {
+    "mode": "sentence",
+    "rules": [
+      {
+        "before": "(?:^|\\P{L})\\p{Ll}\\.",
+        "after": "",
+        "break": false
+      },
+      {
+        "before": "[.!?…][\\p{Pe}\\p{Pf}\"']*",
+        "after": "[\\t\\n\\v\\f\\r\\x{85}\\p{Z}]+[\\p{Lu}\\p{Lt}\\p{Lo}\\p{Nd}\\p{Ps}\\p{Pi}\"'¿¡]",
+        "break": true
+      },
+      {
+        "before": "[。！？｡]",
+        "after": "[^\\p{Pe}\\p{Pf}。！？｡]",
+        "break": true
+      },
+      {
+        "before": "[؟۔।॥][\\p{Pe}\\p{Pf}\"']*",
+        "after": "[\\t\\n\\v\\f\\r\\x{85}\\p{Z}]+\\S",
+        "break": true
+      }
+    ],
+    "abbreviations": [],
+    "number_abbreviations": []
+  }
+}

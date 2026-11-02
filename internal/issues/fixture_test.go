@@ -37,11 +37,14 @@ type upload struct {
 
 func png(name string) upload { return upload{name, pngBytes} }
 
-const operatorEmail = "ops@test.com"
+const (
+	operatorEmail  = "ops@test.com"
+	operator2Email = "ops2@test.com"
+)
 
 // fixture: a reporter (linguist), a manager colleague and a linguist peer in
-// one org, an outsider in another, and a platform operator who belongs to a
-// third.
+// one org, an outsider in another, and two support team accounts in a third.
+// The router knows only the first as a platform operator.
 type fixture struct {
 	router    chi.Router
 	outbox    *notification.Outbox
@@ -56,6 +59,7 @@ type fixture struct {
 	outsider  db.User
 	opsTenant db.Tenant
 	operator  db.User
+	operator2 db.User
 }
 
 // seekableOnly refuses a body it cannot seek, as the S3 client does when it
@@ -84,6 +88,7 @@ func newFixture(t *testing.T) *fixture {
 	f.outsider = testutil.SeedUserWithRole(t, q, f.other.ID, "out@test.com", "pw", "owner")
 	f.opsTenant = testutil.SeedTenant(t, q, "Ops Org")
 	f.operator = testutil.SeedUserWithRole(t, q, f.opsTenant.ID, operatorEmail, "pw", "owner")
+	f.operator2 = testutil.SeedUserWithRole(t, q, f.opsTenant.ID, operator2Email, "pw", "admin")
 	return f
 }
 

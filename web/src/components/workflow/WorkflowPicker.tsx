@@ -5,6 +5,10 @@ import { HelpTip } from '@/components/ui/help-tip'
 import ConfirmDialog from '../ConfirmDialog'
 import type { WorkflowListItem } from '../../api'
 import { TextLink } from '@/components/ui/text-link'
+import { Chip } from '@/components/ui/chip'
+import { OpenLinkButton } from '@/components/ui/open-link-button'
+import { workflowPath } from '@/lib/asset-links'
+import { workflowOptions } from './workflow-options'
 
 interface Props {
   workflows: WorkflowListItem[]
@@ -13,6 +17,8 @@ interface Props {
   value: number | null
   /** Its name, resolved server-side so a retired workflow still reads by name. */
   valueName?: string | null
+  /** The steps were changed after the workflow was applied. */
+  edited?: boolean
   entity: 'project' | 'template'
   /**
    * Ask before replacing the steps. The wizard applies straight away — nothing
@@ -21,9 +27,13 @@ interface Props {
    */
   confirmApply?: boolean
   disabled?: boolean
+  /** Why the field is disabled, shown beside it. */
+  disabledReason?: string
   /** Locks the dropdown while the choice is not the user's to make: a created
    *  Raw MT project, which the server keeps on the built-in workflow. */
   locked?: boolean
+  /** Frames the dropdown red: a submit found no workflow. */
+  invalid?: boolean
   /** Replaces the "Workflow" label above the dropdown — the mode toggle. The
    *  field then names itself for assistive tech only. */
   heading?: ReactNode
@@ -67,7 +77,7 @@ export function PickerHeading({ heading, help, htmlFor }: { heading?: ReactNode;
  * field until a workflow replaces them.
  */
 export function WorkflowPicker({
-  workflows, value, valueName, entity, confirmApply = false, disabled = false, locked = false, heading, valueIcon, applyWarning,
+  workflows, value, valueName, edited = false, entity, confirmApply = false, disabled = false, disabledReason, locked = false, invalid = false, heading, valueIcon, applyWarning,
   onApply, actions, children,
 }: Props) {
   const [pendingApply, setPendingApply] = useState<number | null>(null)
@@ -109,20 +119,26 @@ export function WorkflowPicker({
           actions={actions}
           placeholder="Choose a workflow…"
           options={[
-            ...workflows.map(w => ({
-              value: String(w.id),
-              label: w.name,
-              icon: <WorkflowIcon className="size-3.5 text-primary" aria-hidden />,
-              chip: <span className="text-xs text-gray-400">{w.steps.map(s => s.name).join(' → ')}</span>,
-            })),
+            ...workflowOptions(workflows),
             // A built-in or retired workflow still names itself in the trigger.
             ...(attached && !linked ? [{ value: String(value), label: nameLabel, icon: valueIcon ?? <WorkflowIcon className="size-3.5 text-gray-400" aria-hidden /> }] : []),
           ]}
           className="w-80"
           contentClassName="w-96"
           disabled={disabled || busy || locked}
+          aria-invalid={invalid}
           data-testid="use-workflow-select"
         />
+        {disabled && disabledReason && (
+          <span className="text-xs text-gray-500 dark:text-gray-400" data-testid="workflow-picker-disabled-reason">{disabledReason}</span>
+        )}
+        {attached && edited && (
+          <Chip color="grey" title="The steps were changed after this workflow was applied. Choose a workflow to replace them." data-testid="workflow-edited">
+            Edited
+          </Chip>
+        )}
+        {/* Only a library workflow has a page; a built-in one does not. */}
+        {linked && <OpenLinkButton to={workflowPath(linked.id)} label="Open workflow" data-testid="workflow-open" />}
         {noWorkflows && !locked && (
           <span className="text-xs text-gray-500 dark:text-gray-400">
             No workflows yet — create one on the{' '}

@@ -47,11 +47,7 @@ func TestAndroidXML_RoundTripChangesOnlyTranslatedText(t *testing.T) {
 		if s.Key == "raw" {
 			continue // CDATA comes back escaped, not as CDATA; covered below.
 		}
-		src := s.RichText
-		if src == "" {
-			src = s.Text
-		}
-		translations[s.Key] = strings.Replace(src, "Tom", "Ana", 1)
+		translations[s.Key] = strings.Replace(sourceOf(s), "Tom", "Ana", 1)
 	}
 
 	got, err := p.Reconstruct([]byte(androidRoundTripInput), translations)

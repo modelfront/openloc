@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/stepdef"
+	"openloc/internal/workflowlib"
 )
 
 // WorkflowStepSpec is one step for SeedWorkflow. Status is the job's
@@ -93,4 +95,31 @@ func setCurrentStep(t testing.TB, q db.Querier, jobID int64, assignmentID *int64
 	if err := q.SetJobCurrentStep(context.Background(), db.SetJobCurrentStepParams{ID: jobID, CurrentStepID: assignmentID}); err != nil {
 		t.Fatalf("set current step of job %d: %v", jobID, err)
 	}
+}
+
+// LibraryWorkflow returns the tenant's "Standard" library workflow,
+// Translation → Review, creating it on first use. A project needs a workflow
+// to be created; tests also give templates its steps.
+func LibraryWorkflow(t testing.TB, q db.Querier, tenantID int64) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if wf, err := q.GetWorkflowByName(ctx, db.GetWorkflowByNameParams{TenantID: tenantID, Name: "Standard"}); err == nil {
+		return wf.ID
+	}
+	if err := stepdef.EnsureDefaults(ctx, q, tenantID); err != nil {
+		t.Fatalf("default step definitions: %v", err)
+	}
+	var steps []workflowlib.StepInput
+	for _, name := range stepdef.DefaultNames {
+		def, err := q.GetStepDefinitionByName(ctx, db.GetStepDefinitionByNameParams{TenantID: tenantID, Name: name})
+		if err != nil {
+			t.Fatalf("step definition %q: %v", name, err)
+		}
+		steps = append(steps, workflowlib.StepInput{StepDefinitionID: def.ID})
+	}
+	wf, err := workflowlib.Create(ctx, q, tenantID, workflowlib.Input{Name: "Standard", Steps: steps})
+	if err != nil {
+		t.Fatalf("create library workflow: %v", err)
+	}
+	return wf.ID
 }

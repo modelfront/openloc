@@ -22,19 +22,11 @@ func (s *Service) MemberComment(ctx context.Context, m Member, id int64, in NewC
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	recent, err := db.New(s.pool).CountRecentMemberComments(ctx, db.CountRecentMemberCommentsParams{
-		AuthorID: &m.UserID, Since: timestamptz(s.now().Add(-rateLimitWindow)),
-	})
-	if err != nil {
-		return IssueDetail{}, fmt.Errorf("count recent comments: %w", err)
-	}
-	if recent >= commentRateLimit {
-		return IssueDetail{}, errTooManyComments
-	}
 	files, err := s.storeFiles(ctx, m.TenantID, in.Files)
 	if err != nil {
 		return IssueDetail{}, err
 	}
+	var reopened bool
 	issue, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		issue, err := q.LockMemberIssue(ctx, db.LockMemberIssueParams{
 			ID: id, TenantID: m.TenantID, ViewerID: m.UserID, AllMembers: m.seesAllMembers(),
@@ -43,7 +35,8 @@ func (s *Service) MemberComment(ctx context.Context, m Member, id int64, in NewC
 			return db.Issue{}, err
 		}
 		e := entry{authorID: &m.UserID, side: sideReporter, body: body, files: files}
-		if reopenedByReporter[issue.Status] {
+		reopened = reopenedByReporter[issue.Status]
+		if reopened {
 			open := StatusOpen
 			e.status = &open
 		}
@@ -54,7 +47,10 @@ func (s *Service) MemberComment(ctx context.Context, m Member, id int64, in NewC
 		return IssueDetail{}, err
 	}
 	logging.Info(ctx, "commented on an issue", "issue-reporter-commented", logging.IssueID(id))
-	s.emailOperatorsReply(ctx, issue, body)
+	s.notifyReply(ctx, issue, m.UserID, body)
+	if reopened {
+		s.refreshSlack(ctx, id)
+	}
 	return s.Get(ctx, m, id)
 }
 
@@ -74,7 +70,7 @@ func (s *Service) Attachment(ctx context.Context, m Member, id, attachmentID int
 
 // Confirm records that the reporter's org checked the fix of a resolved issue.
 func (s *Service) Confirm(ctx context.Context, m Member, id int64) (IssueDetail, error) {
-	_, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
+	issue, err := s.inTx(ctx, func(q *db.Queries) (db.Issue, error) {
 		issue, err := q.LockMemberIssue(ctx, db.LockMemberIssueParams{
 			ID: id, TenantID: m.TenantID, ViewerID: m.UserID, AllMembers: m.seesAllMembers(),
 		})
@@ -97,6 +93,8 @@ func (s *Service) Confirm(ctx context.Context, m Member, id int64) (IssueDetail,
 		return IssueDetail{}, err
 	}
 	logging.Info(ctx, "confirmed an issue's fix", "issue-fix-confirmed", logging.IssueID(id))
+	s.refreshSlack(ctx, id)
+	s.emailAssignee(ctx, issue, m.UserID, assigneeNotice{Kind: noticeConfirm})
 	return s.Get(ctx, m, id)
 }
 

@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { listTMProfiles, createTMProfile, deleteTMProfile } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
+import { matchesName } from '../../lib/name-filter'
 import ConfirmDialog from '../ConfirmDialog'
 import { TMProfileNameDialog } from './TMProfileNameDialog'
 import { EmptyState } from '@/components/layout/EmptyState'
@@ -13,6 +14,7 @@ import { DeleteButton } from '@/components/ui/delete-button'
 import { DotSeparator } from '@/components/ui/dot-separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listRowClass } from '@/components/list/list-row'
+import { AssetFilterBar } from '@/components/list'
 import { cn } from '@/lib/utils'
 
 /**
@@ -20,9 +22,12 @@ import { cn } from '@/lib/utils'
  * of TMs + match scoring that projects and templates follow. Rows link to the
  * profile's page. The page header owns the "New TM profile" button and passes the
  * dialog's open state down; create prompts for a name and opens the new
- * profile so its TMs and scoring can be filled in there.
+ * profile so its TMs and scoring can be filled in there. The page also owns the
+ * name search (`?q=`), so one hook instance holds it.
  */
-export function TMProfilesList({ canDelete, createOpen, onCreateClose }: {
+export function TMProfilesList({ search, onSearchChange, canDelete, createOpen, onCreateClose }: {
+  search: string
+  onSearchChange: (q: string) => void
   canDelete: boolean
   createOpen: boolean
   onCreateClose: () => void
@@ -30,7 +35,8 @@ export function TMProfilesList({ canDelete, createOpen, onCreateClose }: {
   const navigate = useNavigate()
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null)
 
-  const { data: profiles, isLoading, isError, error, refetch } = useQuery({ queryKey: queryKeys.tmProfiles.all, queryFn: listTMProfiles })
+  const { data: allProfiles, isLoading, isError, error, refetch } = useQuery({ queryKey: queryKeys.tmProfiles.all, queryFn: listTMProfiles })
+  const profiles = useMemo(() => allProfiles?.filter(p => matchesName(p.name, search)), [allProfiles, search])
 
   const deleteMut = useMutationWithToast({
     mutationFn: deleteTMProfile,
@@ -55,9 +61,17 @@ export function TMProfilesList({ canDelete, createOpen, onCreateClose }: {
       </p>
       {isLoading ? (
         <LoadingPlaceholder />
-      ) : isError && !profiles ? (
+      ) : isError && !allProfiles ? (
         <LoadFailed what="TM profiles" error={error} onRetry={() => refetch()} />
       ) : (
+        <>
+        <AssetFilterBar
+          total={allProfiles?.length ?? 0}
+          search={search}
+          onSearchChange={onSearchChange}
+          placeholder="Search TM profiles..."
+          searchTestId="tm-profile-list-search"
+        />
         <div className="space-y-2">
           {profiles?.map(p => (
             <Link
@@ -98,9 +112,14 @@ export function TMProfilesList({ canDelete, createOpen, onCreateClose }: {
             </Link>
           ))}
           {profiles?.length === 0 && (
-            <EmptyState message="No TM profiles yet. Create one to reuse a set of translation memories across projects." />
+            <EmptyState
+              message={search !== ''
+                ? 'No TM profiles match the current filter.'
+                : 'No TM profiles yet. Create one to reuse a set of translation memories across projects.'}
+            />
           )}
         </div>
+        </>
       )}
 
       <TMProfileNameDialog

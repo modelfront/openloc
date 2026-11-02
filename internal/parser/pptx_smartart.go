@@ -3,6 +3,8 @@ package parser
 import (
 	"fmt"
 	"strings"
+
+	"openloc/internal/segmentation"
 )
 
 // SmartArt keeps its text twice. The data part (ppt/diagrams/data*.xml)
@@ -60,7 +62,7 @@ func (c *pptxCollector) smartArt(slidePart, dataPart string) error {
 	if err != nil {
 		return err
 	}
-	m := &smartArtMirror{part: drawingPart, src: ddoc.src, units: units, byModel: byModel, presAssoc: presAssoc, used: map[*pptxUnit]bool{}}
+	m := &smartArtMirror{part: drawingPart, src: ddoc.src, units: units, byModel: byModel, presAssoc: presAssoc, used: map[*pptxUnit]bool{}, seg: c.seg}
 	return m.walk(xmlChild(ddoc.root, "spTree"), 0)
 }
 
@@ -101,6 +103,7 @@ type smartArtMirror struct {
 	byModel   map[string][]*pptxUnit
 	presAssoc map[string]string
 	used      map[*pptxUnit]bool
+	seg       *segmentation.Segmenter
 }
 
 func (m *smartArtMirror) walk(tree *xmlNode, depth int) error {
@@ -119,7 +122,10 @@ func (m *smartArtMirror) walk(tree *xmlNode, depth int) error {
 				model = a
 			}
 			for _, p := range xmlChild(n, "txBody").childrenNamed("p") {
-				para := newPPTXParagraph(m.src, p)
+				para, err := newPPTXParagraph(m.src, p, m.seg)
+				if err != nil {
+					return err
+				}
 				if para == nil {
 					continue
 				}

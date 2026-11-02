@@ -45,8 +45,13 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY pkg/ ./pkg/
 
+# The frontend bind mount is unused by go build; it makes this step wait for
+# the frontend stage. The vite build and the Go compile together need more
+# memory than the CI build machine has, and the kernel kills vite (exit 137)
+# when BuildKit runs them side by side.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=bind,from=frontend,source=/app/web/dist,target=/tmp/frontend-dist \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
     -trimpath \
     -ldflags="-s -w" \

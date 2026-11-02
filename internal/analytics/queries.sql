@@ -80,7 +80,12 @@ WITH per_translation AS (
     SELECT
         th.job_step_assignment_id,
         th.created_by,
-        th.translation_id,
+        -- A history row a split or join moved keeps the translation and the
+        -- source words and characters it was written for: each original
+        -- translation counts once, with the counts of its earliest edit here.
+        MIN(th.translation_id) AS translation_id,
+        (array_agg((th.details->>'word_count')::int ORDER BY th.created_at, th.id))[1] AS word_count,
+        (array_agg((th.details->>'char_count')::int ORDER BY th.created_at, th.id))[1] AS char_count,
         SUM(COALESCE(th.editing_time_ms, 0)) AS editing_time_ms,
         AVG(th.edit_distance) AS avg_edit_distance
     -- Starts from the project's step assignments, so the history read is
@@ -95,7 +100,8 @@ WITH per_translation AS (
     -- actual rewriting.
     WHERE th.kind IN ('human', 'approved')
       AND th.created_by IS NOT NULL
-    GROUP BY th.job_step_assignment_id, th.created_by, th.translation_id
+    GROUP BY th.job_step_assignment_id, th.created_by,
+             COALESCE((th.details->>'translation_id')::bigint, th.translation_id)
 )
 SELECT
     jsa.id AS step_assignment_id,
@@ -105,8 +111,8 @@ SELECT
     u.name AS user_name,
     t.target_language,
     COUNT(*)::int AS segments_edited,
-    COALESCE(SUM(s.word_count), 0)::int AS words_edited,
-    COALESCE(SUM(length(s.source_text)), 0)::int AS chars_edited,
+    COALESCE(SUM(COALESCE(pt.word_count, s.word_count)), 0)::int AS words_edited,
+    COALESCE(SUM(COALESCE(pt.char_count, length(s.source_text))), 0)::int AS chars_edited,
     COALESCE(SUM(pt.editing_time_ms), 0)::bigint AS total_editing_time_ms,
     COALESCE(AVG(pt.avg_edit_distance), 0)::float AS avg_edit_distance
 FROM per_translation pt

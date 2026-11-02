@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/testutil"
 )
 
@@ -43,8 +44,16 @@ type projResp struct {
 	} `json:"data"`
 }
 
-func createProject(t *testing.T, router any, body map[string]any, userID, tenantID int64) (int64, string) {
+// createProject creates a project via the API. A live project with no step
+// source in the body gets the tenant's library workflow.
+func createProject(t *testing.T, q db.Querier, router any, body map[string]any, userID, tenantID int64) (int64, string) {
 	t.Helper()
+	_, hasWF := body["workflow_id"]
+	_, hasSteps := body["workflow_steps"]
+	_, hasTpl := body["template_id"]
+	if !hasWF && !hasSteps && !hasTpl && body["status"] != "draft" {
+		body["workflow_id"] = testutil.LibraryWorkflow(t, q, tenantID)
+	}
 	rec := testutil.DoRequest(t, router.(http.Handler), "POST", "/api/projects", body, userID, tenantID)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create project: got %d, body=%s", rec.Code, rec.Body.String())
@@ -76,7 +85,7 @@ func TestIntegrationProjectCreateWithCustomerAndStatus(t *testing.T) {
 	customerID := custResp.Data.ID
 
 	// Create a project linked to the customer + draft status
-	pid, status := createProject(t, router, map[string]any{
+	pid, status := createProject(t, q, router, map[string]any{
 		"name":             "Acme Project",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
@@ -99,7 +108,7 @@ func TestIntegrationProjectCreateWithCustomerAndStatus(t *testing.T) {
 	}
 
 	// Default status when omitted = in_progress (DB default)
-	_, defaultStatus := createProject(t, router, map[string]any{
+	_, defaultStatus := createProject(t, q, router, map[string]any{
 		"name":             "Plain Project",
 		"source_language":  "en",
 		"target_languages": []string{"de"},
@@ -116,11 +125,13 @@ func TestIntegrationProjectCreateValidation(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 	tenant := testutil.SeedTenant(t, q, "TestCorp")
 	user := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@test.com", "pass", "owner")
+	wf := testutil.LibraryWorkflow(t, q, tenant.ID)
 
 	// Invalid status enum → 400
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "P", "source_language": "en", "target_languages": []string{"fr"},
-		"status": "foo_bar",
+		"status":      "foo_bar",
+		"workflow_id": wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 
@@ -128,6 +139,7 @@ func TestIntegrationProjectCreateValidation(t *testing.T) {
 	rec = testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "P2", "source_language": "en", "target_languages": []string{"fr"},
 		"customer_id": 999999,
+		"workflow_id": wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 
@@ -148,6 +160,7 @@ func TestIntegrationProjectCreateValidation(t *testing.T) {
 	rec = testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "Cross Tenant", "source_language": "en", "target_languages": []string{"fr"},
 		"customer_id": other.Data.ID, // exists, but in OtherCorp
+		"workflow_id": wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 }
@@ -169,7 +182,7 @@ func TestIntegrationProjectUpdateMetadata(t *testing.T) {
 	}
 	testutil.DecodeJSON(t, rec, &c)
 
-	pid, _ := createProject(t, router, map[string]any{
+	pid, _ := createProject(t, q, router, map[string]any{
 		"name": "P", "source_language": "en", "target_languages": []string{"fr"},
 		"customer_id": c.Data.ID,
 	}, user.ID, tenant.ID)
@@ -340,15 +353,15 @@ func TestIntegrationProjectUpdateMetadata_DoesNotAffectOtherProjects(t *testing.
 
 	// Three projects, all starting at status='completed' (a state that's
 	// distinct from the status we PATCH to, so any cross-project leak shows).
-	pidA, _ := createProject(t, router, map[string]any{
+	pidA, _ := createProject(t, q, router, map[string]any{
 		"name": "A", "source_language": "en", "target_languages": []string{"fr"},
 		"status": "completed",
 	}, user.ID, tenant.ID)
-	pidB, _ := createProject(t, router, map[string]any{
+	pidB, _ := createProject(t, q, router, map[string]any{
 		"name": "B", "source_language": "en", "target_languages": []string{"de"},
 		"status": "completed",
 	}, user.ID, tenant.ID)
-	pidC, _ := createProject(t, router, map[string]any{
+	pidC, _ := createProject(t, q, router, map[string]any{
 		"name": "C", "source_language": "en", "target_languages": []string{"es"},
 		"status": "completed",
 	}, user.ID, tenant.ID)
@@ -404,7 +417,7 @@ func TestIntegrationProjectDeadlineRoundTripWithFractionalSeconds(t *testing.T) 
 	tenant := testutil.SeedTenant(t, q, "TestCorp")
 	user := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@test.com", "pass", "owner")
 
-	pid, _ := createProject(t, router, map[string]any{
+	pid, _ := createProject(t, q, router, map[string]any{
 		"name": "P", "source_language": "en", "target_languages": []string{"fr"},
 	}, user.ID, tenant.ID)
 
@@ -436,6 +449,7 @@ func TestIntegrationProjectCreateWithDeadline(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 	tenant := testutil.SeedTenant(t, q, "TestCorp")
 	user := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@test.com", "pass", "owner")
+	wf := testutil.LibraryWorkflow(t, q, tenant.ID)
 
 	// With deadline
 	deadlineISO := "2026-09-15T17:00:00+02:00"
@@ -444,6 +458,7 @@ func TestIntegrationProjectCreateWithDeadline(t *testing.T) {
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
 		"deadline":         deadlineISO,
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var got projResp
@@ -465,6 +480,7 @@ func TestIntegrationProjectCreateWithDeadline(t *testing.T) {
 		"name":             "NoDeadline",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	testutil.DecodeJSON(t, rec, &got)
@@ -478,6 +494,7 @@ func TestIntegrationProjectCreateWithDeadline(t *testing.T) {
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
 		"deadline":         "yesterday",
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusBadRequest)
 }
@@ -531,16 +548,16 @@ func TestIntegrationProjectFiltersAndPagination(t *testing.T) {
 		testutil.AssertStatus(t, rec, http.StatusOK)
 	}
 
-	draftID, _ := createProject(t, router, map[string]any{
+	draftID, _ := createProject(t, q, router, map[string]any{
 		"name": "EN-FR Draft", "source_language": "en", "target_languages": []string{"fr"},
 		"status": "draft",
 	}, user.ID, tenant.ID)
 	acme(draftID)
-	createProject(t, router, map[string]any{
+	createProject(t, q, router, map[string]any{
 		"name": "EN-DE Active", "source_language": "en", "target_languages": []string{"de"},
 		"status": "in_progress",
 	}, user.ID, tenant.ID)
-	doneID, _ := createProject(t, router, map[string]any{
+	doneID, _ := createProject(t, q, router, map[string]any{
 		"name": "ES-FR Done", "source_language": "es", "target_languages": []string{"fr"},
 		"status": "completed",
 	}, user.ID, tenant.ID)
@@ -651,6 +668,7 @@ func TestIntegrationProjectCreatorsEndpoint(t *testing.T) {
 	mkProject := func(name string, userID, tenantID int64) {
 		rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 			"name": name, "source_language": "en", "target_languages": []string{"fr"},
+			"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
 		}, userID, tenantID)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 	}
@@ -709,7 +727,7 @@ func TestIntegrationProjectMetadataRoleGate(t *testing.T) {
 	owner := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@test.com", "pass", "owner")
 	member := testutil.SeedUserWithRole(t, q, tenant.ID, "member@test.com", "pass", "member")
 
-	pid, _ := createProject(t, router, map[string]any{
+	pid, _ := createProject(t, q, router, map[string]any{
 		"name": "P", "source_language": "en", "target_languages": []string{"fr"},
 	}, owner.ID, tenant.ID)
 
@@ -740,6 +758,7 @@ func TestIntegrationProjectClientDomainLifecycle(t *testing.T) {
 	router := testutil.NewTestRouter(pool)
 	tenant := testutil.SeedTenant(t, q, "TestCorp")
 	user := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@test.com", "pass", "owner")
+	wf := testutil.LibraryWorkflow(t, q, tenant.ID)
 
 	type clientDomainResp struct {
 		Data struct {
@@ -756,6 +775,7 @@ func TestIntegrationProjectClientDomainLifecycle(t *testing.T) {
 		"target_languages": []string{"de"},
 		"client":           "Acme Legal",
 		"domain":           "Patents",
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var p clientDomainResp
@@ -773,6 +793,7 @@ func TestIntegrationProjectClientDomainLifecycle(t *testing.T) {
 		"name":             "Plain",
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var plain clientDomainResp
@@ -787,6 +808,7 @@ func TestIntegrationProjectClientDomainLifecycle(t *testing.T) {
 		"source_language":  "en",
 		"target_languages": []string{"fr"},
 		"client":           "   ",
+		"workflow_id":      wf,
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var ws clientDomainResp
@@ -829,10 +851,10 @@ func TestIntegrationProjectFilterCrossTenantIsolation(t *testing.T) {
 	userA := testutil.SeedUserWithRole(t, q, tenantA.ID, "a@test.com", "pass", "owner")
 	userB := testutil.SeedUserWithRole(t, q, tenantB.ID, "b@test.com", "pass", "owner")
 
-	createProject(t, router, map[string]any{
+	createProject(t, q, router, map[string]any{
 		"name": "A's Project", "source_language": "en", "target_languages": []string{"fr"},
 	}, userA.ID, tenantA.ID)
-	createProject(t, router, map[string]any{
+	createProject(t, q, router, map[string]any{
 		"name": "B's Project", "source_language": "en", "target_languages": []string{"fr"},
 	}, userB.ID, tenantB.ID)
 

@@ -12,6 +12,7 @@ import { LoadFailed } from '@/components/layout/LoadFailed'
 import { getProjectTimings, type ProjectTimings, type StageEntry } from '@/api/timings'
 import { queryKeys } from '@/lib/query-keys'
 import { formatCount, formatDurationMs, formatShare } from '@/lib/duration'
+import { capitalize } from '@/lib/utils'
 
 /**
  * Project "Processing time" panel.
@@ -134,7 +135,7 @@ function stageLabel(slug: string): string {
   if (known) return known
   const rest = slug.includes('.') ? slug.slice(slug.indexOf('.') + 1) : slug
   const words = rest.replace(/_/g, ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
+  return capitalize(words)
 }
 
 /** Engine/model tags worth surfacing next to a stage name. */

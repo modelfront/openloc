@@ -33,7 +33,7 @@ let mtEngineId: number;
  * toast. Held in one constant so the "wait for the stale one to clear" step
  * can't drift out of sync with the assertion it protects.
  */
-const APPLY_MT_TOAST = /Apply MT: 1 job\(s\) done/;
+const APPLY_MT_TOAST = /Apply MT: 1 job\(s\) queued/;
 
 /**
  * Clicks a bulk action and waits for its POST, since toasts auto-dismiss after
@@ -87,10 +87,11 @@ test.describe.serial("J33 — Clear translations → re-apply MT loop", () => {
     await selectFirstTask(page);
     await expect(page.getByText("j33.txt")).toBeVisible({ timeout: 10000 });
 
-    // Apply MT → Clear becomes actionable.
-    await runBulkAction(page, await openBulkPretranslate(page, "mt"), "/mt-apply");
+    // Apply MT is queued; once the worker has filled the job, Clear becomes
+    // actionable (the page's poll of running jobs brings the new counts).
+    await runBulkAction(page, await openBulkPretranslate(page, "mt"), "/pretranslate");
     await expect(page.getByText(APPLY_MT_TOAST)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("bulk-clear-btn")).toBeEnabled();
+    await expect(page.getByTestId("bulk-clear-btn")).toBeEnabled({ timeout: 30_000 });
 
     // Clear (scope=all) via the shared ClearTranslationsDialog. The estimate
     // reflecting 2 MT-filled segments is the observable that MT actually filled
@@ -113,7 +114,13 @@ test.describe.serial("J33 — Clear translations → re-apply MT loop", () => {
 
     // Re-apply MT — loop closes.
     await expect(page.getByTestId("bulk-pretranslate-btn")).toBeEnabled({ timeout: 30_000 });
-    await runBulkAction(page, await openBulkPretranslate(page, "mt"), "/mt-apply");
+    await runBulkAction(page, await openBulkPretranslate(page, "mt"), "/pretranslate");
     await expect(page.getByText(APPLY_MT_TOAST)).toBeVisible({ timeout: 30_000 });
+    // The queued run filled both cleared segments again: Clear is back, and
+    // its estimate counts them.
+    await expect(page.getByTestId("bulk-clear-btn")).toBeEnabled({ timeout: 30_000 });
+    await page.getByTestId("bulk-clear-btn").click();
+    await page.getByTestId("clear-scope-all").click();
+    await expect(page.getByTestId("clear-count-estimate")).toContainText(/2 segments will be cleared/);
   });
 });

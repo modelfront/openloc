@@ -116,8 +116,8 @@ func TestHostOrigin(t *testing.T) {
 		{"https://app.example.com", "", ""},
 		{"not a url", "docs.example.com", ""},
 	} {
-		if got := hostOrigin(c.base, c.host); got != c.want {
-			t.Errorf("hostOrigin(%q, %q) = %q, want %q", c.base, c.host, got, c.want)
+		if got := HostOrigin(c.base, c.host); got != c.want {
+			t.Errorf("HostOrigin(%q, %q) = %q, want %q", c.base, c.host, got, c.want)
 		}
 	}
 }

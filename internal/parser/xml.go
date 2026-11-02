@@ -3,6 +3,8 @@ package parser
 import (
 	"fmt"
 	"strings"
+
+	"openloc/internal/segmentation"
 )
 
 // XML parses arbitrary XML documents.
@@ -13,7 +15,11 @@ import (
 //
 // Android strings.xml keeps its own parser; DetectFormat routes <resources>
 // documents there and everything else here.
-type XML struct{}
+type XML struct {
+	// Segmenter splits an element's text into sentences; nil is the
+	// conservative built-in set.
+	Segmenter *segmentation.Segmenter
+}
 
 // maxXMLContextLen caps the context string shown next to a segment. Enough to
 // identify the enclosing CMS node, short enough not to swamp the grid.
@@ -27,6 +33,9 @@ type xmlSegmentSpec struct {
 	content xmlContent
 	node    *xmlNode
 	context string
+	// block is the container's key when it splits into sentences, "" when
+	// it is one segment.
+	block string
 }
 
 func (p XML) Parse(content []byte) ([]Segment, error) {
@@ -35,7 +44,10 @@ func (p XML) Parse(content []byte) ([]Segment, error) {
 		return nil, err
 	}
 
-	specs := collectXMLSegments(doc)
+	specs, err := collectXMLSegments(doc, segmenterOr(p.Segmenter))
+	if err != nil {
+		return nil, err
+	}
 	segments := make([]Segment, 0, len(specs))
 	for i, spec := range specs {
 		segments = append(segments, Segment{
@@ -61,7 +73,10 @@ func (p XML) Reconstruct(original []byte, translations map[string]string) ([]byt
 		return nil, err
 	}
 
-	specs := collectXMLSegments(doc)
+	specs, err := collectXMLSegments(doc, segmenterOr(p.Segmenter))
+	if err != nil {
+		return nil, err
+	}
 	refs := buildReferenceIndex(doc)
 
 	// A cross-reference renders the DEFINING segment's translation. Resolved
@@ -76,8 +91,11 @@ func (p XML) Reconstruct(original []byte, translations map[string]string) ([]byt
 		return term, ok && term != ""
 	}
 
-	edits := make([]spliceEdit, 0, len(specs))
-	for _, spec := range specs {
+	edits, joined := xmlRunEdits(doc, refs, specs, translations, refContent)
+	for i, spec := range specs {
+		if joined[i] {
+			continue
+		}
 		translated, ok := translations[spec.key]
 		if !ok || translated == "" {
 			continue
@@ -93,19 +111,25 @@ func (p XML) Reconstruct(original []byte, translations map[string]string) ([]byt
 // collectXMLSegments walks the document and returns every translatable unit in
 // document order. Parse and Reconstruct both go through here, which is what
 // keeps their keys and ranges in lockstep.
-func collectXMLSegments(doc *xmlDoc) []xmlSegmentSpec {
+func collectXMLSegments(doc *xmlDoc, seg *segmentation.Segmenter) ([]xmlSegmentSpec, error) {
 	var specs []xmlSegmentSpec
+	var splitErr error
 	// Built once per document: segment keys come from node position, so this
 	// doesn't depend on the segments themselves.
 	refs := buildReferenceIndex(doc)
 
 	var walk func(n *xmlNode)
 	walk = func(n *xmlNode) {
-		if !n.isTranslatable() {
+		if splitErr != nil || !n.isTranslatable() {
 			return
 		}
 		if isSegmentContainer(doc.src, n) {
-			specs = append(specs, segmentsFor(doc, n, refs)...)
+			more, err := segmentsFor(doc, n, refs, seg)
+			if err != nil {
+				splitErr = err
+				return
+			}
+			specs = append(specs, more...)
 			return
 		}
 		for _, c := range n.children {
@@ -114,7 +138,7 @@ func collectXMLSegments(doc *xmlDoc) []xmlSegmentSpec {
 	}
 	walk(doc.root)
 
-	return specs
+	return specs, splitErr
 }
 
 // isSegmentContainer reports whether n's content forms a translatable unit:
@@ -125,19 +149,22 @@ func isSegmentContainer(src string, n *xmlNode) bool {
 
 // segmentsFor turns a container into one or more segments — more than one when
 // its text splits into sentences.
-func segmentsFor(doc *xmlDoc, container *xmlNode, refs referenceIndex) []xmlSegmentSpec {
+func segmentsFor(doc *xmlDoc, container *xmlNode, refs referenceIndex, seg *segmentation.Segmenter) ([]xmlSegmentSpec, error) {
 	node, rng := trimmedContentRange(doc.src, container)
 	if rng.Start >= rng.End {
-		return nil
+		return nil, nil
 	}
 
 	key := xmlNodePath(node)
 	context := xmlNodeContext(doc, node)
 
 	full := buildXMLContent(doc.src, rng, node, refs)
-	sentences := SplitSentences(full.plain, full.canBreakAt())
+	sentences, err := seg.Split(full.plain, full.canBreakAt())
+	if err != nil {
+		return nil, err
+	}
 	if len(sentences) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Single sentence: keep the key clean, no #N suffix.
@@ -153,7 +180,7 @@ func segmentsFor(doc *xmlDoc, container *xmlNode, refs referenceIndex) []xmlSegm
 			content: buildXMLContent(doc.src, srcRange, node, refs),
 			node:    node,
 			context: context,
-		}}
+		}}, nil
 	}
 
 	specs := make([]xmlSegmentSpec, 0, len(sentences))
@@ -169,7 +196,8 @@ func segmentsFor(doc *xmlDoc, container *xmlNode, refs referenceIndex) []xmlSegm
 			srcRange.End = rng.End
 		}
 		specs = append(specs, xmlSegmentSpec{
-			key: fmt.Sprintf("%s#%d", key, i+1),
+			block: key,
+			key:   fmt.Sprintf("%s#%d", key, i+1),
 			rng: srcRange,
 			// Rebuild per sentence so chip ids restart at 1, matching how
 			// every other parser numbers tags within a segment.
@@ -178,7 +206,7 @@ func segmentsFor(doc *xmlDoc, container *xmlNode, refs referenceIndex) []xmlSegm
 			context: context,
 		})
 	}
-	return specs
+	return specs, nil
 }
 
 // trimmedContentRange narrows a container down to the bytes actually worth

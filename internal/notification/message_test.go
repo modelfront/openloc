@@ -135,13 +135,6 @@ func threadedHeaders(t *testing.T, thread emaillayout.Thread) mail.Header {
 
 func TestBuildMIME_Thread(t *testing.T) {
 	const want = "<issue-42.app.example.com@example.com>"
-	root := threadedHeaders(t, emaillayout.Thread{ID: "issue-42.app.example.com", Root: true})
-	if got := root.Get("Message-ID"); got != want {
-		t.Errorf("root Message-ID = %q, want %q", got, want)
-	}
-	if got := root.Get("In-Reply-To") + root.Get("References"); got != "" {
-		t.Errorf("root refers to %q, want nothing", got)
-	}
 	reply := threadedHeaders(t, emaillayout.Thread{ID: "issue-42.app.example.com"})
 	if got := reply.Get("Message-ID"); got == want || !strings.HasSuffix(got, "@example.com>") {
 		t.Errorf("reply Message-ID = %q, want its own id", got)

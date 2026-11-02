@@ -29,7 +29,7 @@ func TestIntegrationWorkflowEditsWithRunningJobs(t *testing.T) {
 	lqa := testutil.SeedStepDefinition(t, q, tenant.ID, "LQA", "human", "", nil)
 
 	// Project with Translation → Review (the defaults link to these two).
-	pid := createProjectWithBody(t, router, map[string]any{
+	pid := createProjectWithBody(t, q, router, map[string]any{
 		"name": "Running", "source_language": "en", "target_languages": []string{"de"},
 	}, pm.ID, tenant.ID)
 	project, err := q.GetProject(ctx, db.GetProjectParams{ID: pid, TenantID: tenant.ID})
@@ -112,7 +112,7 @@ func TestIntegrationWorkflowEditsWithRunningJobs(t *testing.T) {
 	wfBad := createLibraryWorkflow(t, router, "Review first", []int64{review.ID, translation.ID}, pm.ID, tenant.ID)
 	rec := testutil.DoRequest(t, router, "POST", fmt.Sprintf("/api/projects/%d/workflow/apply", pid), map[string]any{"workflow_id": wfBad}, pm.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusConflict)
-	wfGood := createLibraryWorkflow(t, router, "Standard", []int64{translation.ID, review.ID}, pm.ID, tenant.ID)
+	wfGood := createLibraryWorkflow(t, router, "Translation then Review", []int64{translation.ID, review.ID}, pm.ID, tenant.ID)
 	rec = testutil.DoRequest(t, router, "POST", fmt.Sprintf("/api/projects/%d/workflow/apply", pid), map[string]any{"workflow_id": wfGood}, pm.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusOK)
 	if rows := assignments(); len(rows) != 2 || rows[1].StepName != "Review" || rows[1].Status != "pending" {
@@ -189,7 +189,7 @@ func TestIntegrationAppendedAIStepStartsAndEnqueues(t *testing.T) {
 	review := testutil.SeedStepDefinition(t, q, tenant.ID, "Review", "human", "", nil)
 	autoAPE := testutil.SeedStepDefinition(t, q, tenant.ID, "Auto APE", "ai", "", &aiRouterID)
 
-	pid := createProjectWithBody(t, router, map[string]any{"name": "AppendAI"}, pm.ID, tenant.ID)
+	pid := createProjectWithBody(t, q, router, map[string]any{"name": "AppendAI"}, pm.ID, tenant.ID)
 	project, err := q.GetProject(ctx, db.GetProjectParams{ID: pid, TenantID: tenant.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +296,7 @@ func TestIntegrationWorkflowStepEngineOverride(t *testing.T) {
 	translation := testutil.SeedStepDefinition(t, q, tenant.ID, "Translation", "human", "", nil)
 	aiReview := testutil.SeedStepDefinition(t, q, tenant.ID, "AI review", "hybrid", "", &routerA)
 
-	pid := createProjectWithBody(t, router, map[string]any{
+	pid := createProjectWithBody(t, q, router, map[string]any{
 		"name": "Override", "source_language": "en", "target_languages": []string{"de"},
 	}, pm.ID, tenant.ID)
 	put := func(steps []map[string]any) (int, string) {

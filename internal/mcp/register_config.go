@@ -35,6 +35,7 @@ const (
 	toolUpdateQAProfile       = "openloc_update_qa_profile"
 	toolUpsertQARules         = "openloc_upsert_qa_rules"
 	toolDeleteQAProfile       = "openloc_delete_qa_profile"
+	toolDeleteQARule          = "openloc_delete_qa_rule"
 	guardedCallsNote          = " Two calls: the first changes nothing and returns a preview; call again with confirm_token after the user approves."
 	configProjectsUnaffected  = " Projects copy this when they are set up, so existing projects do not change."
 	configSharedConfiguration = " The change applies org-wide, to everything that uses it."
@@ -270,8 +271,8 @@ func registerConfigTemplates(s *Server, srv *sdk.Server, managerTier bool, b Bac
 		name:  toolCreateTemplate,
 		title: "Create project template",
 		description: "Create a project template: the name, languages, customer and settings new " +
-			"projects start with. Get ids from the list tools named on each field. Without " +
-			"workflow_id the template gets Translation then Review.",
+			"projects start with. Get ids from the list tools named on each field. " +
+			"workflow_id is optional: a template without one has no steps, and each project made from it picks its workflow.",
 		requireManager: true,
 		requireWrite:   true,
 	}, b.CreateTemplate)
@@ -330,11 +331,21 @@ func registerConfigQA(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 	addGuardedTool(s, srv, managerTier, toolSpec{
 		name:  toolUpsertQARules,
 		title: "Set QA profile rules",
-		description: "Create or replace rules on a QA profile, one per check type; rules you do not list " +
-			"stay as they are. The next QA run of every project using the profile applies them." +
+		description: "Create or replace rules on a QA profile: one per built-in check type, and any number of " +
+			"regex rules (pass rule_id to replace one). Rules you do not list stay as they are. " +
+			"A regex rule's pattern and limits are checked before anything is written. The next QA run of every project using the profile applies them." +
 			guardedCallsNote,
 		requireManager: true,
 	}, b.PreviewUpsertQARules, b.UpsertQARules)
+
+	addGuardedTool(s, srv, managerTier, toolSpec{
+		name:  toolDeleteQARule,
+		title: "Delete QA regex rule",
+		description: "Delete one regex rule from a QA profile. A built-in rule is switched off with " +
+			"openloc_upsert_qa_rules (enabled false) instead." + guardedCallsNote,
+		requireManager: true,
+		destructive:    true,
+	}, b.PreviewDeleteQARule, b.DeleteQARule)
 
 	addGuardedTool(s, srv, managerTier, toolSpec{
 		name:  toolDeleteQAProfile,

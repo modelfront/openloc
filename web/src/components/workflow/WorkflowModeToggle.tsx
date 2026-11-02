@@ -2,7 +2,8 @@
 // built-in Pre-translation workflow. The mode is read off the steps, so a
 // template or a copied project that carries that workflow shows Raw MT.
 // Choosing Raw MT applies it; choosing Workflow goes back to the library
-// workflow left for it, else the first one in the library.
+// workflow left for it, else clears the pick (onClear) or takes the first
+// one in the library.
 import { useState, type RefObject } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Workflow as WorkflowIcon } from 'lucide-react'
@@ -29,6 +30,9 @@ interface Props {
   confirmApply?: boolean
   /** Extra sentence in the confirmation. */
   applyWarning?: string
+  /** With no workflow left for Raw MT, Workflow clears the pick instead of
+   *  taking the first library workflow. */
+  onClear?: () => Promise<unknown>
 }
 
 /** The built-in Pre-translation workflow, which the library's GET does not serve. */
@@ -39,13 +43,14 @@ function usePretranslateWorkflow() {
 const PretranslateIcon = STEP_TYPE_PRESETS.pretranslate.Icon
 export const PretranslateWorkflowIcon = () => <PretranslateIcon className="size-3.5 text-primary" aria-hidden />
 
-export function WorkflowModeToggle({ steps, workflowId, workflows, previousWorkflowRef, onApply, confirmApply = false, applyWarning }: Props) {
+export function WorkflowModeToggle({ steps, workflowId, workflows, previousWorkflowRef, onApply, confirmApply = false, applyWarning, onClear }: Props) {
   const { data: builtIn } = usePretranslateWorkflow()
   const mode = workflowMode(steps)
   const [pending, setPending] = useState<WorkflowMode | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const backTo = workflows.find(w => w.id === previousWorkflowRef.current) ?? workflows[0]
+  const previous = workflows.find(w => w.id === previousWorkflowRef.current)
+  const backTo = previous ?? (onClear ? undefined : workflows[0])
 
   const apply = async (next: WorkflowMode) => {
     setBusy(true)
@@ -55,6 +60,8 @@ export function WorkflowModeToggle({ steps, workflowId, workflows, previousWorkf
         await onApply(builtIn.id, builtIn)
       } else if (next === 'workflow' && backTo) {
         await onApply(backTo.id)
+      } else if (next === 'workflow' && onClear) {
+        await onClear()
       }
     } finally {
       setBusy(false)
@@ -68,7 +75,7 @@ export function WorkflowModeToggle({ steps, workflowId, workflows, previousWorkf
   }
 
   // Only the option not chosen can be unavailable: the chosen one stays lit.
-  const cannot = (target: WorkflowMode) => (target === 'raw_mt' ? !builtIn : !backTo)
+  const cannot = (target: WorkflowMode) => (target === 'raw_mt' ? !builtIn : !backTo && !onClear)
   const unavailable = (target: WorkflowMode) => target !== mode && (busy || cannot(target))
 
   return (
@@ -87,7 +94,7 @@ export function WorkflowModeToggle({ steps, workflowId, workflows, previousWorkf
       <ConfirmDialog
         open={pending != null}
         onOpenChange={open => !open && setPending(null)}
-        title={pending === 'raw_mt' ? 'Use Raw MT?' : `Use workflow “${backTo?.name ?? ''}”?`}
+        title={pending === 'raw_mt' ? 'Use Raw MT?' : backTo ? `Use workflow “${backTo.name}”?` : 'Leave Raw MT?'}
         description={`${pending === 'raw_mt'
           ? 'This replaces the current steps with the built-in Pre-translation step and turns on machine translation on upload.'
           : "This replaces the current steps with a copy of the workflow's steps."}${applyWarning ? ` ${applyWarning}` : ''}`}

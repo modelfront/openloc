@@ -285,3 +285,32 @@ JOIN settings_profiles sp ON sp.id = a.settings_profile_id
 LEFT JOIN projects p ON p.settings_profile_id = sp.id AND p.deleted_at IS NULL
 LEFT JOIN templates t ON t.settings_profile_id = sp.id
 WHERE a.term_base_id = @term_base_id AND sp.tenant_id = @tenant_id;
+
+-- name: GetJobTermContext :one
+-- Tenant-scoped: a job's project, settings profile, language pair and whether
+-- its linguists may add terms, for the editor's term quick-add.
+SELECT j.id AS job_id, p.id AS project_id, p.settings_profile_id,
+       p.source_language, j.target_language, sp.linguist_terms
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN settings_profiles sp ON sp.id = p.settings_profile_id
+WHERE j.id = @job_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
+
+-- name: ListWritableTermBasesForPair :many
+-- Tenant-scoped: the live term bases a settings profile assigns to a language
+-- pair with Write allowed (the term quick-add writes only to these), matched
+-- like LookupSettingsTermsByTokens (exact code or same base language), best
+-- priority first.
+SELECT tb.id, tb.name, tb.source_language, MIN(a.priority)::int AS priority
+FROM settings_terminology_assignments a
+JOIN term_bases tb ON tb.id = a.term_base_id
+  AND tb.deleted_at IS NULL AND tb.tenant_id = @tenant_id
+WHERE a.settings_profile_id = @settings_profile_id
+  AND a.mode IN ('write', 'read_write')
+  AND (a.source_language = @source_language
+       OR SPLIT_PART(a.source_language, '-', 1) = SPLIT_PART(@source_language, '-', 1))
+  AND (a.target_language = @target_language
+       OR SPLIT_PART(a.target_language, '-', 1) = SPLIT_PART(@target_language, '-', 1))
+GROUP BY tb.id, tb.name, tb.source_language
+ORDER BY MIN(a.priority) ASC, tb.id ASC;

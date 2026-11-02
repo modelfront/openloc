@@ -169,8 +169,8 @@ test.describe("Task matrix", () => {
 
     try {
       for (const [width, headers] of [
-        [1400, ["", "Lang", "File", "Assignee", "Deadline", "Words", ""]],
-        [900, ["", "Lang", "File", "Assignee", "Deadline", ""]],
+        [1400, ["", "Lang", "File", "Words", "Assignee", "", ""]],
+        [900, ["", "Lang", "File", "Assignee", "", ""]],
       ] as const) {
         await page.setViewportSize({ width, height: 800 });
         await page.goto(`/projects/${projectId}`);
@@ -179,6 +179,57 @@ test.describe("Task matrix", () => {
           tableFitsBox: true, boxScrolls: false, pageScrollsSideways: false, overflowingCells: 0, headers,
         });
       }
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
+  });
+
+  test("a running job's long status label ends in an ellipsis inside its column", async ({ page }) => {
+    const projectId = await getSeedProjectId(page);
+    const label = "Retrying AI step after an error (QE+APE): 1,234 / 5,678";
+    // One seed job reads as mid AI step; the label is the backend's current_step.
+    // The page polls running jobs with ?ids=, so that answer is faked too.
+    let runningJobId = 0;
+    await page.route(new RegExp(`/api/projects/${projectId}/jobs(\\?.*)?$`), async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      if (!runningJobId) runningJobId = body.data[0].id;
+      body.data = body.data.map((j: { id: number }) =>
+        j.id === runningJobId ? { ...j, pipeline_status: "in_progress", current_step: label } : j);
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.goto(`/projects/${projectId}`);
+    await openTaskSteps(page);
+
+    const chip = page.getByTestId(`task-row-job:${runningJobId}`).getByTestId("task-progress-chip");
+    await expect(chip).toHaveAttribute("title", label);
+    const box = await chip.evaluate((el) => {
+      const cell = el.closest("td")!.getBoundingClientRect();
+      const chipBox = el.getBoundingClientRect();
+      const text = el.querySelector("span") ?? el;
+      return {
+        insideCell: chipBox.left >= cell.left && chipBox.right <= cell.right + 1,
+        ellipsis: text.scrollWidth > text.clientWidth,
+      };
+    });
+    expect(box).toEqual({ insideCell: true, ellipsis: true });
+  });
+
+  test("a seven-digit word count shows in full in the Words column", async ({ page }) => {
+    const projectId = await getSeedProjectId(page);
+    await page.route(new RegExp(`/api/projects/${projectId}/jobs(\\?.*)?$`), async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.data = body.data.map((j: object) => ({ ...j, word_count: 1234567 }));
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.setViewportSize({ width: 1400, height: 800 });
+    try {
+      await page.goto(`/projects/${projectId}`);
+      await openTaskSteps(page);
+      const count = page.locator('[data-testid="task-step-sections"] td').getByText("1,234,567").first();
+      await expect(count).toBeVisible();
+      expect(await count.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     } finally {
       await page.setViewportSize({ width: 1280, height: 720 });
     }

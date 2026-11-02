@@ -33,7 +33,7 @@ func TestIntegrationHandlerEmission_Human(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "history-human")
-	projectID := createProject(t, router, "History Human Project", userID, tenantID)
+	projectID := createProject(t, q, router, "History Human Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "human.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Hello", 1)
@@ -101,7 +101,7 @@ func TestIntegrationHandlerEmission_HumanRecordsStepAndEditingTime(t *testing.T)
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "history-step")
-	projectID := createProject(t, router, "History Step Project", userID, tenantID)
+	projectID := createProject(t, q, router, "History Step Project", userID, tenantID)
 
 	file := testutil.SeedFile(t, q, projectID, "step.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "es")
@@ -155,7 +155,7 @@ func TestIntegrationHandlerEmission_Propagation(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "history-prop")
-	projectID := createProject(t, router, "History Propagation Project", userID, tenantID)
+	projectID := createProject(t, q, router, "History Propagation Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "propagate.txt", db.FileFormatTxt)
 
 	// Three identical-source segments. Saving + propagating from the first
@@ -223,12 +223,12 @@ func TestIntegrationHandlerEmission_Cleared(t *testing.T) {
 
 	router := testutil.NewTestRouter(pool)
 	userID, tenantID := registerUser(t, q, "history-clear")
-	projectID := createProject(t, router, "History Clear Project", userID, tenantID)
+	projectID := createProject(t, q, router, "History Clear Project", userID, tenantID)
 	file := testutil.SeedFile(t, q, projectID, "clear.txt", db.FileFormatTxt)
 	seg := testutil.SeedSegment(t, q, file.ID, "Hello", 1)
 	tr := testutil.SeedTranslation(t, q, seg.ID, "es", db.TranslationStatusNeedsReview)
 	// HandleClear requires a job — without one it returns 404 ("job not
-	// found"). Seed one. JobInFirstStep returns true for any job without
+	// found"). Seed one. JobInClearWindow returns true for any job without
 	// workflow steps, so we don't need to fake step assignments.
 	testutil.SeedJob(t, q, file.ID, "es")
 

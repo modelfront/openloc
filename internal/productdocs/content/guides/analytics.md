@@ -1,6 +1,6 @@
 ---
 title: "Analytics and dashboards"
-summary: "Read the word-count analysis and productivity reports, and build dashboards."
+summary: "Read the word-count analysis, and build dashboards of words, time, quality and MT usage."
 order: 100
 roles: [owner, admin, project_manager, linguist]
 updated_at: 2026-10-19

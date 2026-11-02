@@ -148,7 +148,7 @@ func (s *Service) Send(ctx context.Context, e Event) error {
 		logging.Error(ctx, err, "notification email render failed", "notification-render-failed", logging.UserID(e.RecipientID))
 		return nil
 	}
-	if err := s.sender.SendEmail(ctx, user.Email, EmailSubject(e), body.InThread(e.Thread)); err != nil {
+	if err := s.sender.SendEmail(ctx, user.Email, EmailSubject(e), body.InThread(EmailThread(e, s.baseURL))); err != nil {
 		logging.Error(ctx, err, "notification email send failed", "notification-email-failed", logging.UserID(e.RecipientID))
 		// SendFailure strips the address from the provider's message. Event is
 		// the notification type, so a broken deadline digest groups apart from

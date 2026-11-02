@@ -237,6 +237,12 @@ type TranslatePhases struct {
 	// editor's selection, filtered in the row-list queries. Nil means every
 	// row. Each phase still applies its own eligibility rules.
 	TranslationIDs []int64 `json:"translation_ids,omitempty"`
+	// Manual marks a queued Apply TM / Apply MT (the bulk bar's), so the
+	// worker does what the job's own button does: the Pre-translation step
+	// completes only after a whole-job MT run that found an engine, no QE+APE
+	// run is chained, and a phase with nothing configured fails the job with
+	// its message. TranslateFile ignores it.
+	Manual bool `json:"manual,omitempty"`
 }
 
 // FullPipeline runs TM + MT.
@@ -406,7 +412,7 @@ func (s *Service) runTMPhase(ctx context.Context, fileID, settingsProfileID int6
 	}
 	// Per-segment neighbor-context hashes for 101% promotion. nil on
 	// read failure → the phase scores plain 100% (no 101%).
-	neighborHashes := s.buildNeighborHashes(ctx, fileID)
+	neighborHashes := s.buildNeighborHashes(ctx, fileID, targetLang)
 	filled, err := s.applyTMMatches(ctx, tmIDs, cfg, input, neighborHashes, onProgress)
 	if err != nil {
 		return tmFilled{}, nil, "", err
@@ -488,13 +494,11 @@ func (s *Service) runMTPhase(ctx context.Context, tenantID, fileID int64, projec
 	// A failed run still reports the chunks it saved before the failure.
 	run := mtRun{translated: saved, engine: attributed.Name}
 	if err != nil {
-		// A provider-side failure (bad key, out of quota, rate limited,
-		// unreachable) is the user's to fix, not an internal bug. Surface it
-		// as an actionable client message instead of an opaque 500.
-		var provErr *ai.ProviderError
-		if errors.As(err, &provErr) {
+		// A vendor's failure gets a message the user can act on, not an
+		// opaque 500.
+		if vErr, ok := vendorFailure(err, mtProviderMessage); ok {
 			logging.Warn(ctx, err, "MT provider failure", "pipeline-mt-provider-failed", append(logging.Langs(sourceLang, targetLang), logging.Engine(source))...)
-			return run, "", httputil.NewClientError(mtProviderMessage(provErr))
+			return run, "", vErr
 		}
 		return run, "", err
 	}
@@ -524,6 +528,14 @@ func aiStepProviderMessage(e *ai.ProviderError) string {
 // classified AI-provider failure. The provider's own message text is shown
 // neither here nor in the logs, which carry its kind, status and error code.
 func providerFailureReason(e *ai.ProviderError) string {
+	// The server provides LibreTranslate, key and endpoint both: the user has
+	// nothing to check, only someone to tell.
+	if e.Provider == mt.ProviderLibreTranslate {
+		if e.Kind == ai.ProviderErrUnreachable {
+			return "Could not reach LibreTranslate, which this server provides. If it keeps failing, tell your administrator."
+		}
+		return fmt.Sprintf("LibreTranslate, which this server provides, failed (error %d). If it keeps failing, tell your administrator.", e.Status)
+	}
 	name := ai.DisplayName(e.Provider)
 	switch {
 	case e.Kind == ai.ProviderErrAuth:
@@ -1177,6 +1189,9 @@ func (s *Service) MTPreview(ctx context.Context, tenantID, fileID int64, sourceL
 		results, err = engine.Translate(ctx, req)
 	}
 	if err != nil {
+		if vErr, ok := vendorFailure(err, mtProviderMessage); ok {
+			return out, vErr
+		}
 		return out, fmt.Errorf("mt: %w", err)
 	}
 	if len(results) == 0 {

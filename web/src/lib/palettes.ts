@@ -90,6 +90,26 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/** WCAG contrast ratio between two colors. */
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** `fg` moved toward `bg` until their contrast is at most `target`: legible,
+ *  but visibly dimmer than full-strength text. */
+function fadeToContrast(fg: string, bg: string, target: number): string {
+  if (contrast(fg, bg) <= target) return fg
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2
+    if (contrast(lerpHex(fg, bg, mid), bg) > target) lo = mid
+    else hi = mid
+  }
+  return lerpHex(fg, bg, hi)
+}
+
 /** Readable text color to sit on top of `bg`. */
 function onColor(bg: string): string {
   return luminance(bg) > 0.5 ? '#0a0a0a' : '#ffffff'
@@ -132,6 +152,14 @@ export function buildTokens(p: Palette): Record<string, string> {
   for (const step of GRAY_STEPS) tokens[`--color-gray-${step}`] = ramp[step]
 
   const onAccent = onColor(a.accent)
+  // A filled button that cannot be used yet: the accent half faded into the
+  // page, its label the usual on-accent colour dimmed to at most 3:1, so a
+  // light accent's near-black label fades as much as a dark accent's white one.
+  // Below 1.5:1 the on-accent colour would vanish on the faded accent (white on
+  // a faded lime), so the label switches to whichever reads on the faded colour.
+  const faded = lerpHex(a.accent, a.bg, 0.5)
+  const fadedBase = contrast(onAccent, faded) >= 1.5 ? onAccent : onColor(faded)
+  const onFaded = fadeToContrast(fadedBase, faded, 3)
   Object.assign(tokens, {
     '--background': a.bg,
     '--foreground': a.text,
@@ -141,6 +169,8 @@ export function buildTokens(p: Palette): Record<string, string> {
     '--popover-foreground': a.text,
     '--primary': a.accent,
     '--primary-foreground': onAccent,
+    '--primary-faded': faded,
+    '--primary-faded-foreground': onFaded,
     '--secondary': a.elevated,
     '--secondary-foreground': a.text,
     '--muted': a.elevated,

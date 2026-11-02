@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -367,13 +368,27 @@ func (h *Handler) HandlePipeline(ctx context.Context, t *asynq.Task) (err error)
 	outcome = prior.then(outcome)
 	h.forgetRunSoFar(p)
 
-	// See HandleTranslate — completed is reserved for /complete.
-	h.updateStep(ctx, p.JobID, "in_progress", "Pipeline complete")
+	// A manual run with nothing to apply goes from running straight to
+	// failed: "Pipeline complete" reads as finished, and the project page
+	// stops polling a finished job before the failure lands.
+	unactionable := ""
+	if p.Phases.Manual {
+		unactionable = outcome.UnactionableMessage(p.Phases, p.SourceLanguage, p.TargetLanguage)
+	}
+	if unactionable == "" {
+		// See HandleTranslate — completed is reserved for /complete.
+		h.updateStep(ctx, p.JobID, "in_progress", "Pipeline complete")
+	}
 	if p.Phases.UseMT {
 		autostep.RecordMTMissing(ctx, h.queries, p.JobID, outcome.MTMissing())
 	}
 	h.emitJobPipelineEvent(ctx, p.TenantID, p.JobID, projectevents.TypeJobPipelineCompleted, p.TriggeredBy,
 		pipelineCompletedDetails(p.Phases, outcome))
+
+	if p.Phases.Manual {
+		h.finishManualRun(ctx, p, outcome, unactionable)
+		return nil
+	}
 
 	// Predict-on-start: if the job's active step carries a QE+APE
 	// engine, chain a QE+APE run now that pre-translation has
@@ -403,6 +418,22 @@ func (h *Handler) HandlePipeline(ctx context.Context, t *asynq.Task) (err error)
 	// no-op unless the project has one pending and all its jobs are now ready.
 	h.maybeAutoAnalyzeProject(ctx, p.FileID, p.TenantID)
 	return nil
+}
+
+// finishManualRun ends a queued Apply TM / Apply MT the way the job's own
+// button ends it (job.Service.ApplyPhases): a phase with nothing configured
+// fails the job with the button's message, the Pre-translation step completes
+// only after a whole-job MT run that found an engine, and no QE+APE run is
+// chained.
+// `unactionable` is the run's UnactionableMessage, "" when it had work.
+func (h *Handler) finishManualRun(ctx context.Context, p PipelinePayload, outcome pipeline.TranslateOutcome, unactionable string) {
+	if unactionable != "" {
+		h.failJob(ctx, p.JobID, errors.New(unactionable))
+		return
+	}
+	if p.Phases.UseMT && outcome.MTMissing() == "" && p.Phases.TranslationIDs == nil {
+		h.autoCompleteStep(ctx, p, stepdef.TypePretranslate, map[string]any{"phase": pipeline.PhaseNoun(p.Phases)})
+	}
 }
 
 // makeProgressFunc returns a ProgressFunc that updates the job's translated/total

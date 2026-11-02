@@ -22,6 +22,7 @@ import { chipTextClass } from '@/components/ui/chip'
 import { ROUTER_ENGINE_PRESETS } from '@/components/ui/chip-presets'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Pencil } from 'lucide-react'
@@ -93,7 +94,7 @@ export default function StepLibrary() {
       />
 
       <div className="mb-4">
-        <Button size="sm" onClick={() => setDialog({ open: true })} data-testid="new-step-definition" data-guide="workflow_steps.new">New step</Button>
+        <CreateButton onClick={() => setDialog({ open: true })} data-testid="new-step-definition" data-guide="workflow_steps.new">New step</CreateButton>
       </div>
 
       {loadFailed && <LoadFailed what="steps" error={error} onRetry={refetch} />}

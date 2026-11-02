@@ -164,7 +164,13 @@ func (h *Handler) HandleSpeech(w http.ResponseWriter, r *http.Request) {
 		var pe *ai.ProviderError
 		if errors.As(err, &pe) {
 			logging.Warn(r.Context(), err, "tour speech request failed", "tour-speech-provider-failed")
-			httputil.ErrorCode(w, http.StatusBadGateway, "voice_failed", speechErrorMessage(r, err))
+			// The key, the plan or the rate is the user's to fix (400); OpenAI
+			// failing is a 502, which reaches error tracking.
+			status := http.StatusBadGateway
+			if pe.UserFixable() {
+				status = http.StatusBadRequest
+			}
+			httputil.ErrorCode(w, status, "voice_failed", speechErrorMessage(r, err))
 			return
 		}
 		logging.Error(r.Context(), err, "tour speech request failed", "tour-speech-failed")

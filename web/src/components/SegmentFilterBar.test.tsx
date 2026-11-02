@@ -129,21 +129,41 @@ describe('QA filter when the report failed to load', () => {
   })
 })
 
-// The pill list is a plain module-local array with no type-level tie to the
-// `qaFilter` union, so nothing but a test stops an option disappearing.
-describe('Ignored QA filter', () => {
-  const ignoredPill = () => screen.getByRole('button', { name: 'Ignored' })
+describe('QA filters', () => {
+  const pill = (name: string) => screen.getByRole('button', { name })
 
-  it('selects the ignored filter', async () => {
+  // Nothing checks that QA_OPTIONS lists every QAFilter value, so only this
+  // test stops a pill disappearing.
+  it.each([
+    ['Has errors', 'has_errors'],
+    ['Has warnings', 'has_warnings'],
+    ['No issues', 'no_issues'],
+    ['Ignored', 'ignored'],
+  ] as const)('%s selects %s', async (name, value) => {
     const { onChange } = renderBar()
-    await userEvent.click(ignoredPill())
-    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_FILTERS, qaFilter: 'ignored' })
+    expect(pill(name)).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(pill(name))
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_FILTERS, qaFilters: [value] })
   })
 
-  it('toggles back off when it is already the active filter', async () => {
-    const { onChange } = renderBar({ qaFilter: 'ignored' })
-    await userEvent.click(ignoredPill())
-    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_FILTERS, qaFilter: 'all' })
+  it('adds a second pick instead of replacing the first', async () => {
+    const { onChange } = renderBar({ qaFilters: ['has_errors'] })
+    expect(pill('Has errors')).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(pill('Has warnings'))
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_FILTERS, qaFilters: ['has_errors', 'has_warnings'] })
+  })
+
+  it('clicking a picked pill removes only that one', async () => {
+    const { onChange } = renderBar({ qaFilters: ['has_errors', 'has_warnings'] })
+    expect(pill('Has warnings')).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(pill('Has errors'))
+    expect(onChange).toHaveBeenLastCalledWith({ ...DEFAULT_FILTERS, qaFilters: ['has_warnings'] })
+  })
+
+  it('Clear resets every picked pill', async () => {
+    const { onChange } = renderBar({ qaFilters: ['has_errors', 'ignored'] })
+    await userEvent.click(screen.getByTestId('segment-filter-clear'))
+    expect(onChange).toHaveBeenLastCalledWith(DEFAULT_FILTERS)
   })
 })
 
@@ -222,5 +242,34 @@ describe('actions slot', () => {
     expect(row).toContainElement(action)
     // Last in the row, so ml-auto pushes it to the right end.
     expect(row.lastElementChild).toContainElement(action)
+  })
+})
+
+// The text search runs on the server. Its count badge must not show "0 / N"
+// while the answer is on its way, or when the search could not run: both read
+// as "no segment contains this".
+describe('search state in the count badge', () => {
+  const renderSearching = (searchState: 'pending' | 'failed' | 'invalid' | null) => render(
+    <SegmentFilterBar
+      filters={{ ...DEFAULT_FILTERS, searchText: 'dry' }}
+      onChange={vi.fn()}
+      totalCount={240}
+      filteredCount={0}
+      searchState={searchState}
+    />,
+  )
+
+  it.each([
+    ['pending', 'Searching…'],
+    ['failed', 'Search failed'],
+  ] as const)('says %s instead of a count', (state, text) => {
+    renderSearching(state)
+    expect(screen.getByText(text)).toBeInTheDocument()
+    expect(screen.queryByText('0 / 240')).toBeNull()
+  })
+
+  it('shows the count once the search has answered', () => {
+    renderSearching(null)
+    expect(screen.getByText('0 / 240')).toBeInTheDocument()
   })
 })

@@ -3,7 +3,7 @@ title: "The AI assistant"
 summary: "Ask the built-in assistant about your projects, get charts, and let it act for you in write mode."
 order: 120
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-17
+updated_at: 2026-11-02
 sources:
   - internal/mcp/register_issues.go
   - web/src/components/chat/**
@@ -29,7 +29,7 @@ The AI assistant is a chat panel that is available on every page. You ask questi
 ## Open the assistant
 
 1. Click the round button at the bottom right of any page. It shows the logo of the AI provider that answers you.
-2. Type your question in the box at the bottom and press Enter. Shift+Enter adds a new line.
+2. Type your question in the box at the bottom and press Enter. Shift+Enter adds a new line. On a phone or tablet, Enter adds a new line and the **Send** button sends. Web addresses in your message become clickable links.
 3. While the assistant works, a **Working…** line shows what it is doing. Click the square **Stop** button to cancel an answer.
 
 The header has four buttons:
@@ -43,13 +43,17 @@ Drag the top-left corner to resize the panel. The assistant is available to ever
 
 An empty conversation offers one example question; click it to send it. A linguist sees **What are my open tasks?**. Owners, admins and project managers see **Help me create my first project** while the organization has no projects, and **What needs my attention today?** after that. When the assistant guides you, it can point at a part of the screen with a short card. Some answers end with quick replies: buttons with a likely next answer, on the card or above the message box. Click one to send it, or type your own.
 
-## Attach a file
+## Attach files
 
-1. Click the paperclip next to the message box, **Attach a file (TMX, terms, a document to translate)**, and pick a file. It uploads at once, up to 50 MB.
-2. The file shows as a chip above the message box. Click the **✕** next to it to remove it.
-3. Say what to do with it, for example "Import this into the Marketing memory" or "Add this document to the Helix project".
+1. Click the paperclip next to the message box, **Attach a file (TMX, terms, a document to translate)**, and pick one or more files, or drop them on the assistant panel. Each file uploads at once, up to 50 MB. A message takes up to 10 files.
+2. Each file shows as a chip above the message box. Click the **✕** next to one to remove it.
+3. Say what to do with them, for example "Import this into the Marketing memory" or "Add these documents to the Helix project". You can also send the files without typing anything.
+
+The assistant adds several documents to a project in one step and tells you which ones it could not add, and why.
 
 Owners, admins and project managers can import a TMX file into a translation memory, import a CSV or TBX file into a term base, or add a document to a project, just like an upload on the project page. An attached file is kept for 24 hours.
+
+Every role can also ask the assistant to read an attached file, for example "Summarize this style guide". An owner or admin can say "Write an AI prompt from this style guide". The assistant reads every format a project accepts, up to 1 MB of text per file.
 
 ## Choose a model
 
@@ -78,7 +82,7 @@ What you can ask depends on your role:
 | Role | The assistant can look up |
 |---|---|
 | Owner, admin, project manager | All projects, jobs, files, members, customers, TM matches, terms, QA reports, organization-wide analytics, a project's MT router with the engine each target language goes to, and a project's workflow steps with their default assignee and due dates |
-| Linguist | Your own tasks, a job's details, segments, TM leverage and QA report, and TM and term lookups. Not the project, customer or member lists. |
+| Linguist | Your own tasks, a job's details, segments, TM leverage and QA report, TM and term lookups, and the segmentation profiles with a preview of how they split a text. Not the project, customer or member lists. |
 
 See [Roles and permissions](/docs/reference/roles-and-permissions) for the full model.
 
@@ -92,7 +96,7 @@ The assistant knows which page you are on. On a project page, "this project" mea
 
 ## Report a problem to the support team
 
-Tell the assistant something in OpenLoc is broken, or ask for a change, and it writes a short report for the support team. Every role can do this, in read-only mode too, where your OpenLoc takes reports. The assistant checks the problem by looking: it reads the data behind the page you are on. It may ask you for a screenshot or to repeat the steps while your browser records them, and you review and send the report yourself; see [Report an issue](/docs/guides/report-an-issue#report-it-with-the-assistant).
+Tell the assistant something in OpenLoc is broken, or ask for a change, and it writes a short report for the support team. Every role can do this, in read-only mode too, where your OpenLoc takes reports. The assistant checks the problem by looking: it reads the data behind the page you are on. It may ask you for a screenshot or to repeat the steps while your browser records them, and you review and send the report yourself; see [Report an issue](/docs/guides/report-an-issue#report-it-with-the-assistant). It also lists and reads the reports you can see on the **Reported issues** page, in either mode.
 
 ## Get a chart
 
@@ -117,13 +121,13 @@ In write mode the assistant can:
 
 | Who | Changes the assistant can make |
 |---|---|
-| Every role | **Segments:** save drafts, one or many at once; confirm; clear; unlock; find and replace across a job; fill untranslated segments with **Apply TM** or **Apply MT**; clear a job's translations; import an edited XLIFF. **Work:** add and delete comments; run QA on a job or one segment; ignore or un-ignore a QA finding; complete the current workflow step, with an optional comment of up to 4,000 characters for whoever works the next step ([Complete a step](/docs/guides/workflows-and-tasks#complete-a-step)), or send the job back. **You:** mark notifications as read, change your notification settings, your color theme and your palettes. A linguist does this only on jobs assigned to them. |
-| Owner, admin, project manager | Also: **Segments:** lock one, which approves it; the assistant's approval waits for a person before it reaches the memory. **Projects:** create one (optionally from a template, with a workflow), publish a draft, edit it, add an attached document, pre-translate it, clear its translations, run its AI step again, assign people to steps, set due dates, and choose its memories, term bases, MT router, labels and settings. **Resources:** create customers, labels, memories, term bases and TM profiles; edit TM profiles; rename memories and term bases; import a TMX or term file; edit a memory entry; add, edit and delete terms and concepts. **Setup:** create, edit and delete MT engines, MT routers, steps, workflows and QA profiles; create, copy and edit templates. **Team:** invite people and withdraw an invite; a project manager does both only for linguists. **Dashboards:** save a chart, edit or delete charts, set filters, save analyses. |
+| Every role | **Segments:** save drafts, one or many at once; confirm; clear; unlock; find and replace across a job; fill untranslated segments with **Apply TM** or **Apply MT**; clear a job's translations; import an edited XLIFF. **Work:** add and delete comments; run QA on a job or one segment; ignore or un-ignore a QA finding; complete the current workflow step, with an optional comment of up to 4,000 characters for whoever works the next step ([Complete a step](/docs/guides/workflows-and-tasks#complete-a-step)), or send the job back. **Reported issues:** reply to the issues you can see, which reaches the support team and reopens a closed one; confirm a fix; change an issue's kind. **You:** mark notifications as read, change your notification settings, your color theme and your palettes. A linguist does this only on jobs assigned to them. |
+| Owner, admin, project manager | Also: **Segments:** lock one, which approves it; the assistant's approval waits for a person before it reaches the memory. **Projects:** create one (it needs a workflow, either picked or brought by a template; it asks which when unsure), publish a draft (which also needs a workflow), edit it, add an attached document, pre-translate it, clear its translations, run its AI step again, assign people to steps, set due dates, and choose its memories, term bases, MT router, labels and settings. **Resources:** create customers, labels, memories, term bases and TM profiles; edit TM profiles; rename memories and term bases; import a TMX or term file; edit a memory entry; add, edit and delete terms and concepts. **Setup:** create, edit and delete MT engines, MT routers, steps, workflows, QA profiles and segmentation profiles; create, copy and edit templates. **Team:** invite people and withdraw an invite; a project manager does both only for linguists. **Dashboards:** save a chart, edit or delete charts, set filters, save analyses. |
 | Owner, admin | Also: create and edit AI prompts, and create, edit and delete AI engines and AI routers; delete a memory, TM profile, term base, label or label value; change a member's role or language pairs, and remove a member. |
 
 ### Changes that wait for your click
 
-A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile or a member's role) never run from your message alone. The assistant shows a card, **Needs your confirmation**, with one line on what will happen. Click **Review** to read the full change, including knock-on effects such as how many projects use the thing, then click **Confirm**, or **Delete** for a delete or a clear. **Cancel** drops it. The card then reads **Done** or **Failed**.
+A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile, segmentation profile or a member's role) never run from your message alone. The assistant shows a card, **Needs your confirmation**, with one line on what will happen. Click **Review** to read the full change, including knock-on effects such as how many projects use the thing, then click **Confirm**, or **Delete** for a delete or a clear. **Cancel** drops it. The card then reads **Done** or **Failed**.
 
 A find and replace leaves locked segments out unless you ask it to include them. When you do, an owner or admin has the text replaced in locked segments too, which unlocks them; for anyone else they are left as they are. The card says which of the two will happen. See [Find and replace](/docs/guides/cat-editor#find-and-replace).
 
@@ -139,7 +143,7 @@ Ask it to move a due date and it sets the step's date for every target language,
 
 The assistant cannot change a segment a colleague has [open in the editor](/docs/guides/cat-editor#when-someone-else-is-editing-a-segment); a change across many segments skips those and says how many, and the confirmation card for a clear or a re-import says they are kept.
 
-Before it creates something, the assistant asks for the details it is missing and restates what it is about to do. Before it saves a draft over existing text, it re-reads the segment, so it does not overwrite a colleague's edit by accident. It changes a job's text only while the job's current step is in progress and no AI step is running. On a completed step, a step whose automation failed, or a job whose steps have not started, it refuses and tells you why. Every change is recorded in the audit log with your name.
+Before it creates something, the assistant asks for the details it is missing and restates what it is about to do. Before it saves a draft over existing text, it re-reads the segment, so it does not overwrite a colleague's edit by accident. It changes a job's text only while the job's current step is in progress and no AI step is running. On a completed step, a step whose automation failed, or a job whose steps have not started, it refuses and tells you why. Clearing translations works up to and including the workflow's first human or hybrid step, and **Apply TM** and **Apply MT** only on its first step; see [Select several segments and act on them](/docs/guides/cat-editor#select-several-segments-and-act-on-them). Every change is recorded in the audit log with your name.
 
 ## What the assistant cannot do
 
@@ -157,7 +161,7 @@ Before it creates something, the assistant asks for the details it is missing an
 | **No AI provider is connected for your organization.** | An owner or admin adds a key under **AI settings** → **Providers**. |
 | Your API key was rejected | Reconnect the key on the same page. |
 | The provider is rate-limiting requests, or is out of credit | Wait a moment, or check the account with the provider. |
-| This question took too long to answer | Ask a narrower question, with a period and a grouping. |
-| The connection went quiet and was closed | Send the message again. |
+| Stopped: too many tool calls, the answer got too long, or it took too long | Press **Continue**. The assistant goes on from where it stopped. |
+| The connection went quiet and was closed, or the connection to the assistant was interrupted | Press **Try again**. The assistant answers the same question again. In **Allow write** mode the button does not show once the assistant has started an action: check what changed before you ask again. |
 
 To use OpenLoc from Claude Desktop, Claude Code or ChatGPT instead, see [Connect external AI tools](/docs/guides/mcp).

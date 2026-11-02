@@ -187,6 +187,7 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
   )
   const expandButton = onExpand && (
     <Button
+      variant="outline"
       size="sm"
       className="ml-auto"
       onClick={onExpand}

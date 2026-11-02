@@ -4,6 +4,8 @@ import { isDemoReadOnly } from '@/lib/demo'
 
 interface MutationWithToastOptions<TData, TVariables> {
   mutationFn: (vars: TVariables) => Promise<TData>
+  /** Lets other components see the request while it is open (useIsMutating). */
+  mutationKey?: readonly unknown[]
   /**
    * Fixed text, or a function of the result when the message depends on what
    * happened ("Replaced 'x' in 4 segments"). A function may return null when
@@ -31,6 +33,7 @@ interface MutationWithToastOptions<TData, TVariables> {
  */
 export function useMutationWithToast<TData = unknown, TVariables = void>({
   mutationFn,
+  mutationKey,
   successMessage,
   errorMessage,
   errorToast = true,
@@ -42,6 +45,7 @@ export function useMutationWithToast<TData = unknown, TVariables = void>({
 
   return useMutation({
     mutationFn,
+    mutationKey,
     onSuccess: (data, vars) => {
       if (invalidateKeys) {
         for (const key of invalidateKeys) {

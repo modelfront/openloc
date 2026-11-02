@@ -62,6 +62,19 @@ describe('AttentionProvider + useAttentionTarget', () => {
     expect(screen.getByTestId('ai-router-9').dataset.attention).toBe('')
   })
 
+  it('runs onClaim on the claimed target only', () => {
+    const claimed = vi.fn()
+    const other = vi.fn()
+    function Claimable({ id, onClaim }: { id: string; onClaim: () => void }) {
+      return <div data-testid={id} ref={useAttentionTarget(id, onClaim)}>{id}</div>
+    }
+    renderAt('/ai?attention=ai-router-2', <><Claimable id="ai-router-1" onClaim={other} /><Claimable id="ai-router-2" onClaim={claimed} /></>)
+    act(() => { vi.advanceTimersByTime(0) })
+    expect(claimed).toHaveBeenCalledTimes(1)
+    expect(other).not.toHaveBeenCalled()
+    expect(screen.getByTestId('ai-router-2').dataset.attention).toBe('')
+  })
+
   it('does nothing for a key no element declares', () => {
     renderAt('/ai?attention=ai-router-404', <Target id="ai-router-1" />)
     act(() => { vi.advanceTimersByTime(0) })

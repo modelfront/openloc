@@ -18,7 +18,9 @@ paths:
       - $ref: '#/components/parameters/Cursor'
       - name: limit
         in: query
-        description: Page size. Defaults to 50; the maximum is 200.
+        description: Page size in positions. Defaults to 50; the maximum is 200. The pieces of a split
+          segment share one position and always come on the same page, so a page can hold a few more
+          segments than the limit.
         schema:
           type: integer
           minimum: 1
@@ -143,6 +145,95 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/{translationID}/split:
+    parameters: *id002
+    post:
+      operationId: splitSegment
+      summary: Split a segment
+      description: Cuts the segment in two at `offset`, as Split does in the editor, in this job only;
+        the file's other target languages keep the segment whole. The translation stays on the first
+        piece and the second piece starts empty; both need review. Pieces share their segment's
+        `position` and are ordered by `sub_position`. Refused while the job's task does not take
+        edits or pre-translation runs, when the segment is locked, being pre-translated or open by
+        someone else, and inside a tag pair.
+      tags:
+      - Segments
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitSegment'
+      responses:
+        '200':
+          description: The two pieces, in document order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentEditResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /jobs/{jobID}/segments/join:
+    parameters:
+    - $ref: '#/components/parameters/JobID'
+    post:
+      operationId: joinSegments
+      summary: Join segments
+      description: Joins segments that follow each other in the job into the first one, as Join does in
+        the editor, in this job only. It joins the pieces of a split segment, or sentences of one paragraph.
+        Joining every piece of a split gives the segment back as it was imported; a sentence split in
+        the job joins with its neighbours only with all of its pieces. The first segment keeps its id and gets the
+        translations joined in order; the others' comments and history move to it, and they are
+        deleted. The result needs review.
+      tags:
+      - Segments
+      x-roles: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinSegments'
+      responses:
+        '200':
+          description: The joined segment.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SegmentEditResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /jobs/{jobID}/segments/{translationID}/comments:
     parameters: *id002
     get:
@@ -258,6 +349,8 @@ components:
       required:
       - id
       - position
+      - sub_position
+      - number
       - source_text
       - target_text
       - status
@@ -273,6 +366,14 @@ components:
         position:
           type: integer
           description: Position in the document, from 0.
+        sub_position:
+          type: integer
+          description: Orders the pieces of a segment split in the editor, which share its position;
+            0 for a segment that was not split and for the first piece.
+        number:
+          type: string
+          description: The segment number the editor shows, for example "3", or "3.1" for the second piece
+            of segment 3.
         source_text:
           type: string
         target_text:
@@ -368,6 +469,53 @@ components:
           format: date-time
           description: The segment's `updated_at` as you read it. When set, the write fails with 409 if
             the segment changed since.
+    SplitSegment:
+      type: object
+      required:
+      - offset
+      properties:
+        offset:
+          type: integer
+          example: 16
+          description: Where to cut, in UTF-16 code units of the segment's `source_text`. Whitespace
+            around it goes between the pieces.
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: The segment's `updated_at` as you read it. When it has changed since, the split
+            is refused with 409. Leave it out to split whatever the segment holds now.
+    JoinSegments:
+      type: object
+      required:
+      - segments
+      properties:
+        segments:
+          type: array
+          minItems: 2
+          description: The segments to join, which follow each other in the job.
+          items:
+            type: object
+            required:
+            - id
+            properties:
+              id:
+                type: integer
+                format: int64
+              expected_updated_at:
+                type: string
+                format: date-time
+                description: The segment's `updated_at` as you read it; 409 when it has changed since.
+    SegmentEditResult:
+      type: object
+      required:
+      - segment_ids
+      properties:
+        segment_ids:
+          type: array
+          description: The segments that now stand where the split or joined ones were, in document order.
+          items:
+            type: integer
+            format: int64
     SegmentState:
       type: object
       required:

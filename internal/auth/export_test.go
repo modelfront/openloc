@@ -2,16 +2,7 @@ package auth
 
 import (
 	"context"
-
-	db "openloc/internal/database/sqlcgen"
 )
-
-// EnsureDefaultWorkflowForTest exposes the per-org default-workflow seeder so
-// the external auth_test package can assert its outcome without wiring the full
-// signup HTTP flow.
-func EnsureDefaultWorkflowForTest(ctx context.Context, q db.Querier, tenantID int64) error {
-	return ensureDefaultWorkflow(ctx, q, tenantID)
-}
 
 // Test-only shims so the external auth_test package can drive the membership
 // materialization seam (unexported) without a Google token exchange. Compiled

@@ -7,6 +7,8 @@
 // overrides only for the words derivation gets wrong: acronyms it would
 // lower-case, and a handful of slugs whose plain reading is unclear.
 
+import { capitalize } from './utils'
+
 const ACRONYMS: Record<string, string> = { mt: 'MT', ai: 'AI', qa: 'QA', tm: 'TM' }
 
 const OVERRIDES: Record<string, string> = {
@@ -27,6 +29,6 @@ export function metricLabel(slug: string): string {
   if (OVERRIDES[slug]) return OVERRIDES[slug]
   return slug
     .split('_')
-    .map((w, i) => ACRONYMS[w] ?? (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .map((w, i) => ACRONYMS[w] ?? (i === 0 ? capitalize(w) : w))
     .join(' ')
 }

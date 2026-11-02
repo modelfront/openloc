@@ -157,7 +157,7 @@ func (s *Service) writeGroupsToTM(ctx context.Context, groups []tmWriteGroup, re
 			updatedBy = s.updatedByLabel(ctx, changedBy)
 		}
 		for i := range g.rows {
-			if c, ok := neighbors[g.rows[i].segmentID]; ok {
+			if c, ok := neighbors[neighborKey{g.rows[i].segmentID, g.targetLang}]; ok {
 				g.rows[i].prevHash, g.rows[i].nextHash = c.Prev, c.Next
 			}
 		}
@@ -188,25 +188,37 @@ func (s *Service) writeGroupsToTM(ctx context.Context, groups []tmWriteGroup, re
 }
 
 // neighborHashesFor returns the neighbour-context hashes of the groups'
-// segments by segment id, read in one statement; nil when the read fails.
-func (s *Service) neighborHashesFor(ctx context.Context, groups []tmWriteGroup) map[int64]translationmemory.NeighborContext {
+// segments by segment and language, read in one statement; nil when the read
+// fails.
+func (s *Service) neighborHashesFor(ctx context.Context, groups []tmWriteGroup) map[neighborKey]translationmemory.NeighborContext {
 	var ids []int64
+	var langs []string
 	for _, g := range groups {
 		for _, r := range g.rows {
 			ids = append(ids, r.segmentID)
+			langs = append(langs, g.targetLang)
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := s.queries.ListSegmentNeighborSourcesByIDs(ctx, ids)
+	rows, err := s.queries.ListSegmentNeighborSourcesByIDs(ctx, db.ListSegmentNeighborSourcesByIDsParams{
+		SegmentIds: ids, TargetLanguages: langs,
+	})
 	if err != nil {
 		logging.Warn(ctx, err, "neighbor lookup failed; storing no context", "tm-write-neighbor-lookup-failed", logging.Count(len(ids)))
 		return nil
 	}
-	out := make(map[int64]translationmemory.NeighborContext, len(rows))
+	out := make(map[neighborKey]translationmemory.NeighborContext, len(rows))
 	for _, r := range rows {
-		out[r.ID] = translationmemory.NewNeighborContext(r.PrevSource, r.NextSource)
+		out[neighborKey{r.ID, r.TargetLanguage}] = translationmemory.NewNeighborContext(r.PrevSource, r.NextSource)
 	}
 	return out
+}
+
+// neighborKey is a segment in one job: a shared segment can have other
+// neighbours in another language, where a split or join changed the rows.
+type neighborKey struct {
+	segmentID int64
+	lang      string
 }

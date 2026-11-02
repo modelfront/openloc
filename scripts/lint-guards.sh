@@ -55,4 +55,4 @@ printf '%s' "$report" | RULE="$RULE" python3 "$ROOT/scripts/lib/eslint-report.py
 # web/scripts/production-imports.cjs reads the imports with TypeScript's
 # parser; its own fixture test runs first.
 bash "$ROOT/scripts/lint-guards-test.sh"
-node scripts/production-imports.cjs src package.json
+node "$ROOT/web/scripts/production-imports.cjs" src package.json

@@ -7,13 +7,15 @@ import { CopyLinkButton } from '@/components/ui/copy-link-button'
 import { SectionInfo } from '@/components/ui/section-info'
 import { SlimCollapsibleSection } from '@/components/layout/SlimCollapsibleSection'
 import { siteLink, useAppConfig } from '@/pages/docs/DocsHost'
+import { ConnectedAppsList } from './ConnectedAppsList'
 
 // Connecting an AI tool by sign-in: the user pastes the MCP address into the
 // tool's own "add connector" page, and the tool sends them to the OAuth consent
 // screen. An MCP client with OAuth and an https or loopback redirect works;
 // Claude and ChatGPT get direct links
 // because their add page is hard to find. No key changes hands, which is why
-// this comes before access keys.
+// this comes before access keys. The apps connected this way are listed last,
+// with Disconnect.
 const TOOLS = [
   {
     id: 'claude',
@@ -100,6 +102,8 @@ export function ConnectAIToolsSection() {
           </TextLink>
           . A tool that cannot sign in uses an access key instead.
         </p>
+
+        <ConnectedAppsList />
       </div>
     </SlimCollapsibleSection>
   )

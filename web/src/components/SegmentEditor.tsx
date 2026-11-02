@@ -3,6 +3,9 @@ import { Extension } from '@tiptap/core'
 import RichTextCellEditor, { type RichTextCellEditorHandle } from './RichTextCellEditor'
 import type { SpellFixActions } from '../lib/spellcheck-scope'
 import type { RefResolver } from '../lib/xliff-tag-label'
+import type { LineCaret } from '../lib/line-caret'
+import type { EntryCaret } from '../lib/entry-caret'
+import { createLineMoves } from '../lib/tiptap-line-moves'
 
 export type SegmentEditorHandle = RichTextCellEditorHandle
 
@@ -27,27 +30,32 @@ interface SegmentEditorProps {
   onTextChange: (plainText: string) => void
   onSelectionChange?: (from: number, to: number) => void
   onConfirmAndAdvance: () => void
-  onNavigate: (dir: 'next' | 'prev') => void
+  /** `caret` is where the next or previous segment's caret goes: set when an
+   *  arrow key leaves this segment from its last or first line. */
+  onNavigate: (dir: 'next' | 'prev', caret?: LineCaret) => void
+  /** Where the caret goes when the editor mounts; the end of the text when
+   *  absent. */
+  initialCaret?: EntryCaret
   onDeactivate: () => void
   onCopySource: () => void
-  // F8: insert next missing source tag at cursor.
-  // Alt-F8: insert all remaining missing source tags at cursor.
-  onInsertNextSourceTag?: () => void
-  onInsertAllSourceTags?: () => void
+  // F8: insert the next missing source tag, placeable or term at cursor.
+  // Alt-F8: insert all remaining missing tags, placeables and terms at cursor.
+  onInsertNextFromSource?: () => void
+  onInsertAllFromSource?: () => void
   // Mod-Shift-Backspace: clear the translation.
   onClearTranslation?: () => void
 }
 
 // CAT-only keyboard shortcuts: Mod-Enter, Tab/Shift-Tab, Mod-Shift-s,
-// Escape, F8 (next source tag), Alt-F8 (all source tags), and plain Enter as
-// a no-op.
+// Escape, F8 (next source tag, placeable or term), Alt-F8 (all of them), and plain Enter as
+// a no-op. Up/Down are createLineMoves'.
 function createSegmentKeymap(props: {
   onConfirmAndAdvance: () => void
-  onNavigate: (dir: 'next' | 'prev') => void
+  onNavigate: (dir: 'next' | 'prev', caret?: LineCaret) => void
   onDeactivate: () => void
   onCopySource: () => void
-  onInsertNextSourceTag: () => void
-  onInsertAllSourceTags: () => void
+  onInsertNextFromSource: () => void
+  onInsertAllFromSource: () => void
   onClearTranslation: () => void
   readOnly: boolean
 }) {
@@ -79,11 +87,11 @@ function createSegmentKeymap(props: {
           return true
         },
         'F8': () => {
-          if (!props.readOnly) props.onInsertNextSourceTag()
+          if (!props.readOnly) props.onInsertNextFromSource()
           return true
         },
         'Alt-F8': () => {
-          if (!props.readOnly) props.onInsertAllSourceTags()
+          if (!props.readOnly) props.onInsertAllFromSource()
           return true
         },
         'Mod-Shift-Backspace': () => {
@@ -113,10 +121,11 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
     onSelectionChange,
     onConfirmAndAdvance,
     onNavigate,
+    initialCaret,
     onDeactivate,
     onCopySource,
-    onInsertNextSourceTag,
-    onInsertAllSourceTags,
+    onInsertNextFromSource,
+    onInsertAllFromSource,
     onClearTranslation,
   } = props
 
@@ -126,8 +135,8 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
   const onNavRef = useRef(onNavigate)
   const onDeactivateRef = useRef(onDeactivate)
   const onCopySourceRef = useRef(onCopySource)
-  const onInsertNextRef = useRef(onInsertNextSourceTag)
-  const onInsertAllRef = useRef(onInsertAllSourceTags)
+  const onInsertNextRef = useRef(onInsertNextFromSource)
+  const onInsertAllRef = useRef(onInsertAllFromSource)
   const onClearRef = useRef(onClearTranslation)
   const readOnlyRef = useRef(readOnly)
 
@@ -135,21 +144,29 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
   useEffect(() => { onNavRef.current = onNavigate }, [onNavigate])
   useEffect(() => { onDeactivateRef.current = onDeactivate }, [onDeactivate])
   useEffect(() => { onCopySourceRef.current = onCopySource }, [onCopySource])
-  useEffect(() => { onInsertNextRef.current = onInsertNextSourceTag }, [onInsertNextSourceTag])
-  useEffect(() => { onInsertAllRef.current = onInsertAllSourceTags }, [onInsertAllSourceTags])
+  useEffect(() => { onInsertNextRef.current = onInsertNextFromSource }, [onInsertNextFromSource])
+  useEffect(() => { onInsertAllRef.current = onInsertAllFromSource }, [onInsertAllFromSource])
   useEffect(() => { onClearRef.current = onClearTranslation }, [onClearTranslation])
   useEffect(() => { readOnlyRef.current = readOnly }, [readOnly])
+  const initialCaretRef = useRef(initialCaret)
+  useEffect(() => { initialCaretRef.current = initialCaret }, [initialCaret])
 
   const keymapExt = useRef(
     createSegmentKeymap({
       onConfirmAndAdvance: () => onConfirmRef.current(),
-      onNavigate: (dir) => onNavRef.current(dir),
+      onNavigate: (dir, caret) => onNavRef.current(dir, caret),
       onDeactivate: () => onDeactivateRef.current(),
       onCopySource: () => onCopySourceRef.current(),
-      onInsertNextSourceTag: () => onInsertNextRef.current?.(),
-      onInsertAllSourceTags: () => onInsertAllRef.current?.(),
+      onInsertNextFromSource: () => onInsertNextRef.current?.(),
+      onInsertAllFromSource: () => onInsertAllRef.current?.(),
       onClearTranslation: () => onClearRef.current?.(),
       get readOnly() { return readOnlyRef.current },
+    })
+  )
+  const lineMovesExt = useRef(
+    createLineMoves({
+      onLeave: (dir, caret) => onNavRef.current(dir, caret),
+      entryCaret: () => initialCaretRef.current,
     })
   )
 
@@ -170,7 +187,8 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
       showWhitespace={showWhitespace}
       resolveRef={resolveRef}
       plainText={plainText}
-      extraExtensions={[keymapExt.current]}
+      extraExtensions={[keymapExt.current, lineMovesExt.current]}
+      initialCaret={initialCaret}
       onTextChange={onTextChange}
       onSelectionChange={onSelectionChange}
     />

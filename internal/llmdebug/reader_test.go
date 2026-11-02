@@ -16,10 +16,12 @@ import (
 // fakeReaderStore serves canned objects and counts downloads, so tests can
 // assert that immutable objects are parsed once rather than on every poll.
 type fakeReaderStore struct {
-	mu        sync.Mutex
-	objects   map[string]string
-	listErr   error
-	getErr    map[string]error
+	mu      sync.Mutex
+	objects map[string]string
+	listErr error
+	getErr  map[string]error
+	// block makes a download wait until its ctx is done, like a wedged store.
+	block     map[string]bool
 	downloads map[string]int
 }
 
@@ -27,6 +29,7 @@ func newFakeReaderStore() *fakeReaderStore {
 	return &fakeReaderStore{
 		objects:   map[string]string{},
 		getErr:    map[string]error{},
+		block:     map[string]bool{},
 		downloads: map[string]int{},
 	}
 }
@@ -59,7 +62,14 @@ func (f *fakeReaderStore) ListKeys(_ context.Context, prefix string) ([]string, 
 	return out, nil
 }
 
-func (f *fakeReaderStore) Download(_ context.Context, key string) (io.ReadCloser, error) {
+func (f *fakeReaderStore) Download(ctx context.Context, key string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	blocked := f.block[key]
+	f.mu.Unlock()
+	if blocked {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.getErr[key]; err != nil {

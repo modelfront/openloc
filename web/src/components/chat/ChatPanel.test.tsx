@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, createEvent, waitFor, act, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Routes, Route, useLocation } from 'react-router-dom'
@@ -212,6 +212,108 @@ describe('ChatPanel', () => {
     expect(sendMock.mock.calls[1][0].conversation_id).toBe(99)
   })
 
+  describe('typing and sending', () => {
+    it('on a computer, Enter sends the message', async () => {
+      sendMock.mockResolvedValue(undefined)
+      renderPanel()
+      openPanel()
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'line one\nline two' } })
+      fireEvent.keyDown(screen.getByTestId('chat-input'), { key: 'Enter' })
+      await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+      expect(sendMock.mock.calls[0][0].message).toBe('line one\nline two')
+    })
+
+    it('Shift+Enter adds a new line and does not send', () => {
+      renderPanel()
+      openPanel()
+      const input = screen.getByTestId('chat-input')
+      fireEvent.change(input, { target: { value: 'line one' } })
+      const enter = createEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+      fireEvent(input, enter)
+      expect(enter.defaultPrevented).toBe(false)
+      expect(sendMock).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['while it is composing', { isComposing: true }],
+      ['that ends its composition (Safari)', { isComposing: false, keyCode: 229 }],
+    ])('Enter for an input method %s does not send', (_name, state) => {
+      renderPanel()
+      openPanel()
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'にほん' } })
+      fireEvent.keyDown(screen.getByTestId('chat-input'), { key: 'Enter', ...state })
+      expect(sendMock).not.toHaveBeenCalled()
+    })
+
+    describe('on a touch screen', () => {
+      beforeEach(() => {
+        vi.stubGlobal('matchMedia', (query: string) => ({
+          matches: query === '(pointer: coarse)', media: query,
+          addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
+        }))
+      })
+      afterEach(() => vi.unstubAllGlobals())
+
+      it('Enter adds a new line and does not send', () => {
+        renderPanel()
+        openPanel()
+        const input = screen.getByTestId('chat-input')
+        fireEvent.change(input, { target: { value: 'line one' } })
+        const enter = createEvent.keyDown(input, { key: 'Enter' })
+        fireEvent(input, enter)
+        expect(enter.defaultPrevented).toBe(false)
+        expect(sendMock).not.toHaveBeenCalled()
+      })
+
+      it('the Send button sends', async () => {
+        sendMock.mockResolvedValue(undefined)
+        renderPanel()
+        openPanel()
+        fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'line one\nline two' } })
+        fireEvent.click(screen.getByTestId('chat-send'))
+        await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+        expect(sendMock.mock.calls[0][0].message).toBe('line one\nline two')
+      })
+    })
+
+    it('a sent message keeps its line breaks', async () => {
+      sendMock.mockResolvedValue(undefined)
+      renderPanel()
+      openPanel()
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'line one\nline two' } })
+      fireEvent.click(screen.getByTestId('chat-send'))
+      const bubble = await screen.findByTestId('chat-user-message')
+      expect(bubble.textContent).toBe('line one\nline two')
+      expect(bubble).toHaveClass('whitespace-pre-wrap')
+    })
+
+    it('links in a sent message are clickable and the text around them stays', async () => {
+      sendMock.mockResolvedValue(undefined)
+      renderPanel()
+      openPanel()
+      fireEvent.change(screen.getByTestId('chat-input'), {
+        target: { value: 'see https://example.com/a?b=1, and *this* http://example.com.' },
+      })
+      fireEvent.click(screen.getByTestId('chat-send'))
+      const bubble = await screen.findByTestId('chat-user-message')
+      expect(bubble.textContent).toBe('see https://example.com/a?b=1, and *this* http://example.com.')
+      const links = within(bubble).getAllByRole('link')
+      expect(links.map(a => a.getAttribute('href'))).toEqual(['https://example.com/a?b=1', 'http://example.com'])
+      expect(links[0]).toHaveAttribute('target', '_blank')
+      expect(links[0]).toHaveAttribute('rel', 'noreferrer')
+    })
+
+    it('text that only looks like a link stays plain', async () => {
+      sendMock.mockResolvedValue(undefined)
+      renderPanel()
+      openPanel()
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'javascript:alert(1) and example.com' } })
+      fireEvent.click(screen.getByTestId('chat-send'))
+      const bubble = await screen.findByTestId('chat-user-message')
+      expect(within(bubble).queryByRole('link')).toBeNull()
+    })
+  })
+
   it('new-conversation button clears history and drops the thread id', async () => {
     sendMock.mockImplementation(async (_body, handlers) => {
       handlers.onText('answer')
@@ -267,6 +369,68 @@ describe('ChatPanel', () => {
       expect(screen.getByTestId('chat-error').textContent).toContain('rate-limiting')
     })
     expect(screen.getByText('q')).toBeInTheDocument()
+  })
+
+  it('an answer cut off offers Try again, which asks again in the same conversation', async () => {
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onStart?.({ conversation_id: 7 })
+      handlers.onText('partial')
+      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true })
+    }).mockImplementationOnce(async (_body, handlers) => handlers.onDone({ conversation_id: 7 }))
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'my question' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    const retry = await within(await screen.findByTestId('chat-replies')).findByRole('button', { name: 'Try again' })
+    fireEvent.click(retry)
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(2))
+    expect(sendMock.mock.calls[1][0]).toMatchObject({ conversation_id: 7, message: 'Try again' })
+  })
+
+  it('an error from the server offers no Try again: asking again would fail the same way', async () => {
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onStart?.({ conversation_id: 7 })
+      handlers.onError('Your Claude API key was rejected — reconnect it in AI settings.')
+    })
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'my question' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    await screen.findByTestId('chat-error')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('in write mode, an answer cut before any tool started still offers Try again', async () => {
+    localStorage.setItem('openloc-chat-mode', 'write')
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onStart?.({ conversation_id: 7 })
+      handlers.onText('partial')
+      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true })
+    })
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'what is a fuzzy match?' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('in write mode, an answer cut after a tool started offers no Try again: the tool may have changed data', async () => {
+    localStorage.setItem('openloc-chat-mode', 'write')
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onStart?.({ conversation_id: 7 })
+      handlers.onToolStart('openloc_create_chart')
+      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true })
+    })
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'add a chart' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    await screen.findByTestId('chat-error')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
   it('send is inert for empty input and looks neutral, then turns primary with text', () => {
@@ -450,6 +614,107 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('chat-attachments')).not.toBeInTheDocument()
   })
 
+  it('files dropped on the panel are attached, and the message can go without typed text', async () => {
+    uploadMock.mockImplementation(async f => ({ id: `u-${f.name}`, filename: f.name, size_bytes: 1, expires_at: '' }))
+    sendMock.mockResolvedValue(undefined)
+    renderPanel()
+    openPanel()
+
+    const dropped = [new File(['a'], 'one.docx'), new File(['b'], 'two.docx')]
+    fireEvent.dragOver(screen.getByTestId('chat-panel'), { dataTransfer: { types: ['Files'], files: dropped } })
+    expect(screen.getByTestId('file-drop-overlay')).toHaveTextContent('Drop files to attach')
+    fireEvent.drop(screen.getByTestId('chat-panel'), { dataTransfer: { types: ['Files'], files: dropped } })
+    await waitFor(() => expect(screen.getByTestId('chat-attachments')).toHaveTextContent('two.docx'))
+    expect(screen.getByTestId('chat-attachments')).toHaveTextContent('one.docx')
+    expect(screen.queryByTestId('file-drop-overlay')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('chat-send'))
+    await waitFor(() => expect(sendMock).toHaveBeenCalled())
+    expect(sendMock.mock.calls[0][0].message).toBe(
+      '[Attached file: one.docx (upload_id: u-one.docx)]\n\n[Attached file: two.docx (upload_id: u-two.docx)]',
+    )
+  })
+
+  it('a drag of something other than files is left to the browser', async () => {
+    renderPanel()
+    openPanel()
+    const text = { dataTransfer: { types: ['text/plain'], files: [] } }
+    // fireEvent returns false when the handler called preventDefault.
+    expect(fireEvent.dragOver(screen.getByTestId('chat-panel'), text)).toBe(true)
+    expect(screen.queryByTestId('file-drop-overlay')).not.toBeInTheDocument()
+    expect(fireEvent.drop(screen.getByTestId('chat-panel'), text)).toBe(true)
+    expect(uploadMock).not.toHaveBeenCalled()
+  })
+
+  // jsdom has no DragEvent, so relatedTarget is set on the event by hand.
+  const leave = (el: HTMLElement, to: Element) => {
+    const ev = createEvent.dragLeave(el)
+    Object.defineProperty(ev, 'relatedTarget', { value: to })
+    fireEvent(el, ev)
+  }
+
+  it('the drop view stays while files move over the panel and goes when they leave it', async () => {
+    renderPanel()
+    openPanel()
+    const panel = screen.getByTestId('chat-panel')
+    const files = { types: ['Files'], files: [new File(['a'], 'a.txt')] }
+    fireEvent.dragOver(panel, { dataTransfer: files })
+    leave(panel, screen.getByTestId('chat-messages'))
+    expect(screen.getByTestId('file-drop-overlay')).toBeInTheDocument()
+    leave(panel, document.body)
+    expect(screen.queryByTestId('file-drop-overlay')).not.toBeInTheDocument()
+  })
+
+  it('an answer from a button goes during an upload, and the files wait for the next message', async () => {
+    const pending: Array<() => void> = []
+    uploadMock.mockImplementation(f => new Promise(res => pending.push(() => res({ id: `u-${f.name}`, filename: f.name, size_bytes: 1, expires_at: '' }))))
+    sendMock.mockResolvedValue(undefined)
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-attach-input'), {
+      target: { files: [new File(['a'], 'one.txt'), new File(['b'], 'two.txt')] },
+    })
+    await act(async () => pending.shift()!())
+    await waitFor(() => expect(screen.getByTestId('chat-attachments')).toHaveTextContent('one.txt'))
+
+    const starter = screen.getByTestId('chat-starter')
+    const question = starter.textContent
+    fireEvent.click(starter)
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+    expect(sendMock.mock.calls[0][0].message).toBe(question)
+
+    await act(async () => pending.shift()!())
+    await waitFor(() => expect(screen.getByTestId('chat-attachments')).toHaveTextContent('two.txt'))
+    expect(screen.getByTestId('chat-attachments')).toHaveTextContent('one.txt')
+  })
+
+  it('sending waits until every picked file is uploaded', async () => {
+    const pending: Array<() => void> = []
+    uploadMock.mockImplementation(f => new Promise(res => pending.push(() => res({ id: `u-${f.name}`, filename: f.name, size_bytes: 1, expires_at: '' }))))
+    sendMock.mockResolvedValue(undefined)
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-attach-input'), {
+      target: { files: [new File(['a'], 'one.txt'), new File(['b'], 'two.txt')] },
+    })
+    await act(async () => pending.shift()!())
+    await waitFor(() => expect(screen.getByTestId('chat-attachments')).toHaveTextContent('one.txt'))
+
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'add these' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+    fireEvent.keyDown(screen.getByTestId('chat-input'), { key: 'Enter' })
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('chat-send')).toHaveAttribute('title', 'Wait until the files are uploaded')
+
+    await act(async () => pending.shift()!())
+    await waitFor(() => expect(screen.getByTestId('chat-attachments')).toHaveTextContent('two.txt'))
+    fireEvent.click(screen.getByTestId('chat-send'))
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+    expect(sendMock.mock.calls[0][0].message).toBe(
+      'add these\n\n[Attached file: one.txt (upload_id: u-one.txt)]\n\n[Attached file: two.txt (upload_id: u-two.txt)]',
+    )
+  })
+
   it('a screenshot the assistant asks for is taken, shown, and sent with the next message only after Send', async () => {
     uploadMock.mockResolvedValue({ id: 'shot-1', filename: 'screenshot.jpg', size_bytes: 4, expires_at: '' })
     sendMock.mockResolvedValue(undefined)
@@ -482,6 +747,44 @@ describe('ChatPanel', () => {
     expect(sendMock.mock.calls[2][0].screenshot_upload_id).toBe('shot-1')
     expect(uploadMock).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(screen.getByTestId('chat-ask-screenshot')).toHaveAttribute('data-state', 'sent'))
+  })
+
+  it('a newer ask replaces the older one: only the newest card takes a screenshot', async () => {
+    askAfterSending('ask_screenshot', 'The list page.')
+    await clickWhenReady('chat-screenshot-take')
+    await screen.findByTestId('chat-screenshot-preview')
+    // The user types instead of pressing Send, and the assistant asks again.
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onClientAction?.('ask_screenshot', { reason: 'The project page.' })
+      handlers.onDone({ conversation_id: 9 })
+    })
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'and one more' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    await waitFor(() => expect(screen.getAllByTestId('chat-ask-screenshot')).toHaveLength(2))
+    const [older, newer] = screen.getAllByTestId('chat-ask-screenshot')
+    const olderSend = within(older).getByTestId('chat-screenshot-send')
+    await waitFor(() => expect(olderSend).toHaveAttribute('aria-disabled', 'true'))
+    // A click that got through would start the upload before anything else.
+    fireEvent.click(olderSend)
+    expect(uploadMock).not.toHaveBeenCalled()
+    await waitFor(() => expect(within(newer).getByTestId('chat-screenshot-take')).toBeEnabled())
+    expect(within(newer).getByTestId('chat-screenshot-take')).not.toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('Try again after a cut sends the screenshot of the cut message again', async () => {
+    uploadMock.mockResolvedValue({ id: 'shot-1', filename: 'screenshot.jpg', size_bytes: 4, expires_at: '' })
+    askAfterSending('ask_screenshot', 'To see it.')
+    sendMock.mockImplementationOnce(async (_body, handlers) => {
+      handlers.onStart?.({ conversation_id: 9 })
+      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true })
+    }).mockImplementation(async (_body, handlers) => handlers.onDone({ conversation_id: 9 }))
+    await clickWhenReady('chat-screenshot-take')
+    fireEvent.click(await screen.findByTestId('chat-screenshot-send'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(3))
+    expect(sendMock.mock.calls[2][0]).toMatchObject({ conversation_id: 9, message: 'Try again', screenshot_upload_id: 'shot-1' })
   })
 
   it('a screenshot still being taken when the user skips is dropped', async () => {
@@ -790,6 +1093,18 @@ describe('ChatPanel', () => {
       fireEvent.click(screen.getByTestId('chat-send'))
       await waitFor(() => expect(sendMock).toHaveBeenCalled())
       expect(sendMock.mock.calls[0][0]).toMatchObject({ conversation_id: 42 })
+    })
+
+    it('a saved message keeps its line breaks', async () => {
+      await chatOnce()
+      messagesMock.mockResolvedValue([{ ...SAVED[0], content: 'first line\nsecond line' }, SAVED[1]])
+
+      renderPanel()
+      openPanel()
+      await waitFor(() => expect(screen.getByText('You have 3 jobs.')).toBeInTheDocument())
+      const bubble = screen.getByTestId('chat-user-message')
+      expect(bubble.textContent).toBe('first line\nsecond line')
+      expect(bubble).toHaveClass('whitespace-pre-wrap')
     })
 
     it('a conversation that no longer exists falls back to an empty panel', async () => {
@@ -1153,6 +1468,7 @@ describe('ChatPanel', () => {
       await vi.advanceTimersByTimeAsync(61_000)
       expect(aborted).toBe(true)
       expect(screen.getByTestId('chat-error').textContent).toContain('went quiet')
+      expect(within(screen.getByTestId('chat-replies')).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
       // The panel is usable again — not stuck in streaming state.
       expect(screen.queryByTestId('chat-stop')).not.toBeInTheDocument()
     } finally {

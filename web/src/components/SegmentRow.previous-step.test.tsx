@@ -1,9 +1,10 @@
 // The Status column shows one thing about the previous workflow step: that it
-// auto-approved the segment. Same chip as this step's Auto-approved, in grey,
-// with a tooltip that says where it came from.
+// auto-approved the segment. Same icon as this step's Auto-approved, in grey,
+// with a tooltip that says where it came from, and only while this step has
+// not marked the segment itself: a row never shows two icons.
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -30,7 +31,7 @@ function renderRow(t: Translation, autoApprovedBeforeStep: boolean) {
       <SegmentRow
         segment={segment}
         translation={t}
-        index={1}
+        number="1"
         jobId={7}
         fileId={11}
         projectId={null}
@@ -45,8 +46,7 @@ function renderRow(t: Translation, autoApprovedBeforeStep: boolean) {
         flushDraftRef={{ current: async () => {} }}
         readOnly={false}
         qaIssues={[]}
-        isAdmin
-        inFirstStep={false}
+        inClearWindow={false}
         autoApprovedBeforeStep={autoApprovedBeforeStep}
       />
     </QueryClientProvider>,
@@ -55,29 +55,43 @@ function renderRow(t: Translation, autoApprovedBeforeStep: boolean) {
 
 afterEach(cleanup)
 
-describe('SegmentRow — previous step chip', () => {
-  it('shows a grey Auto-approved chip, without the step name, and explains it on hover', async () => {
+describe('SegmentRow — previous step icon', () => {
+  it('shows a grey Auto-approved icon and explains it on hover', async () => {
     renderRow(translation, true)
-    const chip = screen.getByTestId('previous-step-chip')
-    expect(chip).toHaveTextContent(/^Auto-approved$/)
-    expect(chip.className).toContain('bg-gray-100')
+    const icon = within(screen.getByTestId('previous-step-status')).getByRole('img', { name: 'Auto-approved in the previous step.' })
+    expect(icon.getAttribute('class')).toContain('text-gray-400')
 
-    await userEvent.hover(chip)
-    expect(await screen.findByText('Auto-approved in the previous step.')).toBeInTheDocument()
+    await userEvent.hover(icon)
+    expect(await screen.findByText('Auto-approved in the previous step.', { selector: ':not(svg)' })).toBeInTheDocument()
   })
 
-  it('uses the same chip as this step\'s Auto-approved, apart from the colour', () => {
-    renderRow({ ...translation, status: 'auto_approved' }, true)
-    const [current, previous] = screen.getAllByText('Auto-approved')
-    expect(previous).toBe(screen.getByTestId('previous-step-chip'))
-    const withoutColour = (el: HTMLElement) => el.className.split(/\s+/)
-      .filter(c => !/(^|:)(bg|text|ring)-(gray|emerald)-/.test(c)).sort()
-    expect(withoutColour(previous)).toEqual(withoutColour(current))
-    expect(previous.className).not.toBe(current.className)
+  it('uses the same icon as this step\'s Auto-approved, apart from the colour', () => {
+    renderRow({ ...translation, status: 'auto_approved' }, false)
+    const current = screen.getByRole('img', { name: 'Auto-approved' })
+    const currentIcon = { kind: current.getAttribute('data-status-icon'), shape: current.innerHTML, colour: current.getAttribute('class') }
+    cleanup()
+
+    renderRow(translation, true)
+    const previous = within(screen.getByTestId('previous-step-status')).getByRole('img')
+    expect(previous.getAttribute('data-status-icon')).toBe(currentIcon.kind)
+    expect(previous.innerHTML).toBe(currentIcon.shape)
+    expect(previous.getAttribute('class')).not.toBe(currentIcon.colour)
+  })
+
+  // One icon per row: once this step marks the segment, its own icon replaces
+  // the previous step's.
+  it.each([
+    ['Draft', { status: 'needs_review', step_edited: true }],
+    ['Approved', { status: 'approved', confirmed_via: 'user' }],
+    ['Auto-approved', { status: 'auto_approved' }],
+  ] as const)('shows only the %s icon once this step marks the segment', (name, fields) => {
+    renderRow({ ...translation, ...fields }, true)
+    expect(screen.getAllByRole('img').map(i => i.getAttribute('aria-label'))).toEqual([name])
+    expect(screen.queryByTestId('previous-step-status')).not.toBeInTheDocument()
   })
 
   it('shows nothing when the previous step did not auto-approve the segment', () => {
     renderRow(translation, false)
-    expect(screen.queryByTestId('previous-step-chip')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('previous-step-status')).not.toBeInTheDocument()
   })
 })

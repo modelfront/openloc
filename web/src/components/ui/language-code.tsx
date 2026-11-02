@@ -1,4 +1,4 @@
-import type { HTMLAttributes } from 'react'
+import { Fragment, type HTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 import { OverflowChip } from './chip-presets'
 
@@ -15,8 +15,8 @@ type LanguagePairProps = HTMLAttributes<HTMLSpanElement> & {
   source: string
   targets: string | string[]
   /**
-   * Cap on visible targets; the rest collapse into a `+N` chip that names them
-   * on hover. Omit to show every target. A row that lists many locales (a TM's
+   * Cap on visible targets; the rest collapse into a `+N` chip whose tooltip
+   * shows the full list. Omit to show every target. A row that lists many locales (a TM's
    * coverage) sets this so one wide TM cannot push the rest of the row out.
    */
   max?: number
@@ -29,11 +29,30 @@ export function LanguagePair({ source, targets, max, separator = '→', classNam
   const targetCodes = Array.isArray(targets) ? targets : [targets]
   const shown = max != null ? targetCodes.slice(0, max) : targetCodes
   const hidden = targetCodes.length - shown.length
+  // The tooltip is this pair again, uncapped: the full list, in the same style.
+  const chip = hidden > 0 && (
+    <OverflowChip
+      count={hidden}
+      tooltip={<LanguagePair source={source} targets={targetCodes} separator={separator} />}
+      className="ml-1"
+    />
+  )
 
+  // Inline text that wraps only between codes: each code is one nowrap unit
+  // (a browser would otherwise break "FR-CA" after its hyphen), and the +N
+  // chip rides on the last one.
   return (
-    <span className={cn('inline-flex items-baseline gap-1 font-mono text-xs uppercase', className)} {...props}>
-      {shown.length > 0 ? `${source} ${separator} ${shown.join(', ')}` : source}
-      {hidden > 0 && <OverflowChip count={hidden} title={targetCodes.slice(shown.length).join(', ')} />}
+    <span className={cn('font-mono text-xs uppercase', className)} {...props}>
+      <span className="whitespace-nowrap">
+        {shown.length > 0 ? `${source} ${separator}` : source}
+        {shown.length === 0 && chip}
+      </span>
+      {shown.map((code, i) => (
+        <Fragment key={i}>
+          {' '}
+          <span className="whitespace-nowrap">{code}{i < shown.length - 1 ? ',' : chip}</span>
+        </Fragment>
+      ))}
     </span>
   )
 }

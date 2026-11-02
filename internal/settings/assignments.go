@@ -160,6 +160,11 @@ func ApplyTermAssignments(ctx context.Context, q AssignmentQuerier, tenantID, pr
 	}
 
 	for _, a := range assignments {
+		switch a.Mode {
+		case "", "read", "write", "read_write":
+		default:
+			return nil, httputil.NewClientError(fmt.Sprintf("term base %d: mode must be read, write or read_write", a.TermBaseID))
+		}
 		if _, err := q.GetTermBase(ctx, db.GetTermBaseParams{ID: a.TermBaseID, TenantID: tenantID}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, httputil.NewClientError(fmt.Sprintf("term base %d not found", a.TermBaseID))
@@ -168,7 +173,7 @@ func ApplyTermAssignments(ctx context.Context, q AssignmentQuerier, tenantID, pr
 		}
 		mode := a.Mode
 		if mode == "" {
-			mode = "read"
+			mode = "read_write"
 		}
 		if _, err := q.CreateSettingsTermAssignment(ctx, db.CreateSettingsTermAssignmentParams{
 			SettingsProfileID: profileID, TermBaseID: a.TermBaseID,

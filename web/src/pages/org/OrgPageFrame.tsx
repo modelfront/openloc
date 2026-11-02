@@ -3,9 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { getMe } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { isAdminRole } from '../../lib/roles'
-import { PageContainer } from '@/components/layout/PageContainer'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { SubNav, type SubNavItem } from '@/components/layout/SubNav'
+import { SectionPageFrame } from '@/components/layout/SectionPageFrame'
+import type { SubNavItem } from '@/components/layout/SubNav'
 import { ORG_MEMBERS_PATH, ORG_SETTINGS_PATH, ORG_VENDORS_PATH } from './org-paths'
 
 const ADMIN_TABS: SubNavItem[] = [
@@ -24,10 +23,8 @@ export function OrgPageFrame({ children }: { children: ReactNode }) {
   const { data: me } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
   const admin = isAdminRole(me?.role)
   return (
-    <PageContainer>
-      <PageHeader title="Organization" />
-      {admin && <SubNav className="mb-4" items={ADMIN_TABS} dataGuide="org.tabs" />}
+    <SectionPageFrame title="Organization" tabs={admin ? ADMIN_TABS : undefined} dataGuide="org.tabs">
       {children}
-    </PageContainer>
+    </SectionPageFrame>
   )
 }

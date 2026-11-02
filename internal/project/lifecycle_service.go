@@ -44,6 +44,13 @@ func (h *Handler) Publish(ctx context.Context, tenantID, userID, id int64, analy
 	}, false); err != nil {
 		return db.Project{}, err
 	}
+	steps, err := h.queries.ListSettingsWorkflowSteps(ctx, project.SettingsProfileID)
+	if err != nil {
+		return db.Project{}, fmt.Errorf("list workflow steps: %w", err)
+	}
+	if len(steps) == 0 {
+		return db.Project{}, httputil.NewClientError("workflow is required: pick one before publishing")
+	}
 	if err := settings.CheckProfilePretranslateRouter(ctx, h.queries, project.SettingsProfileID); err != nil {
 		return db.Project{}, err
 	}
@@ -52,6 +59,11 @@ func (h *Handler) Publish(ctx context.Context, tenantID, userID, id int64, analy
 	// already-materialized files are skipped on the next attempt.
 	if h.files != nil {
 		if err := h.files.MaterializeProjectFiles(ctx, tenantID, project.ID, analyze); err != nil {
+			// A file the user can fix (its segmentation rules take too long,
+			// say) answers with its own message.
+			if _, ok := httputil.AsClientError(err); ok {
+				return db.Project{}, err
+			}
 			logging.Error(ctx, err, "publish could not create jobs for the draft's files", "project-publish-materialize-failed",
 				logging.ProjectID(project.ID))
 			return db.Project{}, ErrPublishFiles
@@ -142,7 +154,7 @@ type ClearResult struct {
 // ClearTranslations blanks the translations of every file × language of the
 // project and drops their QA findings and AI comments in the same
 // transaction. Rows another user has open are kept and counted. The pre-flight is atomic: a running job refuses the whole call
-// with httputil.ConflictError, a job past the first workflow step with
+// with httputil.ConflictError, a job past the first human or hybrid workflow step with
 // httputil.ForbiddenError. The window between the check and the clear is
 // accepted (the pretranslate enqueue has the symmetric race).
 func (h *Handler) ClearTranslations(ctx context.Context, tenantID, id int64, scope ClearScope) (ClearResult, error) {
@@ -201,7 +213,7 @@ func (h *Handler) ClearTranslations(ctx context.Context, tenantID, id int64, sco
 }
 
 // checkClearable refuses a clear while any job of the project is running or
-// past its first workflow step. The project must already be verified in the
+// past its first human or hybrid workflow step. The project must already be verified in the
 // tenant: ListJobsByProject is scoped by project only.
 func (h *Handler) checkClearable(ctx context.Context, tenantID, projectID int64) error {
 	jobs, err := h.queries.ListJobsByProject(ctx, projectID)
@@ -224,8 +236,12 @@ func (h *Handler) checkClearable(ctx context.Context, tenantID, projectID int64)
 		if err != nil {
 			return fmt.Errorf("load job: %w", err)
 		}
-		if !workflow.JobInFirstStep(ctx, h.queries, full) {
-			return httputil.NewForbiddenError("one or more jobs are past the first workflow step")
+		inWindow, err := workflow.JobInClearWindow(ctx, h.queries, full)
+		if err != nil {
+			return fmt.Errorf("clear window: %w", err)
+		}
+		if !inWindow {
+			return httputil.NewForbiddenError("one or more jobs are past the first human or hybrid workflow step")
 		}
 	}
 	return nil

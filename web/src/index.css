@@ -19,6 +19,10 @@ html, body { overflow-x: hidden; }
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.546 0.245 264);
   --primary-foreground: oklch(1 0 0);
+  /* A filled button that cannot be used yet. A palette (lib/palettes.ts)
+     replaces both with solid colours; these are the first-paint values. */
+  --primary-faded: color-mix(in oklab, var(--primary) 50%, var(--background));
+  --primary-faded-foreground: color-mix(in oklab, var(--primary-foreground) 65%, var(--primary-faded));
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -80,6 +84,11 @@ html, body { overflow-x: hidden; }
 }
 
 @theme inline {
+  /* The primary colour as text on the page: mixed toward the text colour so it
+     reaches 4.5:1 in every built-in palette, where the raw accent does not. */
+  --color-primary-ink: color-mix(in oklab, var(--primary) 80%, var(--foreground));
+  --color-primary-faded: var(--primary-faded);
+  --color-primary-faded-foreground: var(--primary-faded-foreground);
   --font-display: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
   --font-sans: 'Inter Variable', 'Helvetica Neue', Helvetica, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
@@ -143,13 +152,13 @@ html, body { overflow-x: hidden; }
 }
 
 /* --- TipTap Segment Editor --- */
-/* Source and translation share one geometry. Inactive, both texts sit in a
-   lightly padded preview. Active, each sits in a bordered + padded box (the
-   dashed source box, the editor) pulled out into the cell padding by exactly
-   the difference — so the two columns line up and activating a row changes
-   neither its height nor where its text is. The controls floating on the
-   editor's border share its background. Every number lives here; SegmentRow
-   only names the classes. */
+/* Source and translation share one geometry. Open or closed, each text sits
+   in a bordered + padded box (the dashed source box; the editor, or the
+   closed translation's look-alike) pulled out into the cell padding, so the
+   text sits --seg-preview-pad-* from the cell's content edge. The two columns
+   line up and activating a row changes neither its height nor where its text
+   is. The controls floating on the editor's border share its background.
+   Every number lives here; SegmentRow only names the classes. */
 :root {
   --seg-editor-pad-x: 0.5rem;
   --seg-editor-pad-y: 0.25rem;
@@ -159,21 +168,46 @@ html, body { overflow-x: hidden; }
   --seg-box-inset-y: calc(var(--seg-editor-pad-y) + 1px);
   --seg-box-pull-x: calc(var(--seg-preview-pad-x) - var(--seg-box-inset-x));
   --seg-box-pull-y: calc(var(--seg-preview-pad-y) - var(--seg-box-inset-y));
-  --seg-editor-bg: white;
-  --seg-editor-bg-readonly: #f9fafb;
+  /* Grid cell padding, top and bottom, open or closed: the box's pull plus
+     1px, so the open boxes stay inside the row. The action bar on the open
+     box's top border reaches into the row above; the active row is stacked
+     above the others, so the bar stays on top. */
+  --seg-cell-pad-y: calc(1px - var(--seg-box-pull-y));
+  /* A one-line row, its 1px bottom border included: the loading
+     placeholder's height. */
+  --seg-row-min-h: calc(2 * var(--seg-cell-pad-y) + 1.25rem + 2 * var(--seg-preview-pad-y) + 1px);
+  /* The fields take the row's background: no fill of their own. */
+  --seg-editor-bg: transparent;
+  --seg-editor-bg-readonly: transparent;
 }
-.dark {
-  --seg-editor-bg: #111827;
-  --seg-editor-bg-readonly: #030712;
+.segment-cell {
+  padding-block: var(--seg-cell-pad-y);
 }
-/* Inactive source and translation text. */
-.segment-preview {
-  padding: var(--seg-preview-pad-y) var(--seg-preview-pad-x);
+/* A segment's line breaks are its own, as in the editor; other whitespace
+   runs fold as usual. */
+.segment-source-box,
+.segment-target-box {
+  white-space: pre-line;
 }
-/* Active source box: same padding and border as the editor. */
+/* Row number and checkbox: on the first line of the source text, which the
+   preview pads by --seg-preview-pad-y. */
+.segment-number {
+  padding-top: var(--seg-preview-pad-y);
+}
+/* Source box, open or closed: same padding and border as the editor. */
 .segment-source-box {
   padding: var(--seg-editor-pad-y) var(--seg-editor-pad-x);
   margin: var(--seg-box-pull-y) var(--seg-box-pull-x);
+}
+/* The source words the term quick-add will use, kept marked like a selection
+   that lost focus once the user selects in the translation
+   (hooks/useSourceSelection.ts). Background only and see-through, so term
+   underlines, search hits and tag chips stay visible under it. */
+::highlight(term-source-selection) {
+  background-color: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+.dark ::highlight(term-source-selection) {
+  background-color: color-mix(in oklab, var(--primary) 35%, transparent);
 }
 /* Wraps the editor. No top pull when a banner or the missing-tags bar sits
    above it, so it can't cover them. */
@@ -183,14 +217,18 @@ html, body { overflow-x: hidden; }
 .segment-editor-frame:first-child {
   margin-top: var(--seg-box-pull-y);
 }
-.segment-editor .ProseMirror {
+/* A closed row's translation (.segment-target-box) is drawn as the editor
+   that replaces it, so a click lands where the user aimed. */
+.segment-editor .ProseMirror,
+.segment-target-box {
   outline: none;
   min-height: 1.5em;
   font-size: 0.875rem;
   line-height: 1.25rem;
   padding: var(--seg-editor-pad-y) var(--seg-editor-pad-x);
   width: 100%;
-  border: 1px dashed;
+  /* Invisible, but it keeps the text where the box geometry puts it. */
+  border: 1px solid transparent;
   border-radius: 0.25rem;
 }
 .segment-editor .ProseMirror p {
@@ -298,30 +336,37 @@ html, body { overflow-x: hidden; }
   float: left;
   height: 0;
 }
-/* Light mode. The border is the active source box's (SegmentRow
-   `segment-source-box`), so the two read as one frame. */
+/* Light mode */
 .segment-editor .ProseMirror {
-  border-color: var(--color-gray-300);
   background: var(--seg-editor-bg);
   color: #111827;
 }
 /* Dark mode */
 .dark .segment-editor .ProseMirror {
-  border-color: var(--color-gray-700);
   background: var(--seg-editor-bg);
   color: #f3f4f6;
 }
-/* Read-only mode */
+/* Read-only mode: muted next to an editable row, but never lighter than the
+   closed row (.segment-target-box), so opening a row never fades its text. */
 .segment-editor.segment-editor-readonly .ProseMirror {
-  border-color: #e5e7eb;
   background: var(--seg-editor-bg-readonly);
-  color: #6b7280;
+  color: var(--color-gray-700);
   cursor: default;
 }
 .dark .segment-editor.segment-editor-readonly .ProseMirror {
-  border-color: #374151;
   background: var(--seg-editor-bg-readonly);
   color: #9ca3af;
+}
+/* A closed row's translation is grey; the open row's text has full colour.
+   Same shades as SegmentRow's source cell. */
+.segment-target-box {
+  color: var(--color-gray-600);
+}
+.dark .segment-target-box {
+  color: var(--color-gray-400);
+}
+.segment-target-box.segment-target-box-readonly {
+  cursor: default;
 }
 
 /* --- XLIFF Tag Chips --- */

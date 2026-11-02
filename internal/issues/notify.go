@@ -11,7 +11,6 @@ import (
 	"openloc/internal/emaillayout"
 	"openloc/internal/logging"
 	"openloc/internal/notification"
-	"openloc/internal/ptr"
 )
 
 // The bell and email show at most this much of a comment.
@@ -23,91 +22,40 @@ const orgNotifyTimeout = 10 * time.Second
 func (s *Service) link(path string) string { return emaillayout.AppURL(s.baseURL, path) }
 
 // issueThread is the email thread of an issue: every email about it, to the
-// support team or the reporter, is in it, and the new-issue email starts it.
-// The id holds the app's host and the issue's creation time besides its
-// number: two deployments, or one whose numbers start over after a database
-// reset, never share a thread, and a new-issue email never repeats a message
-// id a mailbox has already seen (it would be dropped).
-func issueThread(baseURL string, id int64, filed time.Time, root bool) emaillayout.Thread {
+// support team or the reporter, names it, so mail apps group them. The id
+// holds the app's host and the issue's creation time besides its number: two
+// deployments, or one whose numbers start over after a database reset, never
+// share a thread.
+func issueThread(baseURL string, id int64, filed time.Time) emaillayout.Thread {
 	host := "openloc"
 	if u, err := url.Parse(baseURL); err == nil && u.Hostname() != "" {
 		host = u.Hostname()
 	}
-	return emaillayout.Thread{ID: fmt.Sprintf("issue-%d-%d.%s", id, filed.UnixMicro(), host), Root: root}
+	return emaillayout.Thread{ID: fmt.Sprintf("issue-%d-%d.%s", id, filed.UnixMicro(), host)}
 }
 
-// emailOperatorsNewIssue tells every platform admin about a new issue.
-func (s *Service) emailOperatorsNewIssue(ctx context.Context, issue db.Issue) {
-	s.emailOperators(ctx, issue.ID, emailNewIssue, "")
+// notifyNewIssue posts a new issue to Slack when it is set up. No email goes
+// out: the support team finds new issues in Slack and under Reported issues.
+func (s *Service) notifyNewIssue(ctx context.Context, issue db.Issue) {
+	if s.slack != nil {
+		s.postToSlack(ctx, slackPostPayload{IssueID: issue.ID, Kind: slackNewIssue})
+	}
 }
 
-// emailOperatorsReply tells every platform admin that the reporter commented.
-func (s *Service) emailOperatorsReply(ctx context.Context, issue db.Issue, body *string) {
-	text := "(attachments)"
-	if body != nil {
-		text = truncate(plainText(*body), 2000)
-	}
-	s.emailOperators(ctx, issue.ID, emailReply, text)
+// notifyReply tells the support team that someone in the reporter's org
+// commented: in the issue's Slack thread, and by email to the assignee.
+func (s *Service) notifyReply(ctx context.Context, issue db.Issue, actorID int64, body *string) {
+	text := commentPreview(body)
+	s.postWritten(ctx, issue.ID, slackReply, actorID, "", text)
+	s.emailAssignee(ctx, issue, actorID, assigneeNotice{Kind: noticeReply, Text: text})
 }
 
-// operatorEmail is the subject and body of one operator email about row.
-func operatorEmail(baseURL, kind string, row db.GetIssueForPlatformRow, reply string) (string, emaillayout.Content, error) {
-	button := &emaillayout.Button{Label: "Open the issue", URL: emaillayout.AppURL(baseURL, fmt.Sprintf("/platform/issues/%d", row.ID))}
-	switch kind {
-	case emailNewIssue:
-		return notification.IssueSubject(row.ID, row.Title), emaillayout.Content{
-			Heading: "A new issue was reported",
-			Body: emaillayout.Join(
-				emaillayout.P("%s", emaillayout.Strong(row.Title)),
-				emaillayout.Callout("Description", truncate(plainText(row.Description), 2000)),
-			),
-			Details: []emaillayout.Row{
-				{Label: "Organization", Value: row.OrgName},
-				{Label: "Reporter", Value: fmt.Sprintf("%s (%s)", row.ReporterName, row.ReporterEmail)},
-				{Label: "Kind", Value: KindSummary(row.Kind, ptr.Deref(row.Severity))},
-				{Label: "Area", Value: areaLabels[row.Area]},
-			},
-			Button: button,
-		}, nil
-	case emailReply:
-		return notification.IssueSubject(row.ID, row.Title), emaillayout.Content{
-			Heading: "The reporter replied",
-			Body: emaillayout.Join(
-				emaillayout.P("%s", emaillayout.Strong(row.Title)),
-				emaillayout.Callout("Reply", reply),
-			),
-			Details: []emaillayout.Row{
-				{Label: "Organization", Value: row.OrgName},
-				{Label: "Reporter", Value: row.ReporterName},
-			},
-			Button: button,
-		}, nil
+// commentPreview is a comment's text as the support team's notices quote it.
+func commentPreview(body *string) string {
+	if body == nil {
+		return "(attachments)"
 	}
-	return "", emaillayout.Content{}, fmt.Errorf("unknown issue email kind %q", kind)
-}
-
-// emailOperators emails every platform admin about the issue. With a queue,
-// each email is a worker task, so the request does not wait on the mail
-// server; without one, or when the queue refuses a task, it is sent here.
-// Best-effort: a failed email never fails the request.
-func (s *Service) emailOperators(ctx context.Context, issueID int64, kind, reply string) {
-	if s.sender == nil || len(s.operators) == 0 {
-		return
-	}
-	mailer := NewOperatorMailer(db.New(s.pool), s.sender, s.baseURL)
-	for _, to := range s.operators {
-		p := operatorEmailPayload{IssueID: issueID, Kind: kind, To: to, Reply: reply}
-		if s.queue != nil {
-			err := s.enqueueOperatorEmail(p)
-			if err == nil {
-				continue
-			}
-			logging.Warn(ctx, err, "queueing an issue email failed; sending it now", "issue-email-enqueue-failed", logging.IssueID(issueID))
-		}
-		if err := mailer.deliver(ctx, p); err != nil {
-			mailer.report(ctx, p, err)
-		}
-	}
+	return truncate(plainText(*body), 2000)
 }
 
 // notifyReporter tells the reporter about an operator's comment or status
@@ -120,7 +68,7 @@ func (s *Service) notifyReporter(ctx context.Context, issue db.Issue, op Operato
 		Type: notification.EventIssueUpdated, TenantID: issue.TenantID, RecipientID: issue.ReporterID,
 		ActorID: op.UserID, IssueID: issue.ID, IssueTitle: issue.Title,
 		Link:   s.link(fmt.Sprintf("/issues/%d", issue.ID)),
-		Thread: issueThread(s.baseURL, issue.ID, issue.CreatedAt.Time, false),
+		Thread: issueThread(s.baseURL, issue.ID, issue.CreatedAt.Time),
 	}
 	if status != nil {
 		e.IssueStatus = statusLabels[*status]

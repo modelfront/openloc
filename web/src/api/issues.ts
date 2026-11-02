@@ -1,5 +1,6 @@
 import { request } from './request'
 import { fetchBlob } from './download'
+import { formatSort, type IssueSortLevel } from '@/lib/issue-sort'
 
 // Issues a user reports to the support team (the deployment's platform admins),
 // and their conversation. Managers see their org's, other members their own;
@@ -237,8 +238,10 @@ export interface IssueFilter {
   severities?: IssueSeverity[]
   /** A part of the title or description. */
   q?: string
-  /** Operators only: org ids. */
+  /** Operators only, with reporters: issues of these orgs or by these reporters. */
   orgs?: number[]
+  /** Operators only: reporter (user) ids; see orgs. */
+  reporters?: number[]
   /** Operators only. */
   priorities?: IssuePriority[]
   /** Operators only: issues with any of these tags. */
@@ -247,8 +250,8 @@ export interface IssueFilter {
   assignees?: string[]
   /** Operators only: the assistant's check. */
   verifications?: IssueVerification[]
-  /** The list is by last update, newest first unless this is set. */
-  oldestFirst?: boolean
+  /** The list's order; none is newest update first. */
+  sort?: IssueSortLevel[]
 }
 
 /** A support team member an issue may be assigned to. */
@@ -258,31 +261,57 @@ export interface IssueAssignable {
   email: string
 }
 
-/** An org that has issues, for the operators' organization filter. */
+/** An org that has issues, for the operators' reporter filter. */
 export interface IssueOrg {
   id: number
   name: string
 }
 
+/** Someone who has issues, for the operators' reporter filter; orgs names the orgs they reported in. */
+export interface IssueReporter {
+  id: number
+  name: string
+  email: string
+  orgs: string
+}
+
 export function listIssues(scope: IssueScope, cursor = '', filter: IssueFilter = {}): Promise<IssuePage> {
-  const params = new URLSearchParams()
+  const params = filterParams(scope, filter)
   if (cursor) params.set('cursor', cursor)
+  const sort = filter.sort && formatSort(filter.sort)
+  if (sort) params.set('sort', sort)
+  const qs = params.toString()
+  return request<IssuePage>(`${base(scope)}${qs ? `?${qs}` : ''}`)
+}
+
+/** How many issues the list shows with filter, over every page. */
+export function countIssues(scope: IssueScope, filter: IssueFilter = {}): Promise<number> {
+  const qs = filterParams(scope, filter).toString()
+  return request<{ count: number }>(`${base(scope)}/count${qs ? `?${qs}` : ''}`).then(r => r.count)
+}
+
+/** A list's filters as query parameters; the support team's apply on their list only. */
+function filterParams(scope: IssueScope, filter: IssueFilter): URLSearchParams {
+  const params = new URLSearchParams()
   const platform = scope === 'platform'
   const lists: [string, (string | number)[] | undefined][] = [
     ['status', filter.statuses], ['kind', filter.kinds], ['area', filter.areas], ['severity', filter.severities],
-    ['org', platform ? filter.orgs : undefined], ['priority', platform ? filter.priorities : undefined],
+    ['org', platform ? filter.orgs : undefined], ['reporter', platform ? filter.reporters : undefined],
+    ['priority', platform ? filter.priorities : undefined],
     ['tag', platform ? filter.tags : undefined], ['assignee', platform ? filter.assignees : undefined],
     ['verification', platform ? filter.verifications : undefined],
   ]
   for (const [key, values] of lists) if (values?.length) params.set(key, values.join(','))
   if (filter.q?.trim()) params.set('q', filter.q.trim())
-  if (filter.oldestFirst) params.set('sort', 'updated')
-  const qs = params.toString()
-  return request<IssuePage>(`${base(scope)}${qs ? `?${qs}` : ''}`)
+  return params
 }
 
 /** Operators only: the orgs that have issues. */
 export const listIssueOrgs = () => request<{ data: IssueOrg[] }>('/platform/issues/orgs').then(r => r.data)
+
+/** Operators only: everyone who has issues. */
+export const listIssueReporters = () =>
+  request<{ data: IssueReporter[] }>('/platform/issues/reporters').then(r => r.data)
 
 /** Operators only: the support team, who may be assigned. */
 export const listIssueAssignees = () =>

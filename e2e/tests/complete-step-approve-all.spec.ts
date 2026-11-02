@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { authHeaders, createIsolatedCATJob, login } from "./helpers";
+import { authHeaders, createIsolatedCATJob, login, seedDrafts } from "./helpers";
 
 // Complete step in the CAT editor: with segments left unapproved the dialog
 // counts drafts and untranslated segments and offers "Approve all and
@@ -21,13 +21,6 @@ async function rows(page: Page, jobId: number): Promise<Row[]> {
   return ((await res.json()).data as Row[]).sort((a, b) => a.segment_id - b.segment_id);
 }
 
-async function draft(page: Page, fileId: number, fixes: { translation_id: number; human_text: string }[]) {
-  const res = await page.request.put(`/api/files/${fileId}/translations/batch-draft`, {
-    headers: await authHeaders(page), data: { fixes },
-  });
-  expect(res.ok(), await res.text()).toBe(true);
-}
-
 async function activeStepName(page: Page, jobId: number): Promise<string | undefined> {
   const res = await page.request.get(`/api/jobs/${jobId}/workflow/steps`, { headers: await authHeaders(page) });
   expect(res.ok()).toBe(true);
@@ -47,11 +40,7 @@ test.describe("Complete step", () => {
       content: LINES.join("\n"),
     });
     try {
-      const before = await rows(page, job.jobId);
-      await draft(page, job.fileId, [
-        { translation_id: before[0].id, human_text: "Zeile eins" },
-        { translation_id: before[1].id, human_text: "Zeile zwei" },
-      ]);
+      const before = await seedDrafts(page, job, ["Zeile eins", "Zeile zwei"], await authHeaders(page));
       const firstStep = await activeStepName(page, job.jobId);
       await job.navigateToEditor(/Line one/);
 
@@ -87,12 +76,8 @@ test.describe("Complete step", () => {
       content: "Line one\nOrder 42",
     });
     try {
-      const before = await rows(page, job.jobId);
       // Standard QA's number check is an error: the target drops the 42.
-      await draft(page, job.fileId, [
-        { translation_id: before[0].id, human_text: "Zeile eins" },
-        { translation_id: before[1].id, human_text: "Bestellung" },
-      ]);
+      await seedDrafts(page, job, ["Zeile eins", "Bestellung"], await authHeaders(page));
       const firstStep = await activeStepName(page, job.jobId);
       await job.navigateToEditor(/Line one/);
 
@@ -117,8 +102,7 @@ test.describe("Complete step", () => {
       content: LINES.slice(0, 2).join("\n"),
     });
     try {
-      const before = await rows(page, job.jobId);
-      await draft(page, job.fileId, before.map((r, i) => ({ translation_id: r.id, human_text: `Zeile ${["eins", "zwei"][i]}` })));
+      await seedDrafts(page, job, ["Zeile eins", "Zeile zwei"], await authHeaders(page));
       const confirm = await page.request.post(`/api/jobs/${job.jobId}/translations/confirm-all`, { headers: await authHeaders(page) });
       expect(confirm.ok()).toBe(true);
       const firstStep = await activeStepName(page, job.jobId);

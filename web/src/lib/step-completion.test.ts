@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { unapprovedCounts, unapprovedSentence, blockedSegmentNumbers } from './step-completion'
-import type { Translation } from '../api'
 
-function tr(id: number, status: string, text: string | null): Translation {
-  return { id, segment_id: id, target_language: 'de', status, active_text: text, tm_match_percent: null,
-    predict_outcome: { predict_outcome: '', valid: false } } as Translation
+function tr(_id: number, status: string, text: string | null) {
+  return { status, hasText: !!text }
 }
 
 describe('unapprovedCounts', () => {
@@ -47,6 +45,7 @@ describe('unapprovedSentence', () => {
 describe('blockedSegmentNumbers', () => {
   const position = new Map([[10, 7], [11, 2], [12, 4], [13, 0]])
   const positionOf = (id: number) => position.get(id)
+  const numberOf = (idx: number) => String(idx + 1)
 
   it('lists the 1-based numbers of rows skipped for a QA error or a conflict, in order', () => {
     const skipped = [
@@ -54,11 +53,11 @@ describe('blockedSegmentNumbers', () => {
       { id: 11, reason: 'conflict' as const },
       { id: 12, reason: 'empty' as const },
     ]
-    expect(blockedSegmentNumbers(skipped, positionOf)).toEqual({ toFix: [3, 8], held: [] })
+    expect(blockedSegmentNumbers(skipped, positionOf, numberOf)).toEqual({ toFix: ['3', '8'], held: [] })
   })
 
   it('a row holding a tag its source lacks is one to fix', () => {
-    expect(blockedSegmentNumbers([{ id: 11, reason: 'tag_not_in_source' }], positionOf)).toEqual({ toFix: [3], held: [] })
+    expect(blockedSegmentNumbers([{ id: 11, reason: 'tag_not_in_source' }], positionOf, numberOf)).toEqual({ toFix: ['3'], held: [] })
   })
 
   // Someone else has the draft open, so it stays unapproved: completing now
@@ -69,8 +68,8 @@ describe('blockedSegmentNumbers', () => {
       { id: 10, reason: 'qa_error' as const },
       { id: 13, reason: 'held' as const },
     ]
-    expect(blockedSegmentNumbers(skipped, positionOf)).toEqual({ toFix: [8], held: [1, 5] })
-    expect(blockedSegmentNumbers([{ id: 12, reason: 'held' }], positionOf)).toEqual({ toFix: [], held: [5] })
+    expect(blockedSegmentNumbers(skipped, positionOf, numberOf)).toEqual({ toFix: ['8'], held: ['1', '5'] })
+    expect(blockedSegmentNumbers([{ id: 12, reason: 'held' }], positionOf, numberOf)).toEqual({ toFix: [], held: ['5'] })
   })
 
   it('is null when every skipped row is one Approve all never approves', () => {
@@ -79,6 +78,6 @@ describe('blockedSegmentNumbers', () => {
       { id: 11, reason: 'unchanged' as const },
       { id: 10, reason: 'auto_approved' as const },
     ]
-    expect(blockedSegmentNumbers(skipped, positionOf)).toBeNull()
+    expect(blockedSegmentNumbers(skipped, positionOf, numberOf)).toBeNull()
   })
 })

@@ -124,6 +124,7 @@ func TestIntegrationTemplateForeignTMProfileID(t *testing.T) {
 	victimProfile := testutil.SeedTMProfile(t, q, victim, "Victim profile", 0.8)
 	attackerUser, attacker := testutil.RegisterUser(t, q, "attacker")
 	ownProfile := testutil.SeedTMProfile(t, q, attacker, "Own profile", 0.7)
+	standard := testutil.LibraryWorkflow(t, q, attacker)
 
 	// followers counts the attacker's settings rows that follow the victim's profile.
 	followers := func() int64 {
@@ -147,7 +148,7 @@ func TestIntegrationTemplateForeignTMProfileID(t *testing.T) {
 
 	t.Run("create", func(t *testing.T) {
 		rec := testutil.DoRequest(t, router, http.MethodPost, "/api/templates", map[string]any{
-			"name": "Leak", "settings": map[string]any{"tm_profile_id": victimProfile.ID},
+			"name": "Leak", "workflow_id": standard, "settings": map[string]any{"tm_profile_id": victimProfile.ID},
 		}, attackerUser, attacker)
 		if n := testutil.CountRows(t, pool, `SELECT count(*) FROM templates WHERE name = 'Leak'`); n != 0 {
 			t.Errorf("a template was created with a foreign TM profile (%d rows)", n)
@@ -158,7 +159,7 @@ func TestIntegrationTemplateForeignTMProfileID(t *testing.T) {
 		testutil.AssertStatus(t, rec, http.StatusBadRequest)
 
 		rec = testutil.DoRequest(t, router, http.MethodPost, "/api/templates", map[string]any{
-			"name": "Own", "settings": map[string]any{"tm_profile_id": ownProfile.ID},
+			"name": "Own", "workflow_id": standard, "settings": map[string]any{"tm_profile_id": ownProfile.ID},
 		}, attackerUser, attacker)
 		testutil.AssertStatus(t, rec, http.StatusCreated)
 		var resp struct {

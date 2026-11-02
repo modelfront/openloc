@@ -37,19 +37,26 @@ type Deps struct {
 	// IssueReports lists openloc_report_issue: true when the deployment has
 	// platform operators to read the reports.
 	IssueReports bool
+	// LLMLog lists the LLM call log tools: true when the backend has a log
+	// (WireLLMLog). The support team's log tool also needs IssueReports, which
+	// is what makes a caller an operator.
+	LLMLog bool
 }
 
-// Server holds the pre-built per-role SDK servers and serves them over HTTP.
+// tier is one tool surface: the role tier (manager or linguist), and whether
+// the caller is on the support team, which adds the support tools.
+type tier struct{ manager, operator bool }
+
+// Server holds the pre-built per-tier SDK servers and serves them over HTTP.
 type Server struct {
 	deps Deps
-	// One SDK server per role tier, built once at construction.
+	// One SDK server per tier, built once at construction.
 	//
 	// Building per-request would mean re-running JSON Schema inference for every
 	// tool on every call. Building one shared server would mean a linguist sees
-	// manager tools in tools/list and gets a 403 from each. Two pre-built tiers
+	// manager tools in tools/list and gets a 403 from each. Pre-built tiers
 	// give correctly filtered listings at zero per-request cost.
-	manager  *sdk.Server
-	linguist *sdk.Server
+	servers map[tier]*sdk.Server
 
 	confirmKey []byte
 	now        func() time.Time
@@ -67,8 +74,13 @@ func NewServer(deps Deps) (*Server, error) {
 	if len(s.confirmKey) == 0 {
 		s.confirmKey = signedtoken.RandomKey()
 	}
-	s.manager = s.build(true)
-	s.linguist = s.build(false)
+	s.servers = map[tier]*sdk.Server{}
+	for _, manager := range []bool{true, false} {
+		for _, operator := range []bool{true, false} {
+			t := tier{manager: manager, operator: operator}
+			s.servers[t] = s.build(t)
+		}
+	}
 	return s, nil
 }
 
@@ -95,10 +107,36 @@ func (s *Server) serverFor(r *http.Request) *sdk.Server {
 		logging.Error(r.Context(), nil, "MCP request reached the endpoint without auth claims; refused", "mcp-no-claims")
 		return nil
 	}
-	if isManagerRole(claims.Role) {
-		return s.manager
+	return s.servers[s.tierFor(r.Context(), claims)]
+}
+
+// tierFor is the tool surface the caller gets: their role tier, plus the
+// support team's tools when they are a platform operator (isOperator).
+func (s *Server) tierFor(ctx context.Context, claims *auth.Claims) tier {
+	return tier{manager: isManagerRole(claims.Role), operator: s.isOperator(ctx, claims)}
+}
+
+// isOperator reports whether the caller is on the support team
+// (operatorCheck). A failed check serves the member tools.
+func (s *Server) isOperator(ctx context.Context, claims *auth.Claims) bool {
+	on, err := s.operatorCheck(ctx, claims)
+	if err != nil {
+		logging.Error(ctx, err, "checking whether the MCP caller is a platform operator failed; serving the member tools", "mcp-operator-check-failed")
+		return false
 	}
-	return s.linguist
+	return on
+}
+
+// operatorCheck reports whether the caller is on the support team: a platform
+// operator acting as themselves, not while viewing an organization as an
+// operator nor in the demo organization. The check reads the caller's
+// account, so it runs only on a deployment that takes reports, where the
+// support tools exist; the error is the lookup's.
+func (s *Server) operatorCheck(ctx context.Context, claims *auth.Claims) (bool, error) {
+	if !s.deps.IssueReports || claims.Impersonated || claims.Demo {
+		return false, nil
+	}
+	return s.deps.Backend.IsOperator(ctx)
 }
 
 // isManagerRole mirrors auth.IsManager, which operates on *http.Request. The MCP
@@ -116,14 +154,16 @@ func isOwnerAdminRole(role string) bool {
 	return role == auth.RoleOwner || role == auth.RoleAdmin
 }
 
-// build registers the tool set for one role tier.
+// build registers the tool set for one tier.
 //
-// managerTier=false yields the linguist surface: their own tasks, and the
+// manager=false yields the linguist surface: their own tasks, and the
 // job-scoped editor tools they legitimately need (segments, QA, TM, terms).
 // The project/job *enumeration* tools are manager-only, matching the
 // auth.RequireManager gate on the equivalent REST routes — a linguist must not
-// be able to enumerate the org's projects through a side door.
-func (s *Server) build(managerTier bool) *sdk.Server {
+// be able to enumerate the org's projects through a side door. operator adds
+// the support team's issue tools, the MCP side of /api/platform/issues.
+func (s *Server) build(t tier) *sdk.Server {
+	managerTier := t.manager
 	srv := sdk.NewServer(&sdk.Implementation{
 		Name:    serverName,
 		Version: s.deps.Version,
@@ -146,8 +186,13 @@ func (s *Server) build(managerTier bool) *sdk.Server {
 	registerJobOps(s, srv, managerTier, b)
 	registerResources(s, srv, managerTier, b)
 	registerConfig(s, srv, managerTier, b)
+	registerSegmentation(s, srv, managerTier, b)
 	registerInsights(s, srv, managerTier, b)
 	registerIssues(s, srv, managerTier, b)
+	if t.operator {
+		registerSupportIssues(s, srv, b)
+	}
+	registerLLMLog(s, srv, managerTier, t.operator, b)
 
 	return srv
 }
@@ -219,6 +264,11 @@ type toolSpec struct {
 	// on the manager tier like any manager tool and refused at call time for a
 	// project manager, exactly as the REST route registers and then refuses.
 	requireOwnerAdmin bool
+
+	// requireOperator restricts the tool to the support team (isOperator).
+	// Such tools are registered on the operator tiers only, so the gate is
+	// structural like requireManager, and refused at call time as well.
+	requireOperator bool
 
 	// requireWrite demands a token created with capability="write".
 	//
@@ -306,6 +356,24 @@ func addTool[In, Out any](
 		started := time.Now()
 		var zero Out
 
+		if spec.requireOperator {
+			// A failed lookup is an internal error, not a denial: the caller
+			// should try again, and the audit row says which it was.
+			var operator bool
+			var err error
+			if claims, ok := auth.ClaimsFromContext(ctx); ok {
+				operator, err = s.operatorCheck(ctx, claims)
+			}
+			if err != nil {
+				logging.Error(ctx, err, "checking whether the MCP caller is a platform operator failed", "mcp-operator-check-failed", logging.Label("tool", name))
+				record(ctx, s.deps.Audit, name, in, outcomeError, toolErrCodeInternal, started)
+				return nil, zero, fmt.Errorf("%s failed; the error has been logged", name)
+			}
+			if !operator {
+				record(ctx, s.deps.Audit, name, in, outcomeDenied, toolErrCodeDenied, started)
+				return nil, zero, errors.New("only the support team can do this")
+			}
+		}
 		if spec.requireOwnerAdmin {
 			claims, ok := auth.ClaimsFromContext(ctx)
 			if !ok || !isOwnerAdminRole(claims.Role) {
@@ -350,8 +418,7 @@ func addTool[In, Out any](
 			// another tenant" so a caller cannot probe for other tenants' data.
 			if errors.Is(err, errNotFound) {
 				record(ctx, s.deps.Audit, name, in, outcomeError, toolErrCodeNotFound, started)
-				return nil, zero, errors.New(
-					"not found, or not accessible with your current access")
+				return nil, zero, errors.New(notFoundText)
 			}
 			if errors.Is(err, errDenied) {
 				record(ctx, s.deps.Audit, name, in, outcomeDenied, toolErrCodeDenied, started)
@@ -372,6 +439,7 @@ func addTool[In, Out any](
 			// plain fmt.Errorf.
 			var inv errInvalid
 			if errors.As(err, &inv) {
+				logReportedFailure(ctx, err, name)
 				record(ctx, s.deps.Audit, name, in, outcomeError, toolErrCodeInvalid, started)
 				return nil, zero, inv
 			}

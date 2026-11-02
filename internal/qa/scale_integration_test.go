@@ -24,6 +24,7 @@ type qaScale struct {
 	userID    int64
 	tenantID  int64
 	projectID int64
+	profileID int64
 	fileID    int64
 	jobID     int64
 }
@@ -43,6 +44,7 @@ func newQAScale(t *testing.T, checks ...string) qaScale {
 	}
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "QA Scale", "source_language": "en", "target_languages": []string{"de"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenantID),
 	}, userID, tenantID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	testutil.DecodeJSON(t, rec, &created)
@@ -63,7 +65,7 @@ func newQAScale(t *testing.T, checks ...string) qaScale {
 	file := testutil.SeedFile(t, q, projectID, "scale.txt", db.FileFormatTxt)
 	job := testutil.SeedJob(t, q, file.ID, "de")
 	return qaScale{pool: pool, q: q, router: router, log: log, userID: userID, tenantID: tenantID,
-		projectID: projectID, fileID: file.ID, jobID: job.ID}
+		projectID: projectID, profileID: created.Data.ID, fileID: file.ID, jobID: job.ID}
 }
 
 // addSegment adds one segment at position pos with a German target.

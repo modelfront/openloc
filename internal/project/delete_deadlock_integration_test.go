@@ -21,6 +21,7 @@ func TestIntegrationProjectDelete_RetriesALostDeadlock(t *testing.T) {
 
 	rec := testutil.DoRequest(t, router, "POST", "/api/projects", map[string]any{
 		"name": "Deadlocked Project", "source_language": "en", "target_languages": []string{"es"},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, user.ID, tenant.ID)
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var created struct{ Data struct{ ID int64 } }

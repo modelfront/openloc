@@ -20,17 +20,18 @@ import (
 // queries see tenant 0. TestInProcessClaimsPropagation pins this contract.
 //
 // The role tier deliberately reuses isManagerRole so chat and /mcp can never
-// disagree about which tools a role sees. Tool calls on the session know they
-// come from the built-in assistant (fromBuiltInAssistant).
+// disagree about which tools a role sees. The support team's tools are never
+// on this surface: the chat runs on the AI vendor key of the organization the
+// user is signed into, and the issues of every other organization must not
+// reach a vendor those organizations never chose; an operator uses them over
+// /mcp. Tool calls on the session know they come from the built-in assistant
+// (fromBuiltInAssistant).
 //
 // Close the returned session when the conversation turn is done; it tears
 // down both ends of the pipe.
 func (s *Server) ConnectInProcess(ctx context.Context, role string) (*sdk.ClientSession, error) {
 	ctx = context.WithValue(ctx, builtInAssistantKey{}, true)
-	srv := s.linguist
-	if isManagerRole(role) {
-		srv = s.manager
-	}
+	srv := s.servers[tier{manager: isManagerRole(role)}]
 	// Symmetric transports; server side must connect first (the client
 	// initializes the MCP session during Connect).
 	ct, st := sdk.NewInMemoryTransports()

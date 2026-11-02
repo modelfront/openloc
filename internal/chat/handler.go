@@ -251,6 +251,9 @@ func (h *Handler) HandleSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The conversation already holds the user's message: a browser whose
+	// stream breaks before `done` asks again in it.
+	emit("start", map[string]any{"conversation_id": conv.ID})
 
 	// Keepalive comments, same rationale as notification/sse_handler.go: idle
 	// proxies (ALB defaults to 60s) kill silent streams, and a model turn
@@ -466,6 +469,8 @@ Answer questions about the user's projects, jobs, translations, quality and term
 When the user asks how the app works or where something is, answer from the docs pages (openloc_search_docs) and show them: point at one element with highlight; to show several, send them all at once in a single start_tour (look up any ids first) — never one highlight per message. When you ask the user to choose, end with suggest_replies so they can answer with one click.
 
 %s The user's role is %q.
+
+Finish the job in this message: nothing runs between messages. End with what you did, or with a question. Never end on a plan ("I'll do X now") — do it, or say why you stopped.
 
 Keep answers focused; prefer a short direct answer with the key numbers over an exhaustive dump.`,
 		time.Now().Format("2006-01-02"), mode, claims.Role)

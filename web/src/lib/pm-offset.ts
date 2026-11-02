@@ -32,6 +32,8 @@ interface Chunk {
   plainLen: number
   pmStart: number
   pmLen: number
+  /** The plain text this chunk contributes (`plainLen` characters). */
+  text: string
   /** Only text chunks can be indexed into; everything else is all-or-nothing. */
   isText: boolean
 }
@@ -67,14 +69,15 @@ function chunksOf(doc: PMNode): Chunk[] {
       // resolving into the middle of that structural gap.
       chunks.push({
         plainStart: plain, plainLen: BLOCK_SEPARATOR.length,
-        pmStart: pos, pmLen: 0, isText: false,
+        pmStart: pos, pmLen: 0, text: BLOCK_SEPARATOR, isText: false,
       })
       plain += BLOCK_SEPARATOR.length
     }
 
     if (node.isText) {
-      const len = node.text?.length ?? 0
-      chunks.push({ plainStart: plain, plainLen: len, pmStart: pos, pmLen: len, isText: true })
+      const text = node.text ?? ''
+      const len = text.length
+      chunks.push({ plainStart: plain, plainLen: len, pmStart: pos, pmLen: len, text, isText: true })
       plain += len
       return false
     }
@@ -83,7 +86,7 @@ function chunksOf(doc: PMNode): Chunk[] {
       const t = leafText(node, pos, parent, index)
       chunks.push({
         plainStart: plain, plainLen: t.length,
-        pmStart: pos, pmLen: node.nodeSize, isText: false,
+        pmStart: pos, pmLen: node.nodeSize, text: t, isText: false,
       })
       plain += t.length
       return false
@@ -104,6 +107,16 @@ function endPosition(doc: PMNode, chunks: Chunk[]): number {
 }
 
 /**
+ * The plain text the offsets here are measured against — the same string as
+ * `editor.getText({ blockSeparator: '\n' })`. Send this, not `doc.textContent`
+ * (which drops hardBreaks and block boundaries), to anything whose offsets come
+ * back through `plainOffsetToPm`.
+ */
+export function pmPlainText(doc: PMNode): string {
+  return chunksOf(doc).map(c => c.text).join('')
+}
+
+/**
  * Plain-text offset → ProseMirror position. Offsets past the end clamp to the
  * end of the content rather than throwing — callers are mapping third-party
  * offsets (LanguageTool) against text that may have changed underneath them.
@@ -118,6 +131,29 @@ export function plainOffsetToPm(doc: PMNode, offset: number): number {
     if (offset < chunk.plainStart + chunk.plainLen) {
       return chunk.isText ? chunk.pmStart + (offset - chunk.plainStart) : chunk.pmStart
     }
+  }
+  return endPosition(doc, chunks)
+}
+
+/**
+ * Caret stop → ProseMirror position. Caret stops count what an arrow key
+ * steps over: a character, a line break, a tag chip (one stop, though it adds
+ * no plain text). A click on a closed segment's text is measured this way
+ * (`caretOffsetAt` in lib/source-caret.ts), so the caret can tell the two
+ * sides of a chip apart. Past the end clamps to the end.
+ */
+export function caretOffsetToPm(doc: PMNode, offset: number): number {
+  const chunks = chunksOf(doc)
+  let stop = 0
+  for (const chunk of chunks) {
+    const width = chunk.isText || chunk.plainLen > 0 ? chunk.plainLen : Math.min(chunk.pmLen, 1)
+    if (offset < stop + width) {
+      if (chunk.isText) return chunk.pmStart + Math.max(0, offset - stop)
+      // A block boundary has no position of its own: its stop is the end of
+      // the block before it.
+      return chunk.pmLen === 0 ? chunk.pmStart - 1 : chunk.pmStart
+    }
+    stop += width
   }
   return endPosition(doc, chunks)
 }

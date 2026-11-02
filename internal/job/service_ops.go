@@ -30,8 +30,9 @@ type ClearResult struct {
 }
 
 // ClearTranslations reverts the job's translations — every unlocked one with
-// scope "all", or only the unconfirmed ones with "non_confirmed". First
-// workflow step only, and never while a pipeline run holds the job.
+// scope "all", or only the unconfirmed ones with "non_confirmed". Only up to
+// the first human or hybrid workflow step, and never while a pipeline run
+// holds the job.
 func (s *Service) ClearTranslations(ctx context.Context, job db.Job, scope string) (ClearResult, error) {
 	if err := s.PreflightClearTranslations(ctx, job, scope); err != nil {
 		return ClearResult{}, err
@@ -162,7 +163,8 @@ func (s *Service) PreflightClearTranslations(ctx context.Context, job db.Job, sc
 }
 
 // preflightClearJob is the job-state half of every clear: no pipeline run
-// holding the job, the job's current task taking edits, first step only.
+// holding the job, the job's current task taking edits, and the job at or
+// before its first human or hybrid step.
 func (s *Service) preflightClearJob(ctx context.Context, job db.Job) error {
 	if pipeline.IsPipelineRunning(job.Status, job.CurrentStep) {
 		return httputil.NewConflictError("pipeline is running — wait for it to finish before clearing")
@@ -173,8 +175,12 @@ func (s *Service) preflightClearJob(ctx context.Context, job db.Job) error {
 	if _, err := s.guard.Check(ctx, auth.TenantIDFromContext(ctx), taskedit.Ref{JobID: job.ID}, taskedit.Opts{}); err != nil {
 		return err
 	}
-	if !workflow.JobInFirstStep(ctx, s.queries, job) {
-		return httputil.NewForbiddenError("clear is only available in the first workflow step")
+	inWindow, err := workflow.JobInClearWindow(ctx, s.queries, job)
+	if err != nil {
+		return err
+	}
+	if !inWindow {
+		return httputil.NewForbiddenError("clear is only available up to the first human or hybrid workflow step")
 	}
 	return nil
 }

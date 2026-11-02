@@ -62,6 +62,7 @@ func (h *Handler) HandleSaveDraft(w http.ResponseWriter, r *http.Request) {
 		fail(err, "validate", "project")
 		return
 	}
+	cfg.Language = params.SourceLanguage
 	if err := settings.ValidateSetup(ctx, h.queries, tenantID, cfg); err != nil {
 		fail(err, "validate", "project setup")
 		return
@@ -140,6 +141,14 @@ func saveDraft(ctx context.Context, pool database.TxBeginner, tenantID, id int64
 				if _, err := settings.DetachTMProfile(ctx, q, project.SettingsProfileID); err != nil {
 					return fmt.Errorf("detach TM profile: %w", err)
 				}
+			}
+		}
+
+		// The body is the whole form: a form with no workflow leaves the draft
+		// with no steps.
+		if !cfg.HasWorkflow() {
+			if err := settings.ClearWorkflow(ctx, q, project.SettingsProfileID); err != nil {
+				return err
 			}
 		}
 

@@ -114,7 +114,10 @@ func PreviewContext(mode string, keys []string) (json.RawMessage, error) {
 	content := segmentprompt.Build(segmentprompt.FieldsFor(mode, keys), segmentprompt.Values{
 		SourceText: "<source text>", TargetText: "<target text>",
 		TMMatches: []segmentprompt.TMMatch{{Source: "<TM source>", Target: "<TM target>", Score: 85}},
-		Terms:     []segmentprompt.Term{{Source: "<source term>", Target: "<target term>", Status: "approved"}},
+		Terms: []segmentprompt.Term{{
+			Source: "<source term>", Target: "<target term>", Status: "approved",
+			Definition: "<definition>", Domain: "<domain>", Notes: "<notes>",
+		}},
 	})
 	body, err := batchUserMessage([]batchItem{{ID: "1", Content: content}})
 	return json.RawMessage(body), err

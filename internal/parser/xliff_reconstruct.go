@@ -73,7 +73,37 @@ func (p XLIFF) Reconstruct(original []byte, translations map[string]string) ([]b
 	err := walkTransUnits(original, func(u xliffUnit) {
 		unit := doc[u.start:u.end]
 		changed := false
-		for _, s := range u.tu.segments() {
+		segs := u.tu.segments()
+		// A run of <mrk> sentences joined in the editor merges into its first
+		// <mrk>, which takes the run's translation.
+		joined := map[string]bool{}
+		for i := 0; i < len(segs) && segs[i].mid != ""; i++ {
+			for j := len(segs) - 1; j > i; j-- {
+				translated, ok := translations[xliffRangeKey(u.tu.keyID, segs[i].mid, segs[j].mid)]
+				if !ok {
+					continue
+				}
+				mids := make([]string, 0, j-i+1)
+				for _, s := range segs[i : j+1] {
+					mids = append(mids, s.mid)
+				}
+				merged, ok := mergeSegMrks(unit, mids)
+				if !ok {
+					continue
+				}
+				unit = setMrkTarget(merged, mids[0], translated)
+				for _, mid := range mids {
+					joined[mid] = true
+				}
+				changed = true
+				i = j
+				break
+			}
+		}
+		for _, s := range segs {
+			if s.mid != "" && joined[s.mid] {
+				continue
+			}
 			translated, ok := translations[s.key]
 			if !ok {
 				continue

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveDisplayStatus, showStatusChip, deriveMatchChip, isAssistantConfirmed } from './segment-status'
+import { deriveDisplayStatus, deriveMatchChip, isAssistantConfirmed } from './segment-status'
 import type { Translation } from '../api'
 
 // Builds a Translation with sensible defaults; override only what each case
@@ -85,21 +85,6 @@ describe('deriveDisplayStatus', () => {
   })
 })
 
-describe('showStatusChip (Status column visibility)', () => {
-  it('shows a badge only for progressed states: Draft / Auto-approved / Approved', () => {
-    expect(showStatusChip('needs_review')).toBe(true)
-    expect(showStatusChip('auto_approved')).toBe(true)
-    expect(showStatusChip('approved')).toBe(true)
-  })
-
-  it('keeps the cell empty for default states (untranslated / pre_translated)', () => {
-    // Provenance for pretranslated rows is the Match column's job (MT / % /
-    // File chips) — the Status column stays quiet until something progresses.
-    expect(showStatusChip('untranslated')).toBe(false)
-    expect(showStatusChip('pre_translated')).toBe(false)
-  })
-})
-
 describe('deriveMatchChip (Match column — one exclusive chip per row)', () => {
   it('maps each origin to its chip when no repetition flags are set', () => {
     expect(deriveMatchChip({ origin: 'tm' })).toBe('tm')
@@ -112,8 +97,15 @@ describe('deriveMatchChip (Match column — one exclusive chip per row)', () => 
     expect(deriveMatchChip({ origin: '' })).toBe(null)
   })
 
-  it('repetition flags beat every origin (mutual exclusivity priority)', () => {
-    expect(deriveMatchChip({ isRepetitionSource: true, origin: 'tm' })).toBe('repetition_source')
+  it('a repetition source from TM keeps its TM chip', () => {
+    expect(deriveMatchChip({ isRepetitionSource: true, origin: 'tm' })).toBe('tm_repetition_source')
+  })
+
+  it('repetition flags beat every other origin', () => {
+    expect(deriveMatchChip({ isRepetitionSource: true, origin: 'ape' })).toBe('repetition_source')
+    expect(deriveMatchChip({ isRepetitionSource: true, origin: 'mt' })).toBe('repetition_source')
+    expect(deriveMatchChip({ isRepetitionSource: true, origin: 'file_import' })).toBe('repetition_source')
+    expect(deriveMatchChip({ isRepetition: true, origin: 'tm' })).toBe('repetition')
     expect(deriveMatchChip({ isRepetition: true, origin: 'mt' })).toBe('repetition')
     expect(deriveMatchChip({ isRepetition: true, origin: 'file_import' })).toBe('repetition')
   })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { panelInsertText } from './panel-insert'
+import { panelInsertApproves, panelInsertText } from './panel-insert'
 
 // A tagged source segment and a TMX match whose tags use another markup:
 // a rich-text file gets the match re-anchored onto the source's tags, a
@@ -22,5 +22,23 @@ describe('panelInsertText', () => {
 
   it('inserts an MT suggestion as it came', () => {
     expect(panelInsertText({ kind: 'mt', text: 'Halten Sie H2O kalt.' }, sourceRich, true)).toBe('Halten Sie H2O kalt.')
+  })
+})
+
+// An exact TM match is the answer, not a suggestion: choosing it approves the
+// segment, as pre-translation approves it. The server marks it; a fuzzy hit
+// that rounds to 100% is not marked and stays a draft.
+describe('panelInsertApproves', () => {
+  it('approves a TM match the server marks exact', () => {
+    expect(panelInsertApproves({ kind: 'tm', match: { ...match, exact: true } })).toBe(true)
+  })
+
+  it('leaves an unmarked TM match a draft, whatever its percent', () => {
+    expect(panelInsertApproves({ kind: 'tm', match: { ...match, exact: false } })).toBe(false)
+    expect(panelInsertApproves({ kind: 'tm', match })).toBe(false)
+  })
+
+  it('leaves an MT suggestion a draft', () => {
+    expect(panelInsertApproves({ kind: 'mt', text: 'Halten Sie H2O kalt.' })).toBe(false)
   })
 })

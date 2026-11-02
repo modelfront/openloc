@@ -3,7 +3,7 @@ title: "How a translation flows"
 summary: "From upload to delivery: segments, jobs, pre-translation, editing, review and export."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-27
 sources:
   - internal/pipeline/**
   - internal/job/**
@@ -67,6 +67,8 @@ Why this order? Memory holds human work from your own organization: more trustwo
 
 Two checkboxes, **Apply translation memory on start or upload** at the top of the **Translation memory** card and **Fill in machine translation on start or upload** at the top of the **Machine translation** card, decide whether these run. While the job is on its first step, they can also run later with **Pre-translate** (**Apply TM** or **Apply MT**): a manager from the selection bar on the project's **Tasks** tab, and a manager or the linguist assigned to the job from the editor toolbar, or on just the segments selected in the editor.
 
+From the selection bar, **Apply TM** and **Apply MT** queue one run per selected job and a toast says how many were queued; the jobs then run on their own. As with the editor buttons, a job that is running or past its first step is skipped. **Apply TM** leaves the **Pre-translation** step open, **Apply MT** completes it, and neither starts the AI step. A job whose project has no TM or MT engine for its language pair fails, with the reason on the job's row.
+
 A run does not have to finish. While pre-translation is working on a job, a manager or the linguist assigned to the job can click **Stop**. Everything already filled in stays, and running **Apply TM** or **Apply MT** again continues from there, because neither touches a segment that already has a translation. See [Stop a running pipeline run](/docs/guides/workflows-and-tasks#stop-a-running-pipeline-run).
 
 If pre-translation fails, the task takes no edits until it is re-run or the step is completed — see [Recover from a failed run](/docs/guides/workflows-and-tasks#recover-from-a-failed-run).
@@ -97,9 +99,11 @@ A linguist opens the task and sees every segment with one of five statuses: **Un
 
 Typing saves the segment as a **Draft** right away. **Ctrl+Enter** (Cmd+Enter on a Mac) confirms it as **Approved**. Editing an **Approved** or **Auto-approved** segment moves it back to **Draft**, because the text no longer matches what was approved.
 
-A TM match or MT suggestion inserted from the **Resources** panel is saved as a **Draft** and keeps its origin in **Match**, as after pre-translation; see [Origins and other marks](/docs/reference/segment-statuses#origins-and-other-marks).
+A TM match or MT suggestion inserted from the **Resources** panel is saved as a **Draft** and keeps its origin in **Match**, as after pre-translation, and an exact TM match is then approved; see [Origins and other marks](/docs/reference/segment-statuses#origins-and-other-marks).
 
 Selected segments can also be confirmed together from the editor's selection bar; see [Select several segments](/docs/guides/cat-editor#select-several-segments-and-act-on-them) for what it leaves out.
+
+The import segmentation is not final. In the editor, a manager or the linguist assigned to the job can split a segment at the cursor (Alt+Shift+T) or join it with the next (Alt+Shift+J, or **Join** on the selection bar). A join covers the pieces of a split, or the sentences of one paragraph. A split or join changes only that job: the file's other target languages keep the import segmentation. Segment numbers stay as imported (a split piece is "3.1"; a join keeps the first number). After a split, the target stays on the first piece, the second starts empty, and both need review. A join puts the targets together in order, and the comments and history of the removed rows move to the kept one, labelled "From segment N". An existing analysis is not re-run.
 
 Saving protects work; confirming states that the translation is final. Only confirmed segments count as done and feed the memory. See [Segment statuses](/docs/reference/segment-statuses).
 

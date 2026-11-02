@@ -3,14 +3,14 @@ title: "Connect external AI tools"
 summary: "Connect Claude, ChatGPT, Claude Code, Codex or another AI tool that supports MCP: paste one address and approve. Access keys are the fallback."
 order: 130
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-10-30
 sources:
   - internal/mcp/register_issues.go
   - web/src/pages/AISettingsPage.tsx
   - web/src/pages/SettingsPage.tsx
   - web/src/components/ai/APITokensSection.tsx
   - web/src/components/ai/ConnectAIToolsSection.tsx
-  - web/src/components/settings/ConnectedAppsSection.tsx
+  - web/src/components/ai/ConnectedAppsList.tsx
   - internal/mcp/**
   - internal/oauthserver/**
   - internal/auth/ratelimit.go
@@ -71,7 +71,7 @@ The tool opens an OpenLoc page that reads **… wants access to OpenLoc**. Sign 
 3. Under **Organization**, pick the organization the tool works in.
 4. Click **Approve**.
 
-The tool appears under **Connected apps** in your **Settings**. To use another organization, connect again and pick it.
+The tool appears under **Connected apps**, at the end of **AI settings** → **Connect an AI tool**. To use another organization, connect again and pick it.
 
 ## Use an access key instead
 
@@ -116,7 +116,7 @@ A key belongs to you and to the organization you created it in. The same key wor
 
 **Connected apps**
 
-1. Open your avatar menu and click **Settings**. Scroll to **Connected apps**.
+1. Open **AI settings** → **Connect an AI tool**. **Connected apps** is at the end. With no apps yet, it reads **No apps connected yet.**
 2. Each app shows its name, its access level, when it connected, and when it was last used.
 3. Click **Disconnect** and confirm. The app's access to this organization stops at once. You can connect it again from the app any time.
 
@@ -126,8 +126,8 @@ The tools follow your role.
 
 | Role | Read |
 |---|---|
-| Owner, admin, project manager | **Projects:** projects (with their MT router and the engine each target language goes to), files, jobs and their steps, segments and their history, comments, analyses, progress and project history. **Resources:** memories and their entries and imports, TM search and matches, term bases, terms and concepts, TM profiles. **Setup:** MT engines, MT routers, AI prompts, engines and routers, provider connections, steps, workflows, templates, QA profiles, labels and customers. **Team and analytics:** members, invites (project managers see only linguist invites), productivity, what needs attention, analytics metrics, dashboards and saved analyses. **Files:** download links for source files, translated files, TMX and term exports. **You:** your profile, notifications and theme. **Docs pages.** |
-| Linguist | Your tasks; a job's details, steps, analysis and TM leverage; segments and their history; comments; TM search and matches; term lookup; QA report; a machine translation preview; download links for the source and translated file; your profile, notifications and theme; docs pages. |
+| Owner, admin, project manager | **Projects:** projects (with their MT router and the engine each target language goes to), files, jobs and their steps, segments and their history, comments, analyses, progress and project history. **Resources:** memories and their entries and imports, TM search and matches, term bases, terms and concepts, TM profiles. **Setup:** MT engines, MT routers, AI prompts, engines and routers, provider connections, steps, workflows, templates, QA profiles, segmentation profiles, labels and customers. **Team and analytics:** members, invites (project managers see only linguist invites), productivity, what needs attention, analytics metrics, dashboards and saved analyses. **Files:** download links for source files, translated files, TMX and term exports. **Reported issues:** your organization's, with their conversations. **You:** your profile, notifications and theme. **Docs pages.** |
+| Linguist | Your tasks; a job's details, steps, analysis and TM leverage; segments and their history; comments; TM search and matches; term lookup; QA report; a machine translation preview; segmentation profiles, a preview of how one splits a text, and their SRX export; download links for the source and translated file; the issues you reported, with their conversations; your profile, notifications and theme; docs pages. |
 
 With write access (an access key with **Read and write**, or a connected app approved with write access), a connected tool makes the same changes as the built-in assistant in write mode, with the same split by role — see [the list](/docs/guides/ai-assistant#let-it-make-changes-write-mode).
 
@@ -137,13 +137,15 @@ A tool cannot change a segment someone else has [open in the editor](/docs/guide
 
 When a tool completes a step, it can pass a comment for the next assignee, like **Comment for next assignee** in the editor — see [Complete a step](/docs/guides/workflows-and-tasks#complete-a-step).
 
+A project a tool creates needs a workflow: the tool picks one from your workflows, or uses a template that brings one. Without either, creating the project fails with **workflow_id is required**, and a draft project cannot be published until it has a workflow. A template can be saved without a workflow; each project made from it then picks one.
+
 A connected tool cannot use files attached in OpenLoc's own assistant. To add a document to a project, an owner, admin or project manager's tool sends the file's text instead: plain text, HTML, Markdown, JSON, XLIFF, PO/POT, Apple strings or XML, up to 1 MB. It becomes a project file like an upload on the project page. Upload Word, PDF and Excel files, and anything larger, on the project page. The same way back: a tool can read an exported file's text, for these formats or a bilingual XLIFF, up to 1 MB, in the target languages the user may export.
 
-Every role can also report an issue to the support team, even with read access only. Like the changes below, it takes two calls: the first shows you the report, the second sends it. See [Report an issue](/docs/guides/report-an-issue).
+Every role can also report an issue to the support team, even with read access only. Like the changes below, it takes two calls: the first shows you the report, the second sends it. With write access, a tool also replies to the issues you can see, confirms a fix and changes an issue's kind, as on the **Reported issues** page; a reply reaches the support team. It cannot delete an issue. See [Report an issue](/docs/guides/report-an-issue).
 
 ### Changes that need a second call
 
-A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, an invite to the organization, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile or a member's role) take two calls:
+A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, an invite to the organization, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile, segmentation profile or a member's role) take two calls:
 
 1. The first call changes nothing. It returns a preview of what would happen, with knock-on effects such as how many projects use the thing, and a `confirm_token`.
 2. The tool shows you the preview. Only after you approve does it call again with the `confirm_token` and the same arguments. That call makes the change.
@@ -166,6 +168,8 @@ Creating and editing prompts, and creating, editing and deleting AI engines and 
 A tool can edit a prompt you already have: its instructions, what each segment carries with it, and the rules for particular languages. It cannot change the prompt's type — engines are built on it — and it cannot touch the built-in templates, which stay read-only. The context and the language rules are replaced rather than added to, so a tool that changes one of them sends the whole set back.
 
 A connected tool never adds a provider connection, because that means handling an API key — add it once under AI settings, and the tool picks it from the connections that already exist. Pointing a project at an MT router replaces whatever router the project followed before.
+
+A tool can also set a QA profile's [number format by language](/docs/guides/quality-assurance#number-format-by-language) and what the [**Placeables** check](/docs/guides/quality-assurance#the-checks) compares. It sends the whole setting of that check back, because that replaces the stored one.
 
 Running QA from a tool works exactly like the button in the app, ignored findings included — see [The AI assistant](/docs/guides/ai-assistant#let-it-make-changes-write-mode).
 

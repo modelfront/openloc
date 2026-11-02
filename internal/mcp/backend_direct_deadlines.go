@@ -161,7 +161,7 @@ func patchStepDeadlines(existing []db.WorkflowStep, current settings.StepDeadlin
 // workflowStepSummaries is the read shape both tools answer with, so a write
 // reports exactly what a follow-up read would show.
 func (b *directBackend) workflowStepSummaries(ctx context.Context, tenantID, profileID int64) ([]ProjectWorkflowStepSummary, error) {
-	steps, err := settings.ListStepsWithDeadlines(ctx, b.q, profileID)
+	steps, err := settings.ListStepsWithDeadlines(ctx, b.q, tenantID, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +170,7 @@ func (b *directBackend) workflowStepSummaries(ctx context.Context, tenantID, pro
 		item := ProjectWorkflowStepSummary{
 			WorkflowStepID: s.ID, Name: s.Name, StepOrder: s.StepOrder, StepType: s.StepType,
 			LanguageDeadlines: make([]StepLanguageDeadline, 0, len(s.LanguageDeadlines)),
+			Locked:            s.Locked, ReachedJobs: s.ReachedJobs,
 		}
 		if s.Deadline.Valid {
 			item.Deadline = s.Deadline.Time.UTC().Format(time.RFC3339)

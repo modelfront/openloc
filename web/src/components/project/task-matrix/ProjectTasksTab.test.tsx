@@ -165,16 +165,16 @@ describe('ProjectTasksTab', () => {
     expect(rowKeys(review)).toEqual(['task-row-job:1'])
   })
 
-  it('a step table gives each value its own cell: language, file, assignee, deadline, words, note icons — no Open button', async () => {
+  it('a step table gives each value its own cell: language, file, words, assignee, status, note icons — no Open button', async () => {
     await renderPage()
     const review = screen.getByTestId('task-step-section-200')
     expect(within(review).getAllByRole('columnheader').map(h => h.textContent)).toEqual(
-      ['', 'Lang', 'File', 'Assignee', 'Deadline', 'Words', ''],
+      ['', 'Lang', 'File', 'Words', 'Assignee', '', ''],
     )
     const row = screen.getByTestId('task-row-job:1')
     // The first cell's text is the state, there for screen readers only.
     expect(within(row).getAllByRole('cell').map(c => c.textContent)).toEqual(
-      ['In progress', 'de', 'guide.docx', 'Bob', expect.stringMatching(/^Due /), '120', ''],
+      ['In progress', 'de', 'guide.docx', '120', 'Bob', expect.stringMatching(/^Due /), ''],
     )
     expect(within(review).getByTestId('task-status-job:1')).toHaveClass('sr-only')
     expect(within(review).getByTestId('task-status-job:1')).toHaveAttribute('data-state', 'in_progress')
@@ -207,34 +207,56 @@ describe('ProjectTasksTab', () => {
     expect(deadline).toHaveClass(...chipVariants({ size: 'default' }).split(' ').filter(c => /^(px|py|text)-/.test(c)))
   })
 
-  it('a row takes its state\'s colour; an error is a red icon whose tooltip gives the message', async () => {
+  it('a row takes its state\'s colour; an error is a red Error chip whose tooltip gives the message', async () => {
     await renderPage()
     // Same classes as a matrix cell of that state: the row is the surface.
     expect(screen.getByTestId('task-row-job:1')).toHaveClass(...chipSurfaceClass('yellow').split(' '))
     expect(screen.getByTestId('task-row-job:3')).toHaveClass(...chipSurfaceClass('red').split(' '))
     expect(screen.getByTestId('task-status-job:3')).toHaveTextContent('Error')
 
-    // An icon only: the message is not on the row until the tooltip opens.
-    const icon = within(screen.getByTestId('task-row-job:3')).getByLabelText('Error')
+    // The chip says Error; the message waits for the tooltip.
+    const chip = within(screen.getByTestId('task-row-job:3')).getByTestId('task-error-chip')
+    expect(chip).toHaveTextContent(/^Error$/)
+    expect(chip).toHaveClass(...chipVariants({ color: 'red', size: 'default' }).split(' '))
     expect(screen.queryByText('MT engine rejected the API key.')).not.toBeInTheDocument()
-    await userEvent.hover(icon)
+    await userEvent.hover(chip)
     expect(await screen.findByText('MT engine rejected the API key.')).toBeInTheDocument()
-    // Rows without an error carry no icon.
-    expect(within(screen.getByTestId('task-row-job:1')).queryByLabelText('Error')).not.toBeInTheDocument()
+    // The chip says it, so the note column carries no error icon.
+    expect(within(screen.getByTestId('task-row-job:3')).queryByLabelText(/Error/)).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('task-row-job:1')).queryByTestId('task-error-chip')).not.toBeInTheDocument()
   })
 
-  it('a row shows one icon: the error wins, and its tooltip carries every note', async () => {
+  it('a failed row that was sent back shows the Error chip and the sent-back icon', async () => {
     // Job 3 failed on Translation, which Review had sent back: Review is the
     // rejected task, Translation the one in progress again.
     mockListProjectTasks.mockResolvedValue(tasks.map(t =>
       t.id === 32 ? { ...t, status: 'rejected' as const, rejection_reason: 'Wrong register.' } : t))
     await renderPage()
     const row = screen.getByTestId('task-row-job:3')
-    const icon = within(row).getByLabelText('Error, Sent back')
-    expect(within(row).getAllByLabelText(/Error|Sent back|AI step/)).toHaveLength(1)
-    await userEvent.hover(icon)
-    expect(await screen.findByText('MT engine rejected the API key.')).toBeInTheDocument()
-    expect(screen.getByText('Wrong register.')).toBeInTheDocument()
+    expect(within(row).getByTestId('task-error-chip')).toBeInTheDocument()
+    await userEvent.hover(within(row).getByLabelText('Sent back'))
+    expect(await screen.findByText('Wrong register.')).toBeInTheDocument()
+  })
+
+  it('a running pre-translation shows its progress where the deadline goes, as in the editor', async () => {
+    const running = makeJob({
+      id: 2, file_id: 10, file_name: 'guide.docx', target_language: 'fr', word_count: 120,
+      pipeline_status: 'in_progress', current_step: 'Pre-translating', translated_count: 1200, total_count: 4000,
+      workflow_step: activeStep(21),
+    })
+    const finished = makeJob({
+      id: 1, file_id: 10, file_name: 'guide.docx', target_language: 'de', word_count: 120,
+      pipeline_status: 'in_progress', current_step: 'Translation complete', translated_count: 4000, total_count: 4000,
+      workflow_step: activeStep(12),
+    })
+    await renderPage('/projects/42', [finished, running, jobs[2]])
+    const progress = within(screen.getByTestId('task-row-job:2')).getByTestId('task-progress-chip')
+    expect(progress).toHaveTextContent('Translating 1,200 / 4,000')
+    expect(progress).toHaveClass('animate-pulse', ...chipVariants({ color: 'blue' }).split(' '))
+    // A finished run shows the task's deadline, not a frozen counter.
+    const done = screen.getByTestId('task-row-job:1')
+    expect(within(done).queryByTestId('task-progress-chip')).not.toBeInTheDocument()
+    expect(within(done).getByTestId('deadline-pill')).toBeInTheDocument()
   })
 
   it('a job sent back shows an icon on its row under the reopened step; the tooltip gives the reviewer\'s reason', async () => {
@@ -312,6 +334,12 @@ describe('ProjectTasksTab', () => {
     fireEvent.click(row)
     expect(screen.queryByTestId('editor-route')).not.toBeInTheDocument()
 
+    // A long label ends in "…" inside the column, with the whole text on hover.
+    const progress = within(row).getByTestId('task-progress-chip')
+    expect(progress).toHaveTextContent('AI step (QE+APE): 3 / 8')
+    expect(progress).toHaveAttribute('title', 'AI step (QE+APE): 3 / 8')
+    expect(progress).toHaveClass('max-w-full')
+    expect(within(progress).getByText('AI step (QE+APE): 3 / 8')).toHaveClass('truncate')
     const icon = within(row).getByLabelText('AI step running')
     await userEvent.hover(icon)
     expect(await screen.findByText('The AI step is running. The job opens when it finishes.')).toBeInTheDocument()
@@ -731,7 +759,20 @@ describe('ProjectTasksTab', () => {
 
     const failed = cell('job:3|100')
     expect(failed).toHaveAttribute('data-state', 'error')
-    expect(within(failed).getByTestId('task-cell-error')).toHaveTextContent('MT engine rejected the API key.')
+    await userEvent.hover(within(failed).getByTestId('task-error-chip'))
+    expect(await screen.findByText('MT engine rejected the API key.')).toBeInTheDocument()
+  })
+
+  it('in the expanded view, a running pre-translation shows its progress on the job\'s current task only', async () => {
+    const running = makeJob({
+      id: 2, file_id: 10, file_name: 'guide.docx', target_language: 'fr', word_count: 120,
+      pipeline_status: 'in_progress', current_step: 'Pre-translating', translated_count: 5, total_count: 40,
+      workflow_step: activeStep(21),
+    })
+    const { modal } = await renderExpanded('/projects/42', [jobs[0], running, jobs[2]])
+    expect(within(within(modal).getByTestId('task-cell-job:2|100')).getByTestId('task-progress-chip'))
+      .toHaveTextContent('Translating 5 / 40')
+    expect(within(within(modal).getByTestId('task-cell-job:2|200')).queryByTestId('task-progress-chip')).not.toBeInTheDocument()
   })
 
   it('in the expanded view, a task handed a comment says so, finished or not; hover gives the comment', async () => {

@@ -22,6 +22,10 @@ type ProjectWorkflowStepSummary struct {
 	// own; empty when none is set. An ai step never has one.
 	Deadline          string                 `json:"deadline"`
 	LanguageDeadlines []StepLanguageDeadline `json:"language_deadlines"`
+	// Locked: jobs have reached this step or one after it, so a workflow
+	// edit must keep it in place. ReachedJobs counts the jobs that reached it.
+	Locked      bool `json:"locked"`
+	ReachedJobs int  `json:"reached_jobs"`
 }
 
 type ProjectWorkflowStepList struct {

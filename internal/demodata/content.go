@@ -118,6 +118,11 @@ var emailRows = []row{
 	{"You are receiving this email because you booked with Nordwind Travel.", approvedTM("Sie erhalten diese E-Mail, weil Sie bei Nordwind Travel gebucht haben.", 100), empty},
 	{"Unsubscribe", human("Abmelden"), human("Se désabonner")},
 	{"View in browser", human("Im Browser anzeigen"), empty},
+	{"Check-in from 3:00 PM, check-out until 11:00 AM.", preMT("Anreise ab 15:00 Uhr, Abreise bis 11:00 Uhr."), preMT("Arrivée à partir de 15 h, départ jusqu'à 11 h.")},
+	{"Offer valid until March 14, 2026.", preMT("Angebot gültig bis 14.03.2026."), preMT("Offre valable jusqu'au 14 mars 2026.")},
+	// The German keeps 82 but writes °C for the source's °F, so the Units
+	// check has something to report: do not "fix" it to 28 °C.
+	{"The rooftop pool is 82 feet long and heated to 82 °F.", preMT("Der Pool auf dem Dach ist 25 m lang und auf 82 °C beheizt."), empty},
 }
 
 var ifuRows = []row{

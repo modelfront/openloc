@@ -7,8 +7,7 @@
  * whitespace markers, plain text — since each renderer paints the ranges that
  * intersect its own window (see `renderRanges` in lib/segment-decorations.tsx).
  *
- * Producers: `termRanges` (lib/term-ranges.ts) and `tmDiffRanges`
- * (lib/tm-diff.ts).
+ * The producers are combined in `decorationRanges` (lib/segment-decorations.tsx).
  */
 
 export interface DecoratedRange {
@@ -23,6 +22,8 @@ export interface DecoratedRange {
    *  is zero-width (`start === end`) and carries words the text no longer
    *  has (lib/track-changes.ts). */
   ghost?: string
+  /** Text a click on the span inserts into the target (a placeable). */
+  insertText?: string
 }
 
 /**
@@ -56,13 +57,14 @@ export function mergeRanges(...lists: DecoratedRange[][]): DecoratedRange[] {
 
     const className = covering.map(r => r.className).filter(Boolean).join(' ')
     const title = covering.find(r => r.title)?.title
+    const insertText = covering.find(r => r.insertText)?.insertText
 
     const prev = out[out.length - 1]
-    if (prev && prev.end === start && prev.className === className && prev.title === title) {
+    if (prev && prev.end === start && prev.className === className && prev.title === title && prev.insertText === insertText) {
       prev.end = end
       continue
     }
-    out.push({ start, end, className, ...(title ? { title } : {}) })
+    out.push({ start, end, className, ...(title ? { title } : {}), ...(insertText ? { insertText } : {}) })
   }
   return out
 }

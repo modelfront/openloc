@@ -3,9 +3,10 @@ title: "Templates"
 summary: "Save a project setup as a template and start new projects from it."
 order: 80
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-17
+updated_at: 2026-10-30
 sources:
   - web/src/pages/TemplateList.tsx
+  - web/src/pages/TemplateCreate.tsx
   - web/src/pages/TemplateDetail.tsx
   - web/src/pages/ProjectCreate.tsx
   - web/src/pages/ProjectDetail.tsx
@@ -42,21 +43,22 @@ A template page has two tabs, **Settings** and **Workflow**. The **Project setti
 | Block | What is saved |
 | --- | --- |
 | **Project name**, **Source language**, **Target languages** and the labels | What a project made from the template starts with. The project name starts as the template's name; leave any other field empty and the new project's field starts empty too. With no languages set, the New project page suggests them from the template's memories |
-| **Project settings** | **Complete the project when every task is done**, [**Strings contain HTML**](/docs/reference/settings) and the **QA Profile** |
+| **Project settings** | **Complete the project when every task is done**, [**Strings contain HTML**](/docs/reference/settings) |
 | **Translation memory** | **Apply translation memory on start or upload**, then either a **TM profile** to follow, or the template's own list of memories with their read/write modes, order and penalties, plus the match scoring percentages and **TM lookup order** |
 | **Machine translation** | **Fill in machine translation on start or upload** and the **MT router**. A warning beside the router lists the template's target languages it has no engine for; see [Choose the router for a project or template](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template) |
-| **Terminology** | The term bases per language pair, with mode and priority |
+| **Terminology** | [**Linguists can add terms**](/docs/guides/terminology#add-a-term-while-translating), and the term bases per language pair, with mode and priority |
+| **Quality assurance** | The **QA profile** |
+| **File configurations** | The **Segmentation profile**. A project made from the template takes it when it suits the project's source language, else the profile for that language; see [Segmentation profiles](/docs/guides/segmentation#pick-a-projects-profile) |
 | **Workflow** | **Workflow** or **Raw MT**: the library workflow that the template follows and the copy of its steps, or the built-in **Pre-translation** step |
 
 A template holds no dates. The project deadline and the steps' deadlines belong to each project, and are set on the **New project** page or the project's **Workflow** tab.
 
 ## Create a template
 
-1. Open **Templates** in the left menu and click **New template**.
-2. Enter a **Name** and click **Create**. The new template starts with both pre-translation checkboxes on and two steps, Translation → Review.
-3. Click the template to open it.
-4. On the **Settings** tab, fill in **Project name**, the languages and the labels at the top of the **Project settings** block if projects made from this template should start with them. Fill in the rest of each block exactly as you would in a project. Changes save as you make them. To rename the template, click its name in the breadcrumb at the top.
-5. On the **Workflow** tab, pick the workflow the template follows. See the next section.
+1. Open **Templates** in the left menu and click **New template**. The **New template** page opens.
+2. Enter a **Template name**. Fill in **Project name**, the languages and the labels if projects made from this template should start with them.
+3. Choose a **Workflow** from your library if projects made from this template should follow one, and fill in the rest of each block exactly as you would for a new project. The workflow is optional: without one, each project made from the template picks its own.
+4. Click **Create template**. Only the name is required. The template opens, and from then on its changes save as you make them. To rename it, click its name in the breadcrumb at the top.
 
 ## Set the template's workflow
 
@@ -65,7 +67,7 @@ The **Workflow** tab has one card, headed by a **Workflow** / **Raw MT** toggle.
 1. Open the **Workflow** dropdown. It lists the workflows in your library, each with its steps; type to search.
 2. Pick one and confirm with **Use workflow**. The template gets a copy of its steps, listed read-only under the field. Projects already created from the template are not affected.
 
-Until you pick one, the steps the template starts with sit under an empty field. Picking a different workflow replaces the steps, and editing a workflow in the library never changes a template that already copied it. Workflows and the steps they are built from are made on the **Workflows** page; see [Workflows and tasks](/docs/guides/workflows-and-tasks).
+A template made before the workflow library may have steps with no workflow behind them; they sit under an empty field until you pick one. Picking a different workflow replaces the steps, and editing a workflow in the library never changes a template that already copied it. Workflows and the steps they are built from are made on the **Workflows** page; see [Workflows and tasks](/docs/guides/workflows-and-tasks).
 
 The steps read down a rail: a numbered dot, the step's name, its type icon, the AI router (a link to it on the **AI** page) and who picks the step up, or **Automated**. When **Fill in machine translation on start or upload** is on and an **MT router** is chosen, an unnumbered **Pre-translation** row heads the rail with the router as a link. On a template, that link opens the **Settings** tab and highlights the **Machine translation** card, where the router is picked.
 
@@ -84,7 +86,7 @@ To pick another template, change something so the form saves a draft, then click
 
 ![The New project form after From scratch](assets/project-create.png)
 
-The **Workflow** card shows the template's workflow selected, with its steps; a Raw MT template arrives with **Raw MT** selected. If the template follows no workflow, the steps carried over from it are listed under an empty field. To give this one project a different workflow, choose **Workflow** if the card is on **Raw MT**, then pick it in the **Workflow** dropdown — its steps replace the template's. The toggle switches at once here, with no confirmation. The template itself is unchanged.
+The **Workflow** card shows the template's workflow selected, with its steps; a Raw MT template arrives with **Raw MT** selected. If the template follows no workflow, the field is empty: a project needs one, so pick it before you click **Create project**. Without one, the click shows "Pick a workflow, or create one", takes you to the dropdown and frames it red. A template made before the workflow library may still carry steps of its own; they are listed under the empty field. To give this one project a different workflow, choose **Workflow** if the card is on **Raw MT**, then pick it in the **Workflow** dropdown — its steps replace the template's. The toggle switches at once here, with no confirmation; going from **Raw MT** back to **Workflow** with no earlier workflow empties the dropdown. The template itself is unchanged.
 
 Each step's deadline, at the right of its row, starts empty. Fill it in to say when the step is due, and use the globe beside it for a target language due on a different date — or leave them and schedule the project later on its **Workflow** tab. See [Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines).
 
@@ -114,7 +116,7 @@ When the New project form is set up the way you like, save it as a template inst
 2. Click **Save as template**, next to **Create project**.
 3. The **Template name** starts as the project name. Change it if you like and click **Save template**.
 
-Everything in the table above is saved: the project name, languages, domain and customer, the match scoring, the completion setting, the TM profile link, the workflow steps and the library workflow they follow. Files and deadlines are not. The form stays as it is, so you can go on and click **Create project**, or leave. To turn an existing project's setup into a template, open the project, click **Use as template**, and then **Save as template** on the New project page.
+Everything in the table above is saved: the project name, languages, domain and customer, the match scoring, the completion setting, the TM profile link, the workflow steps and the library workflow they follow. A workflow is optional here, so a form with none still saves. Files and deadlines are not. The form stays as it is, so you can go on and click **Create project**, or leave. To turn an existing project's setup into a template, open the project, click **Use as template**, and then **Save as template** on the New project page.
 
 ## Duplicate a template
 

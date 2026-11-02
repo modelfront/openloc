@@ -1,5 +1,6 @@
-import { test, expect } from "@playwright/test";
-import { authHeaders, login, segmentEditor, fillEditorExactly, uploadFileViaAPI, deleteFileViaAPI, createIsolatedCATJob, openJob, importTMXViaAPI, deleteTMViaAPI } from "./helpers";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import { wordEnds } from "./word-ends";
+import { authHeaders, login, segmentEditor, EDITOR_READS, fillEditorExactly, uploadFileViaAPI, deleteFileViaAPI, createIsolatedCATJob, openJob, importTMXViaAPI, deleteTMViaAPI, seedDrafts, lockTranslationViaAPI } from "./helpers";
 
 // Clicks Run QA and returns the /run-qa response and the report the editor
 // reads after it. The report is matched by start time: an older GET of the
@@ -52,9 +53,8 @@ test.describe("CAT Editor", () => {
   // is in, instead of showing the header, toolbar and filters piece by piece.
   // One run per request the screen waits for, each held back on its own.
   const slowRequests: { name: string; path: (job: { jobId: number; fileId: number }) => string }[] = [
-    { name: "translations", path: j => `/api/jobs/${j.jobId}/translations` },
+    { name: "segment index", path: j => `/api/jobs/${j.jobId}/editor/index` },
     { name: "workflow steps", path: j => `/api/jobs/${j.jobId}/workflow/steps` },
-    { name: "segments", path: j => `/api/files/${j.fileId}/segments` },
   ];
   for (const slow of slowRequests) test(`shows one loading screen until the ${slow.name} load`, async ({ page }) => {
     const job = await createIsolatedCATJob(page, {
@@ -120,6 +120,58 @@ test.describe("CAT Editor", () => {
     }
   });
 
+  test("Run QA in the toolbar and the selection bar is off, with the reason, when the project has no QA profile", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `no-qa-profile-${Date.now()}.txt`,
+      content: "first source line\n",
+      qaProfile: null,
+      onCreated: (id) => projectIds.push(id),
+    });
+    let runs = 0;
+    await page.route("**/api/jobs/*/run-qa", (route) => { runs++; return route.continue(); });
+    await job.navigateToEditor(/first source line/);
+    await page.getByTestId("segment-select-1").click();
+
+    const tooltip = page.locator('[data-slot="tooltip-content"]');
+    for (const testId of ["run-qa-btn", "segment-bulk-qa"]) {
+      const runQA = page.getByTestId(testId);
+      await expect(runQA, testId).toHaveAttribute("aria-disabled", "true");
+      await runQA.hover();
+      await expect(tooltip, testId).toContainText("no QA profile");
+      await runQA.click({ force: true });
+      await page.mouse.move(0, 0);
+      await expect(tooltip).toHaveCount(0);
+    }
+    // The browser sends requests in order, so a run either click started has
+    // reached the route before this round trip ends.
+    await page.evaluate(() => fetch("/api/auth/me").then((r) => r.status));
+    expect(runs).toBe(0);
+  });
+
+  test("the segment list and its scrollbar end above the leverage bar; a narrow bar never clips its text", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `leverage-bar-${Date.now()}.txt`,
+      content: "first source line\n",
+      onCreated: (id) => projectIds.push(id),
+    });
+    await job.navigateToEditor(/first source line/);
+    const bar = page.getByTestId("job-leverage-bar");
+    const segments = (await page.locator('[data-guide="editor.segments"]').boundingBox())!;
+    const barBox = (await bar.boundingBox())!;
+    expect(segments.y + segments.height).toBeLessThanOrEqual(barBox.y);
+
+    // Narrower than the bands, the row scrolls sideways. It must draw no
+    // scrollbar: a desktop with always-visible scrollbars would put a 15px one
+    // inside the bar's fixed 28px and clip the text. Headless Chromium never
+    // draws scrollbars, so the style is what the test can see.
+    await page.setViewportSize({ width: 800, height: 720 });
+    const row = await bar.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { overflows: el.scrollWidth > el.clientWidth, scrollbar: style.scrollbarWidth, overflowY: style.overflowY };
+    });
+    expect(row).toEqual({ overflows: true, scrollbar: "none", overflowY: "hidden" });
+  });
+
   // Inactive rows cap at 10 lines without reserving them; activating a row
   // keeps its height and its text in place (the boxes are pulled into the cell
   // padding — index.css segment-source-box / segment-editor-frame); and source
@@ -139,7 +191,7 @@ test.describe("CAT Editor", () => {
       const sourceCell = (i: number) => rows.nth(i).locator(":scope > div").nth(1);
       const targetCell = (i: number) => page.locator("[data-translation-cell]").nth(i);
       const lineHeight = 20; // text-sm
-      // The clamped element sits inside the padded preview.
+      // The clamped element sits inside the padded source box.
       const sourceClamp = (i: number) => sourceCell(i).locator(":scope > div > div").first();
 
       // A one-line row is one line tall — the clamp caps, it doesn't reserve.
@@ -152,13 +204,34 @@ test.describe("CAT Editor", () => {
 
       // First visible text, relative to its cell: { x, y }.
       const textPos = (cell: import("@playwright/test").Locator) => cell.evaluate(el => {
-        const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: n => (n.textContent?.trim() ? 1 : 3) });
+        // The segment's text, not a border action's label.
+        const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+          acceptNode: n => (n.textContent?.trim() && !n.parentElement?.closest("button") ? 1 : 3),
+        });
         const r = document.createRange();
         r.selectNodeContents(w.nextNode()!);
         const t = r.getClientRects()[0], c = el.getBoundingClientRect();
         return { x: t.left - c.left, y: t.top - c.top };
       });
       const firstTextTop = async () => (await textPos(sourceCell(0))).y;
+      // How far the row number's middle sits from the middle of the source's
+      // first line.
+      const numberOffLine = () => rows.nth(0).evaluate(row => {
+        const mid = (n: Node) => {
+          const r = document.createRange();
+          r.selectNodeContents(n);
+          const line = r.getClientRects()[0];
+          return (line.top + line.bottom) / 2;
+        };
+        const firstText = (el: Element) => {
+          const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+            acceptNode: n => (n.textContent?.trim() && !n.parentElement?.closest("button") ? 1 : 3),
+          });
+          return w.nextNode()!;
+        };
+        const [numberCell, sourceCell] = row.querySelectorAll(":scope > div");
+        return Math.abs(mid(firstText(numberCell)) - mid(firstText(sourceCell)));
+      });
 
       // Inactive: the translation's text starts where the source's does.
       const src = await textPos(sourceCell(0)), tgt = await textPos(targetCell(0));
@@ -166,6 +239,7 @@ test.describe("CAT Editor", () => {
       expect(Math.abs(tgt.x - src.x), "inactive source and translation text must share an indent").toBeLessThanOrEqual(0.5);
 
       const before = { height: (await rows.nth(0).boundingBox())!.height, textTop: await firstTextTop() };
+      expect(await numberOffLine(), "the row number must sit on the source's first line").toBeLessThanOrEqual(0.5);
 
       await page.locator("[data-translation-cell]").first().click();
       await expect(segmentEditor(page).first()).toBeVisible({ timeout: 5000 });
@@ -174,6 +248,7 @@ test.describe("CAT Editor", () => {
       const after = { height: (await rows.nth(0).boundingBox())!.height, textTop: await firstTextTop() };
       expect(Math.abs(after.height - before.height), "activating a row must not change its height").toBeLessThanOrEqual(0.5);
       expect(Math.abs(after.textTop - before.textTop), "activating a row must not move its source text").toBeLessThanOrEqual(0.5);
+      expect(await numberOffLine(), "the open row's number must sit on the source's first line").toBeLessThanOrEqual(0.5);
 
       // Active: the dashed source box and the editor box sit at the same
       // place in their cells.
@@ -191,7 +266,7 @@ test.describe("CAT Editor", () => {
   });
 
   // The active row's two boxes share one frame: the editor's border is the
-  // source box's dashed grey one, with no focus ring on top.
+  // source box's invisible one, with no focus ring on top.
   for (const theme of ["light", "dark"] as const) {
     test(`the active editor's border matches the source box (${theme})`, async ({ page }) => {
       await page.addInitScript(t => localStorage.setItem("openloc-theme", t), theme);
@@ -211,7 +286,8 @@ test.describe("CAT Editor", () => {
           return { style: cs.borderTopStyle, width: cs.borderTopWidth, color: cs.borderTopColor, shadow: cs.boxShadow };
         };
         const source = await page.getByTestId("active-source-box").evaluate(frame);
-        expect(source.style).toBe("dashed");
+        expect(source.width, "the border keeps the text where the closed row drew it").toBe("1px");
+        expect(source.color, "and draws nothing").toBe("rgba(0, 0, 0, 0)");
         expect(await editor.evaluate(frame)).toEqual(source);
       } finally {
         await job.cleanup();
@@ -219,9 +295,9 @@ test.describe("CAT Editor", () => {
     });
   }
 
-  // The header's column borders show in dark mode too, and each border's
-  // resize strip is centred on the line, not hanging off its left side.
-  test("column borders show in dark mode, and each resize strip is centred on its line", async ({ page }) => {
+  // The header's column borders and the line under it show in dark mode too,
+  // and each border's resize strip is centred on the line, not hanging off its left side.
+  test("column borders and the line under the header show in dark mode; each resize strip is centred on its line", async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem("openloc-theme", "dark"));
     const job = await createIsolatedCATJob(page, {
       fileName: `column-borders-${Date.now()}.txt`,
@@ -236,28 +312,7 @@ test.describe("CAT Editor", () => {
     expect(await handles.count()).toBeGreaterThan(0);
     for (const handle of await handles.all()) {
       const cell = handle.locator("..");
-      // WCAG contrast of the border against the header behind it, on the
-      // colours the browser actually paints (a canvas resolves oklch too).
-      const contrast = await cell.evaluate((el) => {
-        const ctx = document.createElement("canvas").getContext("2d")!;
-        const rgb = (css: string) => {
-          ctx.clearRect(0, 0, 1, 1);
-          ctx.fillStyle = css;
-          ctx.fillRect(0, 0, 1, 1);
-          return Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3));
-        };
-        const lum = (c: number[]) => {
-          const [r, g, b] = c.map((v) => {
-            const s = v / 255;
-            return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-          });
-          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        };
-        const line = lum(rgb(getComputedStyle(el).borderRightColor));
-        const bg = lum(rgb(getComputedStyle(el.parentElement!).backgroundColor));
-        return (Math.max(line, bg) + 0.05) / (Math.min(line, bg) + 0.05);
-      });
-      expect(contrast, "the column border is visible against the dark header").toBeGreaterThan(1.25);
+      expect(await borderContrast(cell, "right", "parent"), "the column border is visible against the dark header").toBeGreaterThan(1.25);
 
       const line = await cell.evaluate((el) => {
         const box = el.getBoundingClientRect();
@@ -266,12 +321,132 @@ test.describe("CAT Editor", () => {
       const strip = (await handle.boundingBox())!;
       expect(Math.abs(strip.x + strip.width / 2 - line), "the resize strip is centred on the line").toBeLessThanOrEqual(1);
     }
+
+    const header = handles.first().locator("../..");
+    expect(await borderContrast(header, "bottom", "self"), "the line under the header is visible against the dark header").toBeGreaterThan(1.25);
   });
+
+  // The Resources panel is a card like the segment table beside it: the same
+  // rounded corners, and a header band at the same height.
+  test("the Resources panel header lines up with the segment table header; the panel has the table's corners", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `resources-header-${Date.now()}.txt`,
+      content: "first source line\nsecond source line\n",
+    });
+    projectIds.push(job.projectId);
+
+    await job.navigateToEditor(/first source line/);
+    const panel = page.getByTestId("editor-sidebar");
+    await expect(panel).toBeVisible();
+    const tableHeader = (await page.getByTestId("segment-column-resize-0").locator("../..").boundingBox())!;
+    const panelHeader = async () => (await panel.locator("xpath=./div[1]").boundingBox())!;
+    // Polled: the panel opens with a width transition.
+    await expect.poll(async () => (await panelHeader()).height, { message: "same height" }).toBeCloseTo(tableHeader.height, 0);
+    expect((await panelHeader()).y, "same top").toBeCloseTo(tableHeader.y, 0);
+
+    const corners = (el: HTMLElement) => {
+      const cs = getComputedStyle(el);
+      return [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius];
+    };
+    const tableCorners = await page.locator('[data-guide="editor.segments"]').evaluate(corners);
+    expect(parseFloat(tableCorners[0])).toBeGreaterThan(0);
+    expect(await panel.evaluate(corners)).toEqual(tableCorners);
+  });
+
+  // The Status column shows an icon per progressed row, named for screen
+  // readers, and the lock is an icon in the last column.
+  test("status icons: Draft and Approved rows get their icon, a locked row the lock, an untranslated row nothing", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `status-icons-${Date.now()}.txt`,
+      content: "first source line\nsecond source line\nthird source line\n",
+    });
+    projectIds.push(job.projectId);
+
+    const [, second] = await seedDrafts(page, job, ["erste Zeile", "zweite Zeile"]);
+    // Locking approves the row.
+    await lockTranslationViaAPI(page, job, second.id);
+    await job.navigateToEditor(/first source line/);
+
+    const row = (i: number) => page.locator(`[data-segment-idx="${i}"]`);
+    await expect(row(0).getByRole("img", { name: "Draft" })).toBeVisible();
+    await expect(row(1).getByRole("img", { name: "Approved" })).toBeVisible();
+    await expect(row(1).getByRole("img", { name: "Locked" })).toBeVisible();
+    await expect(row(2).getByRole("img")).toHaveCount(0);
+
+    await row(1).getByRole("img", { name: "Approved" }).hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText("Approved");
+  });
+
+  // The header draws a border between visible columns and none after the last
+  // one. The unlabelled extras column (lock, QE, QA, comments) shows only when
+  // some row has one of those; while it is hidden, Status ends the header, and
+  // the Match | Status border, which moves Status to widen extras, has no
+  // handle.
+  for (const extras of [false, true]) {
+    test(`no column border after the last visible header column (extras ${extras ? "shown" : "hidden"})`, async ({ page }) => {
+      const job = await createIsolatedCATJob(page, {
+        fileName: `column-last-border-${Date.now()}.txt`,
+        content: "first source line\nsecond source line\n",
+      });
+      projectIds.push(job.projectId);
+
+      if (extras) {
+        const [tr] = await seedDrafts(page, job, ["erste Zeile"]);
+        await lockTranslationViaAPI(page, job, tr.id);
+      }
+      await job.navigateToEditor(/first source line/);
+      const header = page.getByTestId("segment-column-resize-0").locator("../..");
+      const cells = await header.evaluate(h => Array.from(h.children).map(c => ({
+        text: (c.textContent ?? "").trim(),
+        shown: c.getBoundingClientRect().width > 0,
+        border: getComputedStyle(c).borderRightWidth !== "0px",
+        handle: c.querySelector('[role="separator"]') !== null,
+      })));
+      expect(cells.map(c => c.text)).toEqual(["#", "Source", "Translation", "Match", "Status", ""]);
+      expect(cells.map(c => c.shown)).toEqual([true, true, true, true, true, extras]);
+      const borders = [true, true, true, true, extras, false];
+      expect(cells.map(c => c.border), "a border after every visible column but the last").toEqual(borders);
+      expect(cells.map(c => c.handle), "a resize handle on every border that can move").toEqual([true, true, true, extras, extras, false]);
+    });
+  }
+
+  // Overlay scrollbars (macOS's default) take no width and widen to about 15px
+  // over the grid's right edge on hover. Headless Chromium hides its
+  // scrollbars, which the editor detects the same way, so this runs the
+  // overlay path: the grid ends in an empty gutter after the last column.
+  test("with overlay scrollbars the grid ends in an empty gutter; the last column's icons stay clear of the scrollbar", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `overlay-gutter-${Date.now()}.txt`,
+      content: "first source line\nsecond source line\n",
+    });
+    projectIds.push(job.projectId);
+    const [tr] = await seedDrafts(page, job, ["erste Zeile"]);
+    await lockTranslationViaAPI(page, job, tr.id);
+    await job.navigateToEditor(/first source line/);
+
+    const padlock = page.locator('[data-segment-idx="0"]').getByRole("button", { name: "Unlock" });
+    await expect(padlock).toBeVisible();
+    const grid = page.getByTestId("segment-grid");
+    expect(await grid.evaluate(g => g.offsetWidth - g.clientWidth), "the scrollbar takes no width (overlay)").toBe(0);
+    const gridRight = await grid.evaluate(g => g.getBoundingClientRect().right);
+    const lastHeaderRight = await page.getByTestId("segment-column-resize-0").locator("../..")
+      .evaluate(h => h.lastElementChild!.getBoundingClientRect().right);
+    expect(gridRight - lastHeaderRight, "an 8px gutter after the last column").toBeCloseTo(8, 0);
+    const lockBox = (await padlock.boundingBox())!;
+    expect(gridRight - (lockBox.x + lockBox.width), "the padlock is clear of a hovered scrollbar").toBeGreaterThan(15);
+  });
+
+  // The column-drag tests need room for a 100px drag in the default 1280px
+  // viewport, so they open the Resources panel at a fixed 200px rather than at
+  // its click width.
+  const narrowResourcesPanel = (page: Page) =>
+    page.addInitScript(() => localStorage.setItem("cat-sidebar-width", "200"));
 
   // Dragging a header border moves width between the two neighbours, the body
   // rows follow the header, and double-click restores the defaults. Nothing is
   // saved (unit-tested in useColumnBorderDrag.test.tsx); this pins the wiring.
   test("dragging a column border resizes header and rows together; double-click resets", async ({ page }) => {
+    await narrowResourcesPanel(page);
     const job = await createIsolatedCATJob(page, {
       fileName: `column-resize-${Date.now()}.txt`,
       content: "first source line\nsecond source line\n",
@@ -309,17 +484,22 @@ test.describe("CAT Editor", () => {
     }
   });
 
-  // #, Match and Status stop at the width their header label and content
-  // need, so a drag never pushes their text into the next column. The limits
-  // are unit-tested in segment-columns.test.ts; this checks them against the
-  // real font.
-  test("dragging the #, Match and Status borders never pushes header text into the next column", async ({ page }) => {
+  // # and Match stop at the width their header label and content need, so a
+  // drag never pushes their text into the next column. Status keeps its icon's
+  // width: either border beside it moves the whole column, and extras takes
+  // the width Translation gives. The limits are unit-tested in
+  // segment-columns.test.ts; this checks them against the real font.
+  test("dragging the column borders never pushes header text into the next column; Status moves at its width", async ({ page }) => {
+    await narrowResourcesPanel(page);
     const job = await createIsolatedCATJob(page, {
       fileName: `column-min-${Date.now()}.txt`,
       content: "first source line\nsecond source line\n",
     });
 
     try {
+      // A lock gives the extras column something to show, so Status can move.
+      const trs = await seedDrafts(page, job, ["primera línea", "segunda línea"]);
+      await lockTranslationViaAPI(page, job, trs[0].id);
       await job.navigateToEditor(/first source line/);
       const header = page.getByTestId("segment-column-resize-0").locator("../..");
       const cell = (i: number) => header.locator(`xpath=./div[${i + 1}]`);
@@ -331,24 +511,34 @@ test.describe("CAT Editor", () => {
         await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 5 });
         await page.mouse.up();
       };
-      const defaults = { index: await width(0), match: await width(3), status: await width(4) };
+      const defaults = { index: await width(0), match: await width(3), status: await width(4), extras: await width(5) };
+      expect(defaults.extras, "the lock opens the extras column").toBeGreaterThan(0);
 
-      // Match and Status start at their minimums, so give Match room first.
+      // Match starts at its minimum, so give it room first.
       await drag(2, -100);
       expect(await width(3), "Match takes the width Translation gave up").toBeCloseTo(defaults.match + 100, 0);
-      await drag(3, -300);
+      await drag(2, 300);
       expect(await width(3), "Match stops at its default").toBeCloseTo(defaults.match, 0);
-      await drag(4, -300);
-      expect(await width(4), "Status stops at its default").toBeCloseTo(defaults.status, 0);
+
+      const target = await width(2);
+      await drag(4, -60);
+      expect(await width(4), "Status keeps its width as it moves").toBeCloseTo(defaults.status, 0);
+      expect(await width(5), "extras takes the width").toBeCloseTo(defaults.extras + 60, 0);
+      expect(await width(2), "Translation gives it").toBeCloseTo(target - 60, 0);
+      await drag(3, 300);
+      expect(await width(4), "Status keeps its width as it moves").toBeCloseTo(defaults.status, 0);
+      expect(await width(5), "extras stops at what its rows need").toBeCloseTo(defaults.extras, 0);
+
       await drag(0, -100);
       expect(await width(0), "# stops at its default").toBeCloseTo(defaults.index, 0);
 
-      // How far each header cell's text runs past the cell's right edge.
+      // How far each header cell's visible text runs past the cell's right
+      // edge. Status's label is for screen readers only.
       const spill = await header.evaluate(h => Array.from(h.children).map(c => {
         let textRight = -Infinity;
         const walker = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
         for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-          if (!n.textContent?.trim()) continue;
+          if (!n.textContent?.trim() || n.parentElement?.closest(".sr-only")) continue;
           const range = document.createRange();
           range.selectNodeContents(n);
           textRight = Math.max(textRight, range.getBoundingClientRect().right);
@@ -447,17 +637,123 @@ test.describe("CAT Editor", () => {
     expect(height).toBeGreaterThan(40);
   });
 
-  test("lock toggle visible when segment is active", async ({ page }) => {
-    await page.getByRole("link", { name: /demo project/i }).click();
-    await openJob(page, { fileName: "demo.txt" });
-    await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
+  // A locked row's padlock unlocks it in one click; the open segment's box has
+  // no Lock or Unlock control.
+  test("clicking a locked row's padlock unlocks it; the open segment has no lock control", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `padlock-unlock-${Date.now()}.txt`,
+      content: "first source line\nsecond source line\n",
+    });
+    projectIds.push(job.projectId);
+
+    const [, second] = await seedDrafts(page, job, ["erste Zeile", "zweite Zeile"]);
+    await lockTranslationViaAPI(page, job, second.id);
+    await job.navigateToEditor(/first source line/);
+
+    const row = page.locator('[data-segment-idx="1"]');
+    const unlocked = page.waitForResponse(r => r.url().endsWith(`/translations/${second.id}/unlock`) && r.request().method() === "POST");
+    await row.getByRole("button", { name: "Unlock" }).click();
+    expect((await unlocked).ok()).toBe(true);
+    await expect(row.getByRole("img", { name: "Locked" })).toHaveCount(0);
+    const after = await page.request.get(`/api/jobs/${job.jobId}/translations`);
+    expect(((await after.json()).data as { id: number; locked: boolean }[]).find(t => t.id === second.id)?.locked).toBe(false);
+    // The click unlocked the row without opening it.
+    await expect(segmentEditor(page)).toHaveCount(0);
 
     await page.locator("[data-translation-cell]").first().click();
-    await expect(page.locator('[data-testid="segment-editor"]').first()).toBeVisible({ timeout: 5000 });
+    await expect(segmentEditor(page).first()).toBeVisible();
+    await expect(page.getByTestId("segment-editor-actions").getByText(/lock/i)).toHaveCount(0);
+  });
 
-    // Lock toggle should be visible (either "Lock" or "Unlock")
-    const lockBtn = page.getByText(/🔒 Unlock|🔓 Lock/).first();
-    await expect(lockBtn).toBeVisible({ timeout: 2000 });
+  // The padlock shows it is clickable: hovering it gives it a background that
+  // stands out from the row behind it, on a passive row and on the open one.
+  for (const theme of ["light", "dark"] as const) {
+    test(`hovering a locked row's padlock gives it a visible background (${theme})`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem("openloc-theme", t), theme);
+      const job = await createIsolatedCATJob(page, {
+        fileName: `padlock-hover-${theme}-${Date.now()}.txt`,
+        content: "first source line\nsecond source line\n",
+      });
+      projectIds.push(job.projectId);
+
+      const [first, second] = await seedDrafts(page, job, ["erste Zeile", "zweite Zeile"]);
+      for (const t of [first, second]) {
+        await lockTranslationViaAPI(page, job, t.id);
+      }
+      await job.navigateToEditor(/first source line/);
+      // Row 1 open, row 2 passive.
+      await page.locator("[data-segment-idx=\"0\"]").locator("xpath=.//div[1]").first().click();
+      await expect(page.locator("[data-segment-idx=\"0\"]").getByTestId("segment-editor")).toBeVisible();
+
+      for (const i of [0, 1]) {
+        const row = page.locator(`[data-segment-idx="${i}"]`);
+        const padlock = row.getByRole("button", { name: "Unlock" });
+        await padlock.hover();
+        // WCAG contrast between the row as painted and the hovered padlock on
+        // it: every background from the page down, blended in order the way
+        // the browser does (a canvas resolves oklab too). Polled: the button
+        // fades its background in.
+        const contrast = () => padlock.evaluate(el => {
+          const layers = ["white"];
+          for (let n = el.parentElement; n; n = n.parentElement) layers.splice(1, 0, getComputedStyle(n).backgroundColor);
+          const ctx = document.createElement("canvas").getContext("2d")!;
+          const paint = (colors: string[]) => {
+            ctx.clearRect(0, 0, 1, 1);
+            for (const c of colors) { ctx.fillStyle = c; ctx.fillRect(0, 0, 1, 1); }
+            return Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3));
+          };
+          const lum = (c: number[]) => {
+            const [r, g, b] = c.map(v => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          const row = lum(paint(layers));
+          const hovered = lum(paint([...layers, getComputedStyle(el).backgroundColor]));
+          return (Math.max(row, hovered) + 0.05) / (Math.min(row, hovered) + 0.05);
+        });
+        await expect.poll(contrast, { message: `row ${i + 1}: the hovered padlock stands out from the row behind it`, intervals: [100, 100, 200] })
+          .toBeGreaterThan(1.15);
+      }
+    });
+  }
+
+  // A drag fixes the column widths, but the last column still follows the
+  // rows: a row locked after the drag shows its padlock inside the table.
+  test("after a column drag, a newly locked row's padlock is inside the table and unlocks it", async ({ page }) => {
+    const job = await createIsolatedCATJob(page, {
+      fileName: `padlock-after-drag-${Date.now()}.txt`,
+      content: "first source line\nsecond source line\n",
+    });
+    projectIds.push(job.projectId);
+
+    const [, second] = await seedDrafts(page, job, ["erste Zeile", "zweite Zeile"]);
+    await job.navigateToEditor(/first source line/);
+
+    // No row has a lock yet, so the last column is 0px wide when the drag
+    // measures it.
+    const handle = page.getByTestId("segment-column-resize-1");
+    const source = handle.locator("..");
+    const before = (await source.boundingBox())!.width;
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 5 });
+    await page.mouse.up();
+    expect((await source.boundingBox())!.width - before, "the drag widened Source").toBeCloseTo(60, 0);
+
+    await page.getByTestId("segment-select-2").click();
+    const locked = page.waitForResponse(r => r.url().endsWith("/translations/lock") && r.request().method() === "POST");
+    await page.getByTestId("segment-bulk-lock").click();
+    expect((await locked).ok()).toBe(true);
+
+    const padlock = page.locator('[data-segment-idx="1"]').getByRole("button", { name: "Unlock" });
+    await expect(padlock).toBeVisible();
+    const table = (await page.getByTestId("segment-column-resize-0").locator("../..").boundingBox())!;
+    const lockBox = (await padlock.boundingBox())!;
+    expect(lockBox.x + lockBox.width, "the padlock ends inside the table").toBeLessThanOrEqual(table.x + table.width + 0.5);
+
+    const unlocked = page.waitForResponse(r => r.url().endsWith(`/translations/${second.id}/unlock`) && r.request().method() === "POST");
+    await padlock.click();
+    expect((await unlocked).ok()).toBe(true);
   });
 
   test("no console errors on page load", async ({ page }) => {
@@ -675,85 +971,80 @@ test.describe("CAT Editor", () => {
     expect(errors, `Console errors: ${errors.join(", ")}`).toHaveLength(0);
   });
 
-  test("Resources panel width: drag, persist, reset, drag shut, and drag back open", async ({ page }) => {
-    // Five scenarios and three page loads in one test: 6.9s alone, 10.9s under
-    // a full 8-worker run, against a 10s default it misses by under a second.
-    // 20s is roughly twice the measured worst case — enough headroom for a
-    // busier machine, short enough that a real hang still reports quickly.
-    test.setTimeout(20_000);
+  // SIDEBAR_CLICK_WIDTH in CATEditor.tsx: the width a click opens the panel
+  // at, and the one a double-click on the handle restores.
+  const SIDEBAR_CLICK_WIDTH = 320;
+  // The panel width tests start from a fresh browser context, so the width is
+  // the click width and nothing they store reaches another test.
+  const openPanel = async (page: Page) => {
     await page.getByRole("link", { name: /demo project/i }).click();
     await openJob(page, { fileName: "demo.txt" });
     await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
-
     const sidebar = page.getByTestId("editor-sidebar");
-    const handle = page.getByTestId("resize-sidebar");
+    // Poll, don't measure once: the panel's width lands a frame or two behind
+    // the segment text under parallel load.
     const sidebarWidth = async () => Math.round((await sidebar.boundingBox())!.width);
-    // SIDEBAR_CLICK_WIDTH in CATEditor.tsx: the width a click opens the panel
-    // at, and the one a double-click on the handle restores.
-    const CLICK_WIDTH = 200;
+    await expect.poll(sidebarWidth).toBe(SIDEBAR_CLICK_WIDTH);
+    return { sidebar, sidebarWidth };
+  };
+  test("Resources panel width: drag, persist across a reload, double-click to reset", async ({ page }) => {
+    // Three page loads, about 3 s each on a CI node.
+    test.slow();
+    const { sidebarWidth } = await openPanel(page);
 
-    try {
-      await page.evaluate(() => localStorage.removeItem("cat-sidebar-width"));
-      await page.reload();
-      await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
-      // Poll, don't measure once: after a reload the panel's width lands a
-      // frame or two behind the segment text under parallel load.
-      await expect.poll(sidebarWidth).toBe(CLICK_WIDTH);
-      // Drag the handle left → the panel widens by roughly the drag distance.
-      const hb = (await handle.boundingBox())!;
-      const y = hb.y + hb.height / 2;
-      await page.mouse.move(hb.x + hb.width / 2, y);
-      await page.mouse.down();
-      await page.mouse.move(hb.x + hb.width / 2 - 120, y, { steps: 8 });
-      await page.mouse.up();
-      await expect.poll(sidebarWidth).toBeGreaterThan(CLICK_WIDTH + 80);
+    // Drag the handle left → the panel widens by roughly the drag distance.
+    const hb = (await page.getByTestId("resize-sidebar").boundingBox())!;
+    const y = hb.y + hb.height / 2;
+    await page.mouse.move(hb.x + hb.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(hb.x + hb.width / 2 - 120, y, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(sidebarWidth).toBeGreaterThan(SIDEBAR_CLICK_WIDTH + 80);
 
-      // The width is in localStorage and comes back after a reload.
-      const widened = await sidebarWidth();
-      expect(Number(await page.evaluate(() => localStorage.getItem("cat-sidebar-width")))).toBe(widened);
-      await page.reload();
-      await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
-      await expect.poll(sidebarWidth).toBe(widened);
+    // The width is in localStorage and comes back after a reload.
+    const widened = await sidebarWidth();
+    expect(Number(await page.evaluate(() => localStorage.getItem("cat-sidebar-width")))).toBe(widened);
+    await page.reload();
+    await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
+    await expect.poll(sidebarWidth).toBe(widened);
 
-      // Double-click restores the default width.
-      await page.getByTestId("resize-sidebar").dblclick();
-      await expect.poll(sidebarWidth).toBe(CLICK_WIDTH);
+    // Double-click restores the default width.
+    await page.getByTestId("resize-sidebar").dblclick();
+    await expect.poll(sidebarWidth).toBe(SIDEBAR_CLICK_WIDTH);
+  });
 
-      // Dragging the handle all the way right closes the panel instead of
-      // leaving a sliver, and reopening returns the width it had.
-      const shut = (await page.getByTestId("resize-sidebar").boundingBox())!;
-      await page.mouse.move(shut.x + shut.width / 2, shut.y + shut.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(shut.x + 900, shut.y + shut.height / 2, { steps: 10 });
-      await page.mouse.up();
-      await expect(sidebar).toHaveCount(0);
-      const reopen = page.getByTestId("open-sidebar");
-      await expect(reopen).toBeVisible();
+  test("Resources panel: drag shut, drag back open, and a click opens it at the click width", async ({ page }) => {
+    const { sidebar, sidebarWidth } = await openPanel(page);
 
-      // Dragging the closed handle leftwards pulls the panel back out at the
-      // width the drag asks for — no click needed.
-      const rb = (await reopen.boundingBox())!;
-      const ry = rb.y + rb.height / 2;
-      await page.mouse.move(rb.x + rb.width / 2, ry);
-      await page.mouse.down();
-      await page.mouse.move(rb.x + rb.width / 2 - 260, ry, { steps: 10 });
-      await page.mouse.up();
-      await expect(sidebar).toBeVisible();
-      await expect.poll(sidebarWidth).toBeGreaterThan(CLICK_WIDTH + 40);
+    // Dragging the handle all the way right closes the panel instead of
+    // leaving a sliver.
+    const shut = (await page.getByTestId("resize-sidebar").boundingBox())!;
+    await page.mouse.move(shut.x + shut.width / 2, shut.y + shut.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(shut.x + 900, shut.y + shut.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await expect(sidebar).toHaveCount(0);
+    const reopen = page.getByTestId("open-sidebar");
+    await expect(reopen).toBeVisible();
 
-      // A plain click on that tab opens it narrow instead, whatever the last
-      // dragged width was.
-      await page.getByTitle(/Close sidebar/i).click();
-      await expect(sidebar).toHaveCount(0);
-      await page.getByTestId("open-sidebar").click();
-      await expect(sidebar).toBeVisible();
-      await expect.poll(sidebarWidth).toBe(CLICK_WIDTH);
-    } finally {
-      await page.evaluate(() => {
-        localStorage.removeItem("cat-sidebar-width");
-        localStorage.setItem("cat-sidebar-open", "true");
-      });
-    }
+    // Dragging the closed handle leftwards pulls the panel back out at the
+    // width the drag asks for — no click needed.
+    const rb = (await reopen.boundingBox())!;
+    const ry = rb.y + rb.height / 2;
+    await page.mouse.move(rb.x + rb.width / 2, ry);
+    await page.mouse.down();
+    await page.mouse.move(rb.x + rb.width / 2 - 500, ry, { steps: 10 });
+    await page.mouse.up();
+    await expect(sidebar).toBeVisible();
+    await expect.poll(sidebarWidth).toBeGreaterThan(SIDEBAR_CLICK_WIDTH + 40);
+
+    // A plain click on that tab opens it at the click width instead, whatever
+    // the last dragged width was.
+    await page.getByTitle(/Close sidebar/i).click();
+    await expect(sidebar).toHaveCount(0);
+    await page.getByTestId("open-sidebar").click();
+    await expect(sidebar).toBeVisible();
+    await expect.poll(sidebarWidth).toBe(SIDEBAR_CLICK_WIDTH);
   });
 
   test("sidebar collapses and reopens via the Resources handle", async ({ page }) => {
@@ -776,12 +1067,14 @@ test.describe("CAT Editor", () => {
   });
 
   test("Resources panel: sections can be hidden and reordered, and the layout survives a reload", async ({ page }) => {
-    await page.getByRole("link", { name: /demo project/i }).click();
-    await openJob(page, { fileName: "demo.txt" });
-    await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
+    // Two editor loads and a drag in one test. Under a full 8-worker run one
+    // editor load takes up to ~8s, so the 10s default is too short; 20s, like
+    // the panel width test above.
+    test.setTimeout(20_000);
     // Start from the default layout no matter what an earlier run left behind.
     await page.evaluate(() => localStorage.removeItem("cat-sidebar-sections"));
-    await page.reload();
+    await page.getByRole("link", { name: /demo project/i }).click();
+    await openJob(page, { fileName: "demo.txt" });
     await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
 
     const sidebar = page.getByTestId("editor-sidebar");
@@ -848,7 +1141,7 @@ test.describe("CAT Editor", () => {
     await page.keyboard.press("ControlOrMeta+g");
     await expect(page.getByText("Jump to segment")).toBeVisible({ timeout: 3000 });
 
-    await page.locator('input[type="number"]').fill("5");
+    await page.getByRole("dialog", { name: "Jump to segment" }).getByRole("textbox").fill("5");
     await page.getByRole("button", { name: "Go" }).click();
 
     // Dialog closes and segment 5 (index 4) is the active row: its editor is mounted.
@@ -1409,7 +1702,8 @@ test.describe("CAT Editor", () => {
 
       // Empty the tag pair, then apply the term with the cursor between the tags:
       // it must land inside the pair, not after the closing tag.
-      await editor.getByText("contraseña").dblclick();
+      const word = await wordEnds(editor, "contraseña");
+      await page.mouse.dblclick(word.from.x, word.from.y);
       await page.keyboard.press("Backspace");
       await expect(editor).not.toContainText("contraseña");
       await expect(applicableTerm).toBeVisible();
@@ -1984,7 +2278,7 @@ test.describe("CAT Editor", () => {
       content: "Hello world\nSecond line\nThird line\n",
     });
 
-    // HOLD the translations refetch instead of letting it race. This is the
+    // HOLD the editor rows refetch instead of letting it race. This is the
     // realism switch: in localhost the invalidate-driven refetch always
     // outraces the user's re-activation, so the synchronous
     // `advanceTranslationInCache` helper is bypassed and the test passes
@@ -2008,7 +2302,7 @@ test.describe("CAT Editor", () => {
     try {
       await job.navigateToEditor(/Hello world/);
 
-      await page.route("**/api/jobs/*/translations", async (route, req) => {
+      await page.route(EDITOR_READS, async (route, req) => {
         if (req.method() === "GET" && holdRefetch) {
           await refetchGate;
         }
@@ -2248,13 +2542,11 @@ test.describe("CAT Editor", () => {
       await cells.nth(0).click();
       await expect(editor).toBeVisible({ timeout: 5000 });
       await editor.fill("first approval");
-      // Await BOTH the confirm PUT and the invalidation-driven refetch of the
-      // translations list ("Assertion after a mutation races the invalidation
-      // refetch" pattern).
+      // A confirm patches its row into the translations cache; the list is
+      // not refetched, so the confirm PUT is the response to wait for.
       const confirmSave = /\/api\/files\/\d+\/translations\/\d+$/;
       const [confirmResp] = await Promise.all([
         page.waitForResponse(r => confirmSave.test(r.url().split("?")[0]) && r.request().method() === "PUT", { timeout: 15_000 }),
-        page.waitForResponse(r => r.url().split("?")[0].endsWith(`/api/jobs/${job.jobId}/translations`) && r.request().method() === "GET", { timeout: 15_000 }),
         page.keyboard.press(isMac ? "ControlOrMeta+Enter" : "Control+Enter"),
       ]);
       expect(confirmResp.ok(), "confirm PUT should succeed").toBe(true);
@@ -2316,9 +2608,9 @@ test.describe("CAT Editor", () => {
 
       const seg1Row = cells.nth(0).locator("..");
       await expect(
-        seg1Row,
-        "row's status badge must show 'draft' (UI label for the needs_review DB status)",
-      ).toContainText(/draft/i, { timeout: 3000 });
+        seg1Row.getByRole("img", { name: "Draft" }),
+        "row's status icon must be Draft (UI name for the needs_review DB status)",
+      ).toBeVisible({ timeout: 3000 });
     } finally {
       await job.cleanup();
     }
@@ -2511,7 +2803,7 @@ test.describe("CAT Editor", () => {
       // useEffect re-captures `baselineUpdatedAtRef` from the cached
       // `translation.updated_at`, which must already be T1.
       //
-      // Hold the translations refetch across the re-activate + fill window.
+      // Hold the editor rows refetch across the re-activate + fill window.
       // `fill` is atomic against the caret, not against a late `setContent`: a
       // refetch landing between its select-all and its insert re-syncs the
       // editor and the two edits concatenate (testing.md, "CAT/TM segment-editor
@@ -3124,17 +3416,11 @@ ${transUnits.join("\n")}
       const isMac = process.platform === "darwin";
 
       // Activate a row by clicking its SOURCE cell, never the translation cell.
-      // The whole inactive row has onClick=onActivate, but on activation the
-      // translation cell sprouts a toolbar whose first control is the "🔓 Lock"
-      // toggle. Clicking the translation cell to activate is a Playwright
-      // fast-click hazard: the click point is computed on the still-inactive
-      // (toolbar-less) cell, but the toolbar renders under the cursor before
-      // the click lands, so the click occasionally hits Lock → the segment
-      // locks server-side → the editor goes read-only → the next fill throws
-      // "not an editable element". The source cell is read-only context with
-      // no interactive controls, so activating through it can't misfire. (A
-      // real user never hits this: their click completes on the static cell
-      // before the toolbar exists.)
+      // On activation the translation cell sprouts a toolbar, and Playwright
+      // computes the click point on the still-inactive cell, so a fast click
+      // can land on a toolbar button instead of the text. The source cell has
+      // no controls, so activating through it can't misfire. (A real user
+      // never hits this: their click completes before the toolbar exists.)
       const activate = (idx: number) =>
         cells.nth(idx).locator("xpath=preceding-sibling::div[1]").click();
 
@@ -3235,7 +3521,7 @@ ${transUnits.join("\n")}
   // ("Server has a different version" or "tab or session"); the test
   // asserts only that no banner appears.
   //
-  // Repro is widened by injecting latency on `/translations` GET so the
+  // Repro is widened by injecting latency on the editor rows GET so the
   // refetch lands AFTER the user's re-activation — same pattern as the
   // edit-twice test for the single-row variant.
   test("auto-propagation does NOT leave sibling rows with stale baseline → false-409 banner", async ({ page }) => {
@@ -3252,11 +3538,11 @@ ${transUnits.join("\n")}
     try {
       await job.navigateToEditor(/duplicate source line/);
 
-      // Inject latency on the translations GET so the propagate-driven
+      // Inject latency on the editor rows GET so the propagate-driven
       // invalidation refetch lands AFTER the user re-activates seg 2 — the
-      // race window. The edit-twice test uses the same trick on
-      // `/api/jobs/*/translations` for the single-row case.
-      await page.route("**/api/jobs/*/translations", async (route, req) => {
+      // race window. The edit-twice test uses the same trick for the
+      // single-row case.
+      await page.route(EDITOR_READS, async (route, req) => {
         if (req.method() === "GET") {
           await new Promise(r => setTimeout(r, 1500));
         }
@@ -3346,10 +3632,10 @@ ${transUnits.join("\n")}
         await new Promise((r) => setTimeout(r, 3000));
         await route.fulfill({ response: resp });
       });
-      // Hold the post-save translations refetch too, so an incidental refetch
+      // Hold the post-save editor rows refetch too, so an incidental refetch
       // can't freshen the baseline on its own — the propagation reconcile must
       // be the ONLY thing that prevents the false-409 (deterministic guard).
-      await page.route("**/api/jobs/*/translations", async (route, req) => {
+      await page.route(EDITOR_READS, async (route, req) => {
         if (req.method() === "GET") await new Promise((r) => setTimeout(r, 6000));
         await route.continue();
       });
@@ -3415,10 +3701,10 @@ ${transUnits.join("\n")}
         await new Promise((r) => setTimeout(r, 3000));
         await route.fulfill({ response: resp });
       });
-      // Hold the post-save translations refetch too, so an incidental refetch
+      // Hold the post-save editor rows refetch too, so an incidental refetch
       // can't freshen the baseline on its own — the propagation reconcile must
       // be the ONLY thing that prevents the false-409 (deterministic guard).
-      await page.route("**/api/jobs/*/translations", async (route, req) => {
+      await page.route(EDITOR_READS, async (route, req) => {
         if (req.method() === "GET") await new Promise((r) => setTimeout(r, 6000));
         await route.continue();
       });
@@ -3496,7 +3782,7 @@ ${transUnits.join("\n")}
       await release;
       await route.fulfill({ response: resp });
     });
-    await page.route("**/api/jobs/*/translations", async (route, req) => {
+    await page.route(EDITOR_READS, async (route, req) => {
       if (req.method() === "GET") await refetchGate;
       await route.continue();
     });
@@ -3612,10 +3898,10 @@ ${transUnits.join("\n")}
     try {
       await job.navigateToEditor(/Click/);
 
-      // Enable the hidden-character toggle. Idempotent — fine if already on.
+      // Every test starts with the hidden-character toggle off.
       const toggle = page.getByRole('button', { name: '¶' });
-      const isOn = await toggle.evaluate(el => el.classList.contains('bg-blue-600') || el.getAttribute('data-state') === 'on' || el.classList.contains('bg-primary'));
-      if (!isOn) await toggle.click();
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
       await page.locator("[data-translation-cell]").first().click();
       const editor = page.locator('[data-testid="segment-editor"] .ProseMirror').first();
@@ -3764,8 +4050,8 @@ ${transUnits.join("\n")}
 
       // Toggle whitespace on, count ¶ before save (= 1 break).
       const toggle = page.getByRole('button', { name: '¶' });
-      const isOn = await toggle.evaluate(el => el.classList.contains('bg-blue-600') || el.classList.contains('bg-primary'));
-      if (!isOn) await toggle.click();
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-pressed', 'true');
       await page.waitForTimeout(150);
       const beforeSave = await editor.locator('.ws-pilcrow').count();
       expect(beforeSave, "expected exactly 1 ¶ before save").toBe(1);
@@ -3809,8 +4095,8 @@ ${transUnits.join("\n")}
       await job.navigateToEditor(/Click/);
 
       const toggle = page.getByRole('button', { name: '¶' });
-      const isOn = await toggle.evaluate(el => el.classList.contains('bg-blue-600') || el.classList.contains('bg-primary'));
-      if (!isOn) await toggle.click();
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
       // Activate the first segment + copy source to target so the
       // editor receives the line-break rich text.
@@ -3958,26 +4244,6 @@ ${transUnits.join("\n")}
     }
   });
 
-  test("active row's source cell has a visible outlined box", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.getByRole("link", { name: /demo project/i }).click();
-    await openJob(page, { fileName: "demo.txt" });
-    await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
-
-    // Before activation: no active-source box anywhere.
-    expect(await page.getByTestId("active-source-box").count()).toBe(0);
-
-    await page.locator("[data-translation-cell]").first().click();
-    await expect(page.locator('[data-testid="segment-editor"]').first()).toBeVisible({ timeout: 5000 });
-
-    // After activation: exactly one active-source box, with a visible
-    // (non-zero) border.
-    const box = page.getByTestId("active-source-box");
-    await expect(box).toBeVisible({ timeout: 3000 });
-    const borderTopWidth = await box.evaluate(el => parseFloat(getComputedStyle(el).borderTopWidth));
-    expect(borderTopWidth, "active source box should have a non-zero border").toBeGreaterThan(0);
-  });
-
   test("Resources sidebar shows 99% near-exact for punctuation-different TM hit and surfaces short-segment fuzzy", async ({ page }) => {
     test.setTimeout(45_000);
 
@@ -4021,8 +4287,10 @@ ${transUnits.join("\n")}
       await expect(page.getByText("TM matches").first()).toBeVisible({ timeout: 5000 });
       const sidebar = page.getByTestId('editor-sidebar');
       await expect(sidebar).toBeVisible({ timeout: 5000 });
-      await expect(sidebar.getByText(/^99%$/).first(), "punctuation-only diff is a near-exact match (99%), not 100% (pg_trgm) nor ~96% (raw Levenshtein cliff)").toBeVisible({ timeout: 5000 });
-      await expect(sidebar.getByText(/^100%$/), "punctuation-different hit must not show as an exact match").not.toBeVisible();
+      // The shown percent: a docked card also strikes out its text match (100%).
+      const shownPercent = (pct: RegExp) => sidebar.getByTestId("tm-match-percent").filter({ hasText: pct });
+      await expect(shownPercent(/^99%$/).first(), "punctuation-only diff is a near-exact match (99%), not 100% (pg_trgm) nor ~96% (raw Levenshtein cliff)").toBeVisible({ timeout: 5000 });
+      await expect(shownPercent(/^100%$/), "punctuation-different hit must not show as an exact match").not.toBeVisible();
 
       // Await the italics segment's OWN match fetch before asserting. Both TM
       // entries are in the bold segment's result too, so every text assertion
@@ -4041,8 +4309,8 @@ ${transUnits.join("\n")}
       await expect(segmentEditor(page).first()).toBeVisible({ timeout: 5000 });
       await expect(sidebar.getByText("The text appears in italics").first()).toBeVisible({ timeout: 5000 });
       await expect(sidebar.getByText("The text appears in bold").first(), "bold entry must surface as a fuzzy for the italics segment (pg_trgm alone would filter it out)").toBeVisible({ timeout: 5000 });
-      await expect(sidebar.getByText(/^100%$/).first(), "italics segment's own exact TM hit").toBeVisible();
-      await expect(sidebar.getByText(/^[67][0-9]%$/).first(), "bold-as-fuzzy should render 60-79%").toBeVisible({ timeout: 5000 });
+      await expect(shownPercent(/^100%$/).first(), "italics segment's own exact TM hit").toBeVisible();
+      await expect(shownPercent(/^[67][0-9]%$/).first(), "bold-as-fuzzy should render 60-79%").toBeVisible({ timeout: 5000 });
     } finally {
       try {
         // Deleting the project drops its TM assignment, which a TM delete needs.
@@ -4303,3 +4571,31 @@ ${transUnits.join("\n")}
     }
   });
 });
+
+/**
+ * WCAG contrast of an element's border on `side` against the background of
+ * the element itself or its parent, on the colours the browser actually
+ * paints (a canvas resolves oklch too).
+ */
+function borderContrast(el: Locator, side: "right" | "bottom", background: "self" | "parent"): Promise<number> {
+  return el.evaluate((node, [side, background]) => {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const rgb = (css: string) => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3));
+    };
+    const lum = (c: number[]) => {
+      const [r, g, b] = c.map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const cs = getComputedStyle(node);
+    const line = lum(rgb(side === "right" ? cs.borderRightColor : cs.borderBottomColor));
+    const bg = lum(rgb(getComputedStyle(background === "self" ? node : node.parentElement!).backgroundColor));
+    return (Math.max(line, bg) + 0.05) / (Math.min(line, bg) + 0.05);
+  }, [side, background] as const);
+}

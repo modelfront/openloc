@@ -32,7 +32,6 @@ const autoAPE: WorkflowStep = { step_definition_id: 3, name: 'Auto APE', step_ty
 describe('WorkflowStepsWithDeadlines', () => {
   function setupMerged(
     steps: WorkflowStep[] = [translation, review, autoAPE],
-    children?: React.ReactNode,
     targetLanguages = ['de', 'fr'],
   ) {
     const onChange = vi.fn()
@@ -47,9 +46,7 @@ describe('WorkflowStepsWithDeadlines', () => {
           steps={steps}
           targetLanguages={targetLanguages}
           onChange={onChange}
-        >
-          {children}
-        </WorkflowStepsWithDeadlines>
+        />
       </QueryClientProvider>
       </MemoryRouter>,
     )
@@ -92,11 +89,6 @@ describe('WorkflowStepsWithDeadlines', () => {
     expect(next[2]).toEqual(autoAPE)
   }, PICKER_FLOW_TIMEOUT)
 
-  it('renders the caller\'s actions under the list', () => {
-    setupMerged([translation], <span data-testid="save-row">Saving…</span>)
-    expect(screen.getByTestId('save-row')).toBeInTheDocument()
-  })
-
   it('opens on the stored overrides, or on one empty row when there are none', () => {
     setupMerged()
     fireEvent.click(screen.getByTestId('workflow-deadline-langs-toggle-0'))
@@ -131,7 +123,7 @@ describe('WorkflowStepsWithDeadlines', () => {
   })
 
   it('drops the per-language sections when the project has no target languages yet', () => {
-    setupMerged([translation], undefined, [])
+    setupMerged([translation], [])
     expect(screen.getByTestId('workflow-deadline-input-0')).toBeInTheDocument()
     expect(screen.queryByTestId('workflow-deadline-langs-toggle-0')).toBeNull()
   })

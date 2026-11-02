@@ -37,10 +37,10 @@ func newIssueFixtureWithStore(t *testing.T, store *file.MemoryStore) *fixture {
 	t.Helper()
 	pool, q, cleanup := testutil.SetupTestDB(t)
 	t.Cleanup(cleanup)
-	router, _ := testutil.NewTestRouterWithIssues(pool, store, []string{issueOperator})
+	router, outbox := testutil.NewTestRouterWithIssues(pool, store, []string{issueOperator})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	f := &fixture{q: q, pool: pool, url: srv.URL}
+	f := &fixture{q: q, pool: pool, url: srv.URL, outbox: outbox}
 	f.tenantA = testutil.SeedTenant(t, q, "McpTenantA")
 	f.ownerA = testutil.SeedUserWithRole(t, q, f.tenantA.ID, "mcp-a@test.com", "pass", "owner")
 	f.linguistA = testutil.SeedUserWithRole(t, q, f.tenantA.ID, "mcp-l@test.com", "pass", "linguist")

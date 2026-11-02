@@ -8,6 +8,13 @@
 //   - context is passed per call, never via the process-global SetContext
 //   - a reporting failure logs and is swallowed; it never breaks a request
 //
+// # What is reported
+//
+// A notice means our code or our infrastructure is broken. A state the user
+// fixes — their configuration, their file, their vendor key, plan or request
+// rate — is logged and shown to them, never reported: a 4xx is not a notice,
+// the worker skips user-facing failures, and a vendor outage (a 502) is.
+//
 // # Why explicit ErrorClass and Fingerprint are mandatory
 //
 // Honeybadger groups by error class name by default, and in Go nearly every
@@ -67,18 +74,17 @@ const (
 	// callers and the package doc on what may leave our infrastructure.
 	ClassEmailSendFailed = "EmailSendFailed"
 
+	// ClassSlackPostFailed covers a Slack message to the support team that
+	// could not be posted. Like an email, it never fails the request, so the
+	// notice is the only sign the team missed it.
+	ClassSlackPostFailed = "SlackPostFailed"
+
 	// ClassStateWriteFailed covers a discarded write that leaves a row
 	// inconsistent with reality — the `_ = queries.Update…` shape. The canonical
 	// case is UpdateAnalysisFailed: the analysis already failed, and if marking
 	// it failed also fails, it displays as "running" forever with no error path
 	// left to notice.
 	ClassStateWriteFailed = "StateWriteFailed"
-
-	// ClassUnsupportedImport covers a file a user tried to import that we can
-	// identify but don't support (e.g. a DCT-style or non-TBX file uploaded to the
-	// TBX importer). Not a bug — it's demand signal: the notice's context carries
-	// which dialect/type was attempted, so we can see what's worth supporting next.
-	ClassUnsupportedImport = "UnsupportedImport"
 )
 
 // ContextRevision is the deploy identifier. The Go SDK has no Revision config

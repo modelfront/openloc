@@ -39,6 +39,9 @@ type callEnv struct {
 	requests int
 	// lastStatus is the status of the last vendor response, 0 before one.
 	lastStatus int
+	// unreachable is a vendor request that got no answer since the last one
+	// that did.
+	unreachable bool
 }
 
 type callEnvKey struct{}
@@ -193,12 +196,13 @@ func (env *callEnv) send(ctx context.Context, req extsdk.HTTPRequest) extsdk.HTT
 	start := time.Now()
 	resp, err := env.httpClient().Do(hreq)
 	if err != nil {
+		env.unreachable = ctx.Err() == nil
 		msg := env.redact(err.Error())
 		env.record(ctx, method, req, 0, nil, msg, time.Since(start))
 		return extsdk.HTTPResponse{Error: msg}
 	}
 	defer resp.Body.Close()
-	env.lastStatus = resp.StatusCode
+	env.lastStatus, env.unreachable = resp.StatusCode, false
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if err != nil {
 		msg := env.redact(err.Error())

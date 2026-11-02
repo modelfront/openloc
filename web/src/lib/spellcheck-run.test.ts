@@ -94,6 +94,8 @@ describe('runSpellcheck', () => {
       return emptyResult({
         results: ids.map(id => ({
           translation_id: id,
+          text: 'die adresse hier',
+          source_text: 'the address here',
           matches: [{
             message: 'typo', offset: 4, length: 7,
             replacements: [{ value: 'Adresse' }],
@@ -106,7 +108,6 @@ describe('runSpellcheck', () => {
     const ids = Array.from({ length: 5 }, (_, i) => i + 1)
     const out = await runSpellcheck({
       jobId: 7, translationIds: ids, chunkSize: 2,
-      textFor: () => 'die adresse hier',
       ignoredWords: new Set(),
       check,
     })
@@ -120,7 +121,6 @@ describe('runSpellcheck', () => {
     const progress: number[] = []
     await runSpellcheck({
       jobId: 1, translationIds: [1, 2, 3, 4], chunkSize: 2,
-      textFor: () => 'text',
       ignoredWords: new Set(),
       check: async () => emptyResult(),
       onProgress: done => progress.push(done),
@@ -137,7 +137,6 @@ describe('runSpellcheck', () => {
 
     const out = await runSpellcheck({
       jobId: 1, translationIds: [1, 2, 3, 4, 5, 6], chunkSize: 2,
-      textFor: () => 'text',
       ignoredWords: new Set(),
       check,
       signal: controller.signal,
@@ -151,11 +150,12 @@ describe('runSpellcheck', () => {
   it('drops matches whose word is already in the ignore set', async () => {
     const out = await runSpellcheck({
       jobId: 1, translationIds: [1], chunkSize: 10,
-      textFor: () => 'die Adresse hier',
       ignoredWords: new Set(['Adresse']),
       check: async () => emptyResult({
         results: [{
           translation_id: 1,
+          text: 'die Adresse hier',
+          source_text: 'the address here',
           matches: [{
             message: 'typo', offset: 4, length: 7,
             replacements: [{ value: 'Adresse' }],
@@ -170,7 +170,6 @@ describe('runSpellcheck', () => {
   it('carries the failed count through so the UI can report it', async () => {
     const out = await runSpellcheck({
       jobId: 1, translationIds: [1, 2, 3, 4], chunkSize: 2,
-      textFor: () => 'text',
       ignoredWords: new Set(),
       check: async () => emptyResult({ failed: 2 }),
     })
@@ -180,11 +179,12 @@ describe('runSpellcheck', () => {
   it('records the flagged word so Ignore all and Change all can group by it', async () => {
     const out = await runSpellcheck({
       jobId: 1, translationIds: [1], chunkSize: 10,
-      textFor: () => 'die adresse hier',
       ignoredWords: new Set(),
       check: async () => emptyResult({
         results: [{
           translation_id: 1,
+          text: 'die adresse hier',
+          source_text: 'the address here',
           matches: [{
             message: 'typo', offset: 4, length: 7,
             replacements: [{ value: 'Adresse' }],
@@ -195,5 +195,8 @@ describe('runSpellcheck', () => {
     })
     expect(out.errors[0].word).toBe('adresse')
     expect(out.errors[0].suggestions).toEqual(['Adresse'])
+    // The review shows the checked target and its source from the result.
+    expect(out.errors[0].targetText).toBe('die adresse hier')
+    expect(out.errors[0].sourceText).toBe('the address here')
   })
 })

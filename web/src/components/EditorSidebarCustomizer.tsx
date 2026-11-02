@@ -1,7 +1,6 @@
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
+import { SortableList } from '@/components/list/SortableList'
 import { Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CheckboxField } from '@/components/ui/checkbox-field'
@@ -29,16 +28,6 @@ interface Props {
  * persists it, so there is no Save button.
  */
 export function EditorSidebarCustomizer({ layout, onChange }: Props) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return
-    const from = layout.order.indexOf(active.id as SidebarSectionId)
-    const to = layout.order.indexOf(over.id as SidebarSectionId)
-    onChange(moveSection(layout, from, to))
-  }
   const onlyOneVisible = visibleSections(layout).length === 1
 
   return (
@@ -59,25 +48,23 @@ export function EditorSidebarCustomizer({ layout, onChange }: Props) {
       <PopoverContent side="bottom" align="end" size="compact" className="w-64" data-testid="sidebar-customize-popover">
         <PopoverTitle>Customize panel</PopoverTitle>
         <PopoverDescription>Drag to reorder. Untick a section to hide it.</PopoverDescription>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis, restrictToParentElement]} onDragEnd={handleDragEnd}>
-          <SortableContext items={layout.order} strategy={verticalListSortingStrategy}>
-            <div className="flex flex-col">
-              {layout.order.map(id => {
-                const visible = isSectionVisible(layout, id)
-                return (
-                  <SortableSectionRow
-                    key={id}
-                    id={id}
-                    checked={visible}
-                    // The last visible section stays on; an empty panel would have nothing left to click.
-                    disabled={visible && onlyOneVisible}
-                    onToggle={() => onChange(toggleSectionVisible(layout, id))}
-                  />
-                )
-              })}
-            </div>
-          </SortableContext>
-        </DndContext>
+        <SortableList ids={layout.order} onMove={(from, to) => onChange(moveSection(layout, from, to))}>
+          <div className="flex flex-col">
+            {layout.order.map(id => {
+              const visible = isSectionVisible(layout, id)
+              return (
+                <SortableSectionRow
+                  key={id}
+                  id={id}
+                  checked={visible}
+                  // The last visible section stays on; an empty panel would have nothing left to click.
+                  disabled={visible && onlyOneVisible}
+                  onToggle={() => onChange(toggleSectionVisible(layout, id))}
+                />
+              )
+            })}
+          </div>
+        </SortableList>
       </PopoverContent>
     </Popover>
   )

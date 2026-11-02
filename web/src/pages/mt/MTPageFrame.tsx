@@ -2,9 +2,7 @@
 // Prompts tabs, mirroring the AI page. The URL is the state (SubNav), so each
 // tab is a route — /mt, /mt/engines, /mt/prompts.
 import type { ReactNode } from 'react'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { PageContainer } from '@/components/layout/PageContainer'
-import { SubNav } from '@/components/layout/SubNav'
+import { SectionPageFrame } from '@/components/layout/SectionPageFrame'
 
 const MT_TABS = [
   { to: '/mt', label: 'Routers', end: true },
@@ -13,11 +11,5 @@ const MT_TABS = [
 ]
 
 export function MTPageFrame({ children }: { children: ReactNode }) {
-  return (
-    <PageContainer>
-      <PageHeader title="MT" />
-      <SubNav className="mb-4" items={MT_TABS} />
-      {children}
-    </PageContainer>
-  )
+  return <SectionPageFrame title="MT" tabs={MT_TABS}>{children}</SectionPageFrame>
 }

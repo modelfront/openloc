@@ -1,8 +1,9 @@
 -- name: ListCommentsByTranslation :many
 -- LEFT JOIN: a NULL user_id is an AI/system comment — the
--- frontend renders those authored "AI".
+-- frontend renders those authored "AI". from_segment is the number of the row
+-- a comment was written on, when a join moved it here.
 SELECT sc.id, sc.translation_id, sc.user_id, sc.content, sc.created_at, sc.updated_at,
-       u.name AS author_name, u.email AS author_email
+       u.name AS author_name, u.email AS author_email, sc.from_segment
 FROM segment_comments sc
 LEFT JOIN users u ON u.id = sc.user_id
 WHERE sc.translation_id = $1 AND sc.deleted_at IS NULL

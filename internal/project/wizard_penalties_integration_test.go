@@ -18,7 +18,8 @@ func TestIntegrationProjectCreate_WizardCarriesPenalties(t *testing.T) {
 
 	rec := testutil.DoRequestWithRole(t, router, "POST", "/api/projects", map[string]any{
 		"name": "Wizard penalties", "source_language": "en", "target_languages": []string{"fr"},
-		"settings": map[string]any{"sublanguage_penalty_pct": 7, "near_exact_penalty_pct": 3},
+		"settings":    map[string]any{"sublanguage_penalty_pct": 7, "near_exact_penalty_pct": 3},
+		"workflow_id": testutil.LibraryWorkflow(t, q, tenant.ID),
 	}, pm.ID, tenant.ID, "project_manager")
 	testutil.AssertStatus(t, rec, http.StatusCreated)
 	var created struct {

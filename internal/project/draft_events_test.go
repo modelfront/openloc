@@ -53,7 +53,8 @@ func (f draftFixture) fillAndSave(t *testing.T, id int64) {
 	t.Helper()
 	testutil.AssertStatus(t, f.saveDraft(t, id, map[string]any{
 		"name": "Whole", "source_language": "en", "target_languages": []string{"fr"},
-		"settings": map[string]any{"mt_on_upload": true},
+		"settings":    map[string]any{"mt_on_upload": true},
+		"workflow_id": testutil.LibraryWorkflow(t, f.q, f.tenant.ID),
 	}), http.StatusOK)
 }
 

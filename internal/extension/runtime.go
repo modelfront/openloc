@@ -37,6 +37,9 @@ type CallError struct {
 	// VendorStatus is the HTTP status of the last vendor response before the
 	// error, 0 when the vendor did not answer.
 	VendorStatus int
+	// VendorUnreachable is a vendor request that got no answer at all, which
+	// tells an outage from the extension refusing before it asked the vendor.
+	VendorUnreachable bool
 }
 
 func (e *CallError) Error() string { return e.Msg }
@@ -131,7 +134,7 @@ func (rt *Runtime) Invoke(ctx context.Context, c Call, out any) error {
 		if err != nil {
 			msg = err.Error()
 		}
-		return &CallError{Msg: env.redact(msg), VendorStatus: env.lastStatus}
+		return &CallError{Msg: env.redact(msg), VendorStatus: env.lastStatus, VendorUnreachable: env.unreachable}
 	}
 	if out == nil {
 		return nil

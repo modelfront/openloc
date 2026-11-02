@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"openloc/internal/docseo"
+	"openloc/internal/productdocs"
+	"openloc/internal/publicapi"
 )
 
 // docSite is one public documentation site: the pages the app serves under
@@ -40,7 +44,7 @@ func docSitesOnly(baseURL string, sites []docSite) func(http.Handler) http.Handl
 	}
 	var active []live
 	for _, s := range sites {
-		if origin := hostOrigin(baseURL, s.host); origin != "" {
+		if origin := HostOrigin(baseURL, s.host); origin != "" {
 			active = append(active, live{s, origin})
 		}
 	}
@@ -49,7 +53,7 @@ func docSitesOnly(baseURL string, sites []docSite) func(http.Handler) http.Handl
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := requestHost(r)
+			host := RequestHost(r)
 			for _, s := range active {
 				page, ok := underPrefix(r.URL.Path, s.prefix)
 				if !ok || host == s.host {
@@ -73,9 +77,9 @@ func docSitesOnly(baseURL string, sites []docSite) func(http.Handler) http.Handl
 	}
 }
 
-// hostOrigin is BASE_URL's scheme and port on host. Empty when there is no
+// HostOrigin is BASE_URL's scheme and port on host. Empty when there is no
 // host or BASE_URL does not parse.
-func hostOrigin(baseURL, host string) string {
+func HostOrigin(baseURL, host string) string {
 	if host == "" {
 		return ""
 	}
@@ -119,8 +123,8 @@ func servedOnSite(p string, api []string) bool {
 	return true
 }
 
-// requestHost is the request's host without the port, lowercased.
-func requestHost(r *http.Request) string {
+// RequestHost is the request's host without the port, lowercased.
+func RequestHost(r *http.Request) string {
 	h := r.Host
 	if host, _, err := net.SplitHostPort(h); err == nil {
 		h = host
@@ -130,5 +134,25 @@ func requestHost(r *http.Request) string {
 
 // onHost reports whether the request came in on host (empty never matches).
 func onHost(r *http.Request, host string) bool {
-	return host != "" && requestHost(r) == strings.ToLower(host)
+	return host != "" && RequestHost(r) == strings.ToLower(host)
+}
+
+// DocPages renders the documentation sites' pages for readers that run no
+// JavaScript. The labels and home headings match the app's
+// (web/src/pages/docs/docs-set.ts). A site without its index is left out.
+func DocPages(baseURL, docsHost, developerHost string, docs, apiDocs *productdocs.Index, spec *publicapi.Spec) *docseo.Sites {
+	sites := docSites(docsHost, developerHost)
+	var out []*docseo.Site
+	add := func(s docSite, label string, home docseo.Home, idx *productdocs.Index, spec *publicapi.Spec) {
+		if idx == nil {
+			return
+		}
+		out = append(out, &docseo.Site{
+			Host: s.host, Origin: HostOrigin(baseURL, s.host), Prefix: s.prefix, API: s.api[0],
+			Label: label, Home: home, Docs: idx, Spec: spec,
+		})
+	}
+	add(sites[0], "Docs", docseo.Home{Title: "Docs", Description: "How OpenLoc works, one topic at a time."}, docs, nil)
+	add(sites[1], "API", docseo.Home{Title: "API", Description: "Connect your own systems to OpenLoc with an access key."}, apiDocs, spec)
+	return docseo.New(baseURL, out...)
 }

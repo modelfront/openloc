@@ -545,7 +545,7 @@ func (m *mockQuerier) UpsertTMPipelineEntries(ctx context.Context, arg db.Upsert
 
 // ListSegmentNeighborSourcesByIDs returns no neighbours: unit tests write
 // entries without document context.
-func (m *mockQuerier) ListSegmentNeighborSourcesByIDs(ctx context.Context, ids []int64) ([]db.ListSegmentNeighborSourcesByIDsRow, error) {
+func (m *mockQuerier) ListSegmentNeighborSourcesByIDs(ctx context.Context, arg db.ListSegmentNeighborSourcesByIDsParams) ([]db.ListSegmentNeighborSourcesByIDsRow, error) {
 	return nil, nil
 }
 
@@ -660,11 +660,12 @@ func (m *mockQuerier) GetSegment(ctx context.Context, id int64) (db.Segment, err
 }
 
 // ListSegmentSourcesByFile mirrors the SQL (source-only, ordered by position).
-// buildNeighborHashes relies on the position ordering.
-func (m *mockQuerier) ListSegmentSourcesByFile(ctx context.Context, fileID int64) ([]db.ListSegmentSourcesByFileRow, error) {
+// buildNeighborHashes relies on the position ordering. The mock holds no
+// language rows, so every segment of the file is a row of every job.
+func (m *mockQuerier) ListSegmentSourcesByFile(ctx context.Context, arg db.ListSegmentSourcesByFileParams) ([]db.ListSegmentSourcesByFileRow, error) {
 	var rows []db.ListSegmentSourcesByFileRow
 	for _, seg := range m.segments {
-		if seg.FileID == fileID {
+		if seg.FileID == arg.FileID {
 			rows = append(rows, db.ListSegmentSourcesByFileRow{ID: seg.ID, Position: seg.Position, SourceText: seg.SourceText})
 		}
 	}
@@ -673,8 +674,10 @@ func (m *mockQuerier) ListSegmentSourcesByFile(ctx context.Context, fileID int64
 }
 
 // GetSegmentNeighborSources mirrors the SQL: nearest lower/higher position
-// within the same file ("" at a boundary). Write-side context.
-func (m *mockQuerier) GetSegmentNeighborSources(ctx context.Context, segmentID int64) (db.GetSegmentNeighborSourcesRow, error) {
+// within the same file ("" at a boundary). Write-side context. The mock holds
+// no language rows, so the language does not narrow the neighbours.
+func (m *mockQuerier) GetSegmentNeighborSources(ctx context.Context, arg db.GetSegmentNeighborSourcesParams) (db.GetSegmentNeighborSourcesRow, error) {
+	segmentID := arg.SegmentID
 	seg, ok := m.segments[segmentID]
 	if !ok {
 		return db.GetSegmentNeighborSourcesRow{}, fmt.Errorf("segment %d not found", segmentID)

@@ -183,6 +183,8 @@ export default function TMBrowser() {
   // Bulk find & replace modal.
   const [findReplaceOpen, setFindReplaceOpen] = useState(false)
   const editorRef = useRef<RichTextCellEditorHandle | null>(null)
+  // Whether the open cell's document changed since the edit started.
+  const docChangedRef = useRef(false)
   const baselineUpdatedAtRef = useRef<string | null>(null)
   // Set on Esc so the unmount-induced blur doesn't accidentally save the cancelled edit.
   const cancellingRef = useRef(false)
@@ -268,6 +270,7 @@ export default function TMBrowser() {
   const startEdit = useCallback((entry: TMEntry, field: 'source' | 'target') => {
     cancellingRef.current = false
     baselineUpdatedAtRef.current = entry.updated_at ?? null
+    docChangedRef.current = false
     setEditingCell({ entryId: entry.id, field })
   }, [])
 
@@ -305,8 +308,10 @@ export default function TMBrowser() {
     const newRichText = handle.getRichText()
 
     const original = cell.field === 'source' ? entry.source_text : entry.target_text
-    if (newText === original) {
-      // No-op edit (user clicked away without changing anything). Just exit edit mode.
+    const originalRich = (cell.field === 'source' ? entry.source_rich_text : entry.target_rich_text) || null
+    // Tag chips add nothing to getText(), so a tag-only edit shows only in the
+    // rich text. Untouched editor or same text and tags → no-op, exit edit mode.
+    if (newText === original && (!docChangedRef.current || newRichText === originalRich)) {
       setEditingCell(null)
       return
     }
@@ -525,6 +530,7 @@ export default function TMBrowser() {
               // chip delete via Backspace) — atoms don't change `getText()`
               // but they DO fire onUpdate.
               setDocTick(t => t + 1)
+              docChangedRef.current = true
             }}
             // Read commitEdit through a ref so this cell function (captured
             // in `columns` useMemo) doesn't capture commitEdit's identity,

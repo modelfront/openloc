@@ -48,7 +48,7 @@ const translation = rowTranslation({ edited_by: 3 })
 const untranslated: Translation = { ...translation, active_text: null, edited_by: null }
 
 const renderRow = (readOnly: boolean, t: Translation = translation) =>
-  renderSegmentRow({ translation: t, readOnly, isAdmin: true, inFirstStep: true })
+  renderSegmentRow({ translation: t, readOnly, inClearWindow: true })
 
 beforeEach(() => {
   mockSaveDraft.mockReset().mockImplementation((_f: number, _id: number, text: string) =>
@@ -77,10 +77,17 @@ describe('SegmentRow — editable (control)', () => {
     await waitFor(() => expect(editorText()).toContain('Erde'))
   })
 
-  it('offers Clear to an admin in the first step', async () => {
+  it('offers Clear to anyone who may edit the row, linguists included', async () => {
     const { insertRef } = renderRow(false)
     expect(await screen.findByTestId('clear-translation-btn')).toBeInTheDocument()
     expect(insertRef.current.clear).toBeTypeOf('function')
+  })
+
+  it('offers no Clear past the first human or hybrid step', async () => {
+    const { insertRef } = renderSegmentRow({ translation, inClearWindow: false })
+    await waitFor(() => expect(editorText()).toBe('Hallo Welt'))
+    expect(screen.queryByTestId('clear-translation-btn')).toBeNull()
+    expect(insertRef.current.clear).toBeUndefined()
   })
 })
 
@@ -144,5 +151,17 @@ describe('SegmentRow — read-only', () => {
     await waitFor(() => expect(editorText()).toBe('Hallo Welt'))
     expect(screen.queryByTestId('clear-translation-btn')).toBeNull()
     expect(insertRef.current.clear).toBeUndefined()
+  })
+})
+
+// While TM or MT runs on the job, text may still arrive in an empty target,
+// so it says so instead of looking finished.
+describe('SegmentRow — empty target during pre-translation', () => {
+  it('says "Pre-translating…" while a run is going, and "Empty" after', () => {
+    const { rerender } = renderSegmentRow({ translation: untranslated, readOnly: true, isActive: false, pretranslating: true })
+    expect(screen.getByTestId('empty-target').textContent).toBe('Pre-translating…')
+
+    rerender({ pretranslating: false })
+    expect(screen.getByTestId('empty-target').textContent).toBe('Empty')
   })
 })

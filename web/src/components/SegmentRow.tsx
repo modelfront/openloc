@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useEffectEvent, useCallback, useMemo, memo } from 'react'
+import { useState, useRef, useEffect, useEffectEvent, useCallback, useMemo, useSyncExternalStore, memo, type MouseEvent as ReactMouseEvent } from 'react'
 import { useLatestRef } from '@/hooks/useLatestRef'
+import { cn } from '@/lib/utils'
 import { useOnChange } from '@/hooks/useOnChange'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   updateTranslationHuman,
   saveTranslationDraft,
-  lockTranslation,
   unlockTranslation,
   lookupTerms,
   propagateTranslation,
@@ -23,14 +23,16 @@ import { handleTaskLocked, handleTaskReopened, isTaskLockedError } from '../lib/
 import { warnHeldSkipped } from '../lib/segment-bulk'
 import { isQABlockError, getQAIssuesFromError, formatQAErrorToast } from '../lib/qa-block'
 import { highlightText } from '../lib/text-highlight'
+import { searchHighlightRegex } from '../lib/text-search'
 import { qaIssuesEqual, type QaFinding } from '../lib/qa-findings'
 import QASummaryDot from './QASummaryDot'
 import { toast } from 'sonner'
 import { queryKeys } from '../lib/query-keys'
-import { invalidateJobContext, applyTMUpdatesAfterSave } from '../lib/query-invalidation'
-import { applySegmentSaveSuccess, patchPropagatedSiblings, optimisticAdjustLeverage } from '../lib/segment-save'
-import { deriveDisplayStatus, showStatusChip, deriveMatchChip, isAssistantConfirmed, ASSISTANT_CONFIRMED_LABEL } from '../lib/segment-status'
+import { invalidateJobContext, invalidateSegmentSaveContext, applyTMUpdatesAfterSave } from '../lib/query-invalidation'
+import { applySegmentSaveSuccess, patchPropagatedSiblings } from '../lib/segment-save'
+import { deriveDisplayStatus, deriveMatchChip } from '../lib/segment-status'
 import { useInFlightGuard } from '../hooks/useInFlightGuard'
+import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { trackPropagation, reconcilePropagationBaseline } from '../lib/propagation-guard'
 import { smartReplace, getTermSelection } from '../lib/term-insert'
 import { plainOffsetToPm } from '../lib/pm-offset'
@@ -39,12 +41,22 @@ import type { SpellFixActions } from '../lib/spellcheck-scope'
 import SegmentEditorToolbar from './SegmentEditorToolbar'
 import MissingTagsBar from './MissingTagsBar'
 import { getMissingTags, type MissingTag } from '../lib/missing-tags'
+import type { Placeable } from '../lib/placeables'
+import { useSourceInserts } from '../hooks/useSourceInserts'
+import { flattenRichText } from '../lib/xliff-tiptap'
 import { MessageSquare } from 'lucide-react'
 import { Chip } from '@/components/ui/chip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SafeHTML } from './SafeHTML'
 import ConflictBanner from './ConflictBanner'
 import { useSegmentEditingTimer } from '../hooks/useSegmentEditingTimer'
+import { useSourceCaret } from '../hooks/useSourceCaret'
+import { useSourceSelection } from '../hooks/useSourceSelection'
+import { altKey } from '../lib/platform'
+import type { LineCaret } from '../lib/line-caret'
+import { isLineCaret, type EntryCaret, type TextCaret } from '../lib/entry-caret'
+import { textCaretAt } from '../lib/source-caret'
+import { SegmentRowAction, SegmentRowActionBar } from './SegmentRowAction'
 
 // Shared grid template for the segment table. The header row (CATEditor) and
 // every body row (below) MUST use the exact same column definition or their
@@ -66,16 +78,20 @@ import {
   SegmentText,
   findTextRange,
   serializeEditor,
+  plainTargetText,
   termLookupCache,
+  subscribeTermLookups,
+  getTermLookupVersion,
   hasXliffTags,
   hasHTMLFormatting,
   STATUS_CHIP_COLORS,
   qeChipInfo,
+  tmMatchChipInfo,
   modKey,
-  statusLabel,
   SEGMENT_PREVIEW_CLAMP,
 } from './SegmentRow.shared'
 import { PREVIOUS_AUTO_APPROVED_TOOLTIP } from './step-status-labels'
+import { SegmentStatusIcon, LockIcon, statusIconFor } from './SegmentStatusIcon'
 
 // Re-exported for external callers (CATEditor, tests) that import them from
 // this file.
@@ -93,6 +109,8 @@ export {
   modKey,
 } from './SegmentRow.shared'
 
+const REPETITION_SOURCE_TITLE = 'Source of repetitions — confirming this auto-propagates to identical-source segments'
+
 // XLIFF tag wrappers, dropped when the stored text is compared with the
 // editor's plain text for dirty detection.
 const XLIFF_WRAPPER_RE = /<(bpt|ept|ph|it|x|g|hi|sub)(\s[^>]*)?>(.+?)<\/\1>|<(bpt|ept|ph|it|x|g|hi|sub)(\s[^>]*)?\/>/g
@@ -101,32 +119,66 @@ const withoutXliffTags = (text: string) => (hasXliffTags(text) ? text.replace(XL
 // The parts of a row version the editor loads.
 type RowVersion = { active_text?: string | null; active_rich_text?: string | null; updated_at?: string | null }
 
+/** The open row's handlers, for CATEditor's window-level shortcuts and the
+ *  sidebar's inserts. A handler that writes is undefined when the row is
+ *  read-only. */
+export interface SegmentRowHandle {
+  selectAndReplace: (src: string, tgt: string, mt?: string) => void
+  selectTerm: (src: string, tgt: string, mt?: string) => void
+  /** Replaces the target. With an insert token (a Resources-panel insert)
+   *  it saves the draft at once, recording where the text came from; with
+   *  `approve` it then confirms the segment, staying on it. */
+  replaceAll?: (text: string, insertToken?: string, approve?: boolean) => void
+  confirm?: () => void
+  copySource?: () => void
+  clear?: () => void
+  split?: () => void
+  joinNext?: () => void
+  /** The text selected in the source (the last selection there) and in the
+   *  translation, for the term quick-add. Empty when nothing is selected. */
+  getTermSelection?: () => { source: string; target: string }
+  /** Forgets the remembered source selection and removes its mark, once the
+   *  quick-add dialog closes. */
+  clearSourceSelection?: () => void
+  /** Tab/Shift+Tab or Down/Up out of a read-only row, whose editor takes no
+   *  keys: to the next or previous segment, by line keeping the caret's place
+   *  across. */
+  leaveReadOnly?: (dir: 'next' | 'prev', byLine: boolean) => void
+}
+
 export interface SegmentRowProps {
   segment: Segment
   translation?: Translation
-  index: number
+  /** The segment number the grid shows ("3", or "3.1" for a piece of a split). */
+  number: string
   jobId: number
   fileId: number
   projectId: number | null
   targetLanguage: string
   sourceLanguage: string
   isActive: boolean
-  onActivate: () => void
-  onNavigate: (dir: 'next' | 'prev') => void
+  /** The open row sits right under the sticky column header, which would cover
+   *  action bars on its boxes' top border: they hang below the boxes instead. */
+  actionsBelow?: boolean
+  /** Opens the row; `caret` is where a click on its translation put the caret. */
+  onActivate: (caret?: TextCaret) => void
+  /** `caret`: where the next or previous segment's caret goes, when an arrow
+   *  key leaves this one from its last or first line. */
+  onNavigate: (dir: 'next' | 'prev', caret?: LineCaret) => void
+  /** Where the open editor's caret starts: where an arrow key from the
+   *  segment above or below, or a click on the translation, put it. */
+  entryCaret?: EntryCaret
   onDeactivate: () => void
   dirtyRef: React.MutableRefObject<boolean>
   onTermsLoaded?: (terms: TermLookupResult[]) => void
   onEditTextChange?: (text: string) => void
-  insertRef?: React.MutableRefObject<{
-    selectAndReplace: (src: string, tgt: string, mt?: string) => void
-    selectTerm: (src: string, tgt: string, mt?: string) => void
-    /** Replaces the target. With an insert token (a Resources-panel insert)
-     *  it saves the draft at once, recording where the text came from. */
-    replaceAll?: (text: string, insertToken?: string) => void
-    confirm?: () => void
-    copySource?: () => void
-    clear?: () => void
-  }>
+  insertRef?: React.MutableRefObject<SegmentRowHandle>
+  /** Splits the row at an offset in its plain source, with the version its
+   *  draft save left. Absent when the row may not be split. */
+  onSplit?: (offset: number, expectedUpdatedAt: string) => void
+  /** Joins the row with the next one, a piece of the same split segment.
+   *  Absent when there is none or the row may not be joined. */
+  onJoinNext?: (expectedUpdatedAt: string) => void
   flushDraftRef?: React.MutableRefObject<() => Promise<void>>
   readOnly?: boolean
   qaIssues: QaFinding[]
@@ -148,16 +200,9 @@ export interface SegmentRowProps {
    * another tab/session." `null` while auth/me is still resolving.
    */
   currentUserId?: number | null
-  /** True for owner/admin; gates the per-segment Clear button. */
-  isAdmin?: boolean
-  /**
-   * True for managers (owner/admin/project manager), who may lock — locking
-   * approves the segment (mirrors RequireManager on POST /lock). Anyone who
-   * may edit the row may unlock it. Undefined hides Lock while auth/me loads.
-   */
-  canLock?: boolean
-  // Defaults true; gates the per-segment Clear button.
-  inFirstStep?: boolean
+  // Defaults true; gates the per-segment Clear button: the task is at or before
+  // the workflow's first human or hybrid step.
+  inClearWindow?: boolean
   /** True when this segment's source text appears earlier in the same file.
    *  Drives the "⇢R" chip in the Match column: only later occurrences are
    *  tagged as repetitions.
@@ -186,9 +231,21 @@ export interface SegmentRowProps {
   autoApprovedBeforeStep?: boolean
   /** The row's AI verdict came from an earlier step (see deriveDisplayStatus). */
   predictedBeforeStep?: boolean
+  /** The Track changes view is on. */
+  trackChanges?: boolean
+  /** Track changes: the text this segment held when the previous workflow step
+   *  ended. The inactive target marks what changed since; null or undefined
+   *  marks nothing. The active row never shows marks. */
+  trackChangesFrom?: string | null
+  /** The source's placeables (the editor rows endpoint), underlined in the
+   *  source; the open row offers the missing ones for insertion. */
+  placeables?: readonly Placeable[]
   /** The file's strings are plain text ("Strings contain HTML" off): a save
    *  sends the editor's text, never its HTML. */
   plainText?: boolean
+  /** A TM or MT run is going on the job: an empty target says so, since text
+   *  may still arrive. */
+  pretranslating?: boolean
 }
 
 export function segmentRowEqual(prev: SegmentRowProps, next: SegmentRowProps): boolean {
@@ -198,6 +255,8 @@ export function segmentRowEqual(prev: SegmentRowProps, next: SegmentRowProps): b
   // For inactive rows, only re-render when data changes
   return (
     prev.segment.id === next.segment.id &&
+    prev.number === next.number &&
+    prev.actionsBelow === next.actionsBelow &&
     prev.translation?.id === next.translation?.id &&
     // The status badge keys off the DERIVED display status, which
     // depends on status + active_text + edited_by + origin + predict_outcome —
@@ -216,21 +275,25 @@ export function segmentRowEqual(prev: SegmentRowProps, next: SegmentRowProps): b
     prev.readOnly === next.readOnly &&
     prev.showWhitespace === next.showWhitespace &&
     prev.plainText === next.plainText &&
+    !prev.pretranslating === !next.pretranslating &&
     prev.refTerms === next.refTerms &&
     prev.spellCheck === next.spellCheck &&
     prev.findHighlightTerm === next.findHighlightTerm &&
     prev.tmDiffReference === next.tmDiffReference &&
     qaIssuesEqual(prev.qaIssues, next.qaIssues) &&
-    prev.isAdmin === next.isAdmin &&
-    prev.canLock === next.canLock &&
-    prev.inFirstStep === next.inFirstStep &&
+    prev.inClearWindow === next.inClearWindow &&
     prev.isRepetition === next.isRepetition &&
     prev.isRepetitionSource === next.isRepetitionSource &&
     prev.commentCount === next.commentCount &&
     prev.isSelected === next.isSelected &&
     (prev.heldByName ?? null) === (next.heldByName ?? null) &&
     !prev.onSelectClick === !next.onSelectClick &&
-    prev.autoApprovedBeforeStep === next.autoApprovedBeforeStep
+    !prev.onSplit === !next.onSplit &&
+    !prev.onJoinNext === !next.onJoinNext &&
+    prev.autoApprovedBeforeStep === next.autoApprovedBeforeStep &&
+    !prev.trackChanges === !next.trackChanges &&
+    (prev.trackChangesFrom ?? null) === (next.trackChangesFrom ?? null) &&
+    prev.placeables === next.placeables
   )
 }
 
@@ -238,6 +301,7 @@ export function segmentRowEqual(prev: SegmentRowProps, next: SegmentRowProps): b
 // keep their identity.
 const NO_MISSING_TAGS: MissingTag[] = []
 const NO_TERMS: TermLookupResult[] = []
+const NO_SOURCE_PLACEABLES: readonly Placeable[] = []
 
 // The text a version loads into the editor. Rich text (with tags) first:
 // editText starts raw (may include XLIFF tags) for textToContent(); after
@@ -254,15 +318,17 @@ function rowText(v: RowVersion | undefined): string {
 export const SegmentRow = memo(function SegmentRow({
   segment,
   translation,
-  index,
+  number,
   jobId,
   fileId,
   projectId,
   targetLanguage,
   sourceLanguage,
   isActive,
+  actionsBelow = false,
   onActivate,
   onNavigate,
+  entryCaret,
   onDeactivate,
   dirtyRef,
   onTermsLoaded,
@@ -279,9 +345,7 @@ export const SegmentRow = memo(function SegmentRow({
   findHighlightTerm,
   tmDiffReference,
   currentUserId,
-  isAdmin,
-  canLock,
-  inFirstStep = true,
+  inClearWindow = true,
   isRepetition = false,
   isRepetitionSource = false,
   commentCount = 0,
@@ -291,6 +355,12 @@ export const SegmentRow = memo(function SegmentRow({
   autoApprovedBeforeStep,
   predictedBeforeStep,
   plainText = false,
+  pretranslating = false,
+  trackChanges = false,
+  trackChangesFrom = null,
+  placeables = NO_SOURCE_PLACEABLES,
+  onSplit,
+  onJoinNext,
 }: SegmentRowProps) {
   // Source column mirrors the source document, target the deliverable — so a
   // reference reads "Wet" on the left and "Feucht" on the right.
@@ -298,6 +368,21 @@ export const SegmentRow = memo(function SegmentRow({
     () => (refTerms ? refResolver(refTerms, 'source') : undefined), [refTerms])
   const resolveRefTarget = useMemo(
     () => (refTerms ? refResolver(refTerms, 'target') : undefined), [refTerms])
+  // Track changes on an inactive row: the rich text its chips render from, and
+  // whether the row is drawn by SegmentText. A row with bold or italic
+  // formatting keeps its formatted rendering and shows no marks. While the view
+  // is on, Find hits take the quiet search tint on every drawn row, so they never
+  // read as added words.
+  const activeText = translation?.active_text ?? ''
+  const trackRich = plainText ? null
+    : translation?.active_rich_text && hasXliffTags(translation.active_rich_text) ? translation.active_rich_text
+    : hasXliffTags(activeText) ? activeText : null
+  const trackView = trackChanges && !isActive && activeText !== ''
+    && (plainText || trackRich !== null || showWhitespace || !hasHTMLFormatting(activeText))
+  const showTrackChanges = trackView && trackChangesFrom != null && trackChangesFrom !== activeText
+  const trackSearch = useMemo(
+    () => (findHighlightTerm ? searchHighlightRegex(findHighlightTerm, { searchSource: false, searchTarget: true, caseSensitive: false, useRegex: false }) : null),
+    [findHighlightTerm])
 
   // A row that mounts active starts loaded; one that turns active loads in
   // the activation hook below.
@@ -333,6 +418,9 @@ export const SegmentRow = memo(function SegmentRow({
     setEditorHandle(handle)
   }, [])
   const cursorPosRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
+  // The closed row's text boxes, for where a click lands (activateAt).
+  const sourceBoxRef = useRef<HTMLDivElement>(null)
+  const targetBoxRef = useRef<HTMLDivElement>(null)
   // Bumped on every editor transaction (text edit OR atom-node insert/delete).
   // `editText` alone is plain text, so atom-only changes (chip insert via F8,
   // chip delete via Backspace) don't change it. The re-render this forces
@@ -346,9 +434,6 @@ export const SegmentRow = memo(function SegmentRow({
   // their dep array without hitting the temporal dead zone (TS2454).
   const isLocked = translation?.locked === true
   const effectiveReadOnly = readOnly || isLocked || !!heldByName
-  // Background of the action bar floating on the editor's top border — the
-  // editor's own background (index.css `--seg-editor-bg`).
-  const editorChromeBg = effectiveReadOnly ? 'bg-(--seg-editor-bg-readonly)' : 'bg-(--seg-editor-bg)'
 
   // Optimistic locking: the updated_at we saw when the user
   // started editing this row. Sent with every save — if the server's current
@@ -356,18 +441,45 @@ export const SegmentRow = memo(function SegmentRow({
   // Updated on every successful save so back-to-back saves by the same user
   // keep working. Cleared when the row is deactivated.
   const baselineUpdatedAtRef = useRef<string | null>(null)
+  // The shared post-save sync of every save path (confirm, draft, "Use mine").
+  const syncSaved = useCallback((saved: Translation | undefined) => applySegmentSaveSuccess({
+    queryClient, jobId, saved, prior: translation,
+    wordCount: segment.word_count, charCount: segment.source_text.length,
+    baselineUpdatedAtRef, dirtyRef, setOriginalText,
+  }), [queryClient, jobId, translation, segment.word_count, segment.source_text.length, dirtyRef])
+  const canSplit = isActive && !effectiveReadOnly && !!onSplit
+  const {
+    caretRef: sourceCaretRef, hasCaret: sourceHasCaret, fieldProps: sourceFieldProps, fieldKey: sourceFieldKey,
+  } = useSourceCaret(canSplit)
+  const {
+    fieldRef: sourceSelectionRef, getText: getSourceSelection, clear: clearSourceSelection,
+  } = useSourceSelection(isActive)
+  // The source element carries both hooks' refs: the caret's only while
+  // Split is on, the selection's whenever the row is open.
+  const caretFieldRef = sourceFieldProps.ref
+  const attachSourceField = useCallback((el: HTMLDivElement | null) => {
+    sourceSelectionRef.current = el
+    return typeof caretFieldRef === 'function' ? caretFieldRef(el) : undefined
+  }, [caretFieldRef, sourceSelectionRef])
 
-  // Pending-guard for the lock/unlock toggle button. With admin-only unlock,
-  // two requests in flight from a double-click could lock-then-unlock (or vice
-  // versa) and leave the segment in a state the user did not click for.
-  const lockToggleInFlightRef = useRef<boolean>(false)
+  // Unlock from the padlock in the last column. An unlock can leave the row
+  // approved, so counts and the progress bar refresh with it.
+  const unlockMut = useMutationWithToast({
+    mutationFn: (translationId: number) => unlockTranslation(fileId, translationId),
+    successMessage: () => null,
+    errorMessage: 'Unlock failed',
+    onSuccess: () => {
+      if (projectId) invalidateJobContext(queryClient, projectId, jobId)
+      else queryClient.invalidateQueries({ queryKey: queryKeys.job.translations(jobId) })
+    },
+  })
 
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const clearMut = useClearSegment({ fileId, jobId, projectId: projectId ?? 0 })
   // Clear shows on every row the user may clear, translated or not. A saved
   // translation is cleared on the server after a confirm; with nothing saved,
   // Clear only empties the editor.
-  const canClear = !!isAdmin && inFirstStep && !!translation && !effectiveReadOnly
+  const canClear = inClearWindow && !!translation && !effectiveReadOnly
   const hasSavedTranslation = deriveDisplayStatus(translation, { predictedBeforeStep }) !== 'untranslated'
   const requestClear = useCallback(() => {
     if (hasSavedTranslation) {
@@ -393,8 +505,10 @@ export const SegmentRow = memo(function SegmentRow({
   // before issuing its own PUT, so neither races the other.
   const guardSave = useInFlightGuard()
 
+  // `vars` is the text a panel insert put in the editor, serialized when the
+  // insert was saved; editText in this closure still holds the previous text.
   const saveMut = useMutation({
-    mutationFn: () => guardSave(async () => {
+    mutationFn: (vars?: { text: string; richText: string | undefined }) => guardSave(async () => {
       // After awaiting any prior in-flight save (saveDraft auto-save, draft
       // flush, or another saveMut in flight), `baselineUpdatedAtRef` has
       // already advanced to T1, so the PUT /human we issue uses the FRESH
@@ -410,7 +524,7 @@ export const SegmentRow = memo(function SegmentRow({
       // fresh baseline so we don't 409 against the user's own propagation.
       await reconcilePropagationBaseline(jobId, segment.source_text, translation?.id, baselineUpdatedAtRef)
       const delta = editingTimer.consume()
-      const { text, richText } = serializeEditor(editorRef.current, editText, plainText)
+      const { text, richText } = vars ?? serializeEditor(editorRef.current, editText, plainText)
       let result: Awaited<ReturnType<typeof updateTranslationHuman>>
       try {
         result = await updateTranslationHuman(
@@ -427,15 +541,7 @@ export const SegmentRow = memo(function SegmentRow({
         throw err
       }
       const { translation: saved, updatedTmIds, taskReopened } = result
-      applySegmentSaveSuccess({
-        queryClient, jobId, saved,
-        baselineUpdatedAtRef, dirtyRef, setOriginalText,
-      })
-      // Instant status-bar update — patch the leverage cache synchronously
-      // before invalidateJobContext fires the (slower) refetch. Without
-      // this, Cmd+Enter spam confirmed segments faster than the bar could
-      // observe them. See lib/segment-save.ts for the band-mapping logic.
-      optimisticAdjustLeverage(queryClient, jobId, translation, saved, segment.word_count, segment.source_text.length)
+      syncSaved(saved)
       // Invalidate the TM browser caches that just received the new entry +
       // show the throttled "TM updated" toast. One helper, shared with the
       // use-mine conflict-resolution path so the two can't drift.
@@ -443,13 +549,13 @@ export const SegmentRow = memo(function SegmentRow({
       if (taskReopened) handleTaskReopened(queryClient, projectId ?? 0, jobId)
       return saved
     }),
-    onSuccess: (saved) => {
+    onSuccess: (saved, vars) => {
       // The 4 invariants (baseline / cache / originalText / dirty) are
       // applied inside mutationFn BEFORE the sentinel resolves — see comment
       // there. Side effects below don't affect this row's baseline state and
       // can run after the sentinel resolves without exposing queued callers
       // to stale data.
-      if (projectId) invalidateJobContext(queryClient, projectId, jobId)
+      if (projectId) invalidateSegmentSaveContext(queryClient, projectId, jobId)
       // Auto-run QA for this translation after confirm. POST recomputes +
       // persists so badges reflect the just-saved text — a
       // bare GET would return whatever the last full-job run left behind.
@@ -467,7 +573,7 @@ export const SegmentRow = memo(function SegmentRow({
           fileId,
           segment.source_text,
           targetLanguage,
-          editText,
+          vars?.text ?? editText,
           translation.id,
           saved?.active_rich_text ?? undefined,
         )
@@ -478,9 +584,11 @@ export const SegmentRow = memo(function SegmentRow({
               // invalidation refetches, so a sibling re-activated within the
               // refetch window doesn't capture a stale `baselineUpdatedAtRef`
               // and false-409 on its next save.
-              patchPropagatedSiblings({ queryClient, jobId, siblings: r.siblings })
+              patchPropagatedSiblings({ queryClient, jobId, siblings: r.siblings, wordCount: segment.word_count, charCount: segment.source_text.length })
               toast.success(`Propagated to ${r.propagated} segment${r.propagated > 1 ? 's' : ''}`)
-              if (projectId) invalidateJobContext(queryClient, projectId, jobId)
+              if (projectId) invalidateSegmentSaveContext(queryClient, projectId, jobId)
+              // The siblings' stored QA findings describe their old text.
+              queryClient.invalidateQueries({ queryKey: queryKeys.job.qaReport(jobId) })
             }
             warnHeldSkipped(r.held, 'repetition')
             return new Map<number, string>(
@@ -606,22 +714,23 @@ export const SegmentRow = memo(function SegmentRow({
   // `insert` is a panel insert: it always saves, with the text just inserted
   // (editText still holds the previous text in this closure) and the insert
   // token, so the server records the TM match or MT suggestion.
+  // Resolves true when the text was written.
   // The parent passes an inline arrow, new every render: read it through a ref
   // so saveDraft keeps its identity and the autosave timer below isn't reset.
   const onQARefreshRef = useLatestRef(onQARefresh)
-  const saveDraft = useCallback(async (insert?: { text: string; insertToken: string }) => {
-    if (!translation || effectiveReadOnly) return
-    await guardSave(async () => {
+  const saveDraft = useCallback(async (insert?: { text: string; insertToken: string }): Promise<boolean> => {
+    if (!translation || effectiveReadOnly) return false
+    return guardSave(async () => {
       // Re-check INSIDE the guarded section: after awaiting any prior
       // in-flight save, the dirty/baseline state may have changed, and a PUT
       // /draft with no pending edit 400s.
-      if (!dirtyRef.current && !insert) return
+      if (!dirtyRef.current && !insert) return false
       if (emptiedRef.current && !insert) {
         const { translation: cleared } = await clearMut.mutateAsync(translation.id)
         loadVersion(cleared)
         emptiedRef.current = false
         dirtyRef.current = false
-        return
+        return true
       }
       // Same in-flight propagation reconcile as saveMut — an autosave/flush on
       // a propagated sibling must not 409 against the user's own propagation.
@@ -637,14 +746,17 @@ export const SegmentRow = memo(function SegmentRow({
           baselineUpdatedAtRef.current,
           insert?.insertToken,
         )
-        // Post-save sync (advance baseline, patch cache, sync originalText,
-        // clear dirty) — single helper, used by saveMut + saveDraft + onUseMine.
-        applySegmentSaveSuccess({
-          queryClient, jobId, saved,
-          baselineUpdatedAtRef, dirtyRef, setOriginalText,
-        })
-        // Same instant leverage-bar update as the main saveMut path.
-        optimisticAdjustLeverage(queryClient, jobId, translation, saved, segment.word_count, segment.source_text.length)
+        // Post-save sync (advance baseline, patch cache and leverage bar, sync
+        // originalText, clear dirty) — single helper, used by saveMut + saveDraft + onUseMine.
+        syncSaved(saved)
+        // A displayed-status change (an empty segment's first draft, an
+        // approval taken away) moves the job's counts, which gate the toolbar
+        // Clear. An empty row is `needs_review` on the server too, so the raw
+        // status alone misses the first draft.
+        if (saved && deriveDisplayStatus(saved) !== deriveDisplayStatus(translation)) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.job.detail(jobId) })
+          if (projectId) void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.byProject(projectId) })
+        }
         if (taskReopened) handleTaskReopened(queryClient, projectId ?? 0, jobId)
         // Re-run QA for THIS segment after every autosave.
         // POST recomputes + persists so the badges track the draft as the user
@@ -653,22 +765,43 @@ export const SegmentRow = memo(function SegmentRow({
         if (refreshQA) {
           runTranslationQA(translation.id).then(issues => refreshQA(translation.id, issues)).catch((err) => console.warn('QA refresh failed:', err))
         }
+        return true
       } catch (err) {
-        if (isTaskLockedError(err)) { handleTaskLocked(queryClient, projectId ?? 0, jobId, err); return }
-        if (isSegmentHeldError(err)) { toast.error((err as Error).message); return }
+        if (isTaskLockedError(err)) { handleTaskLocked(queryClient, projectId ?? 0, jobId, err); return false }
+        if (isSegmentHeldError(err)) { toast.error((err as Error).message); return false }
         if (isSuggestionGoneError(err)) {
           // The text stays dirty, so the autosave keeps it as an ordinary edit.
           toast.error('That match is no longer in the translation memory, so it is kept as your own edit.')
-          return
+          return false
         }
         if (isSaveConflictError(err)) {
           setConflictPayload(getConflictPayload(err))
-          return
+          return false
         }
         throw err
       }
     })
-  }, [translation, effectiveReadOnly, editText, fileId, projectId, dirtyRef, queryClient, jobId, guardSave, clearMut, loadVersion, onQARefreshRef, segment.source_text, segment.word_count, plainText])
+  }, [translation, effectiveReadOnly, editText, fileId, projectId, dirtyRef, queryClient, jobId, guardSave, clearMut, loadVersion, onQARefreshRef, segment.source_text, plainText, syncSaved])
+
+  // Split and join replace this row, so its draft is saved first and the
+  // write carries the version that save left.
+  const splitAtCaret = useCallback(async () => {
+    if (!onSplit) return
+    const offset = sourceCaretRef.current
+    if (offset === null) {
+      toast.info('Click in the source text where it should split.')
+      return
+    }
+    await saveDraft()
+    const version = baselineUpdatedAtRef.current ?? translation?.updated_at
+    if (version) onSplit(offset, version)
+  }, [onSplit, saveDraft, sourceCaretRef, translation?.updated_at])
+  const joinWithNext = useCallback(async () => {
+    if (!onJoinNext) return
+    await saveDraft()
+    const version = baselineUpdatedAtRef.current ?? translation?.updated_at
+    if (version) onJoinNext(version)
+  }, [onJoinNext, saveDraft, translation?.updated_at])
 
   // Auto-save: debounced 3s after edit, only if dirty.
   // `isActive` is in deps so deactivating the segment (any
@@ -683,11 +816,13 @@ export const SegmentRow = memo(function SegmentRow({
   // Expose flush for parent (before QA, on deactivate). Always saves — no dirty check.
   useEffect(() => {
     if (!flushDraftRef || !isActive) return
-    flushDraftRef.current = saveDraft
+    flushDraftRef.current = async () => { await saveDraft() }
     return () => { if (flushDraftRef) flushDraftRef.current = async () => {} }
   }, [flushDraftRef, isActive, saveDraft])
 
-  // Look up terminology when segment becomes active (cached by sourceText)
+  // Look up terminology when segment becomes active (cached by sourceText),
+  // and again when a term added from the editor drops the cache.
+  const termLookupVersion = useSyncExternalStore(subscribeTermLookups, getTermLookupVersion)
   useEffect(() => {
     if (!isActive || !projectId || !sourceLanguage || !targetLanguage || !segment.source_text) {
       return
@@ -710,7 +845,7 @@ export const SegmentRow = memo(function SegmentRow({
       // never leaves the PREVIOUS segment's terms in the Terminology panel
       .catch(() => { if (!cancelled) { setLookedUpTerms({ key: cacheKey, terms: NO_TERMS }); onTermsLoaded?.([]) } })
     return () => { cancelled = true }
-  }, [isActive, projectId, sourceLanguage, targetLanguage, segment.source_text]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isActive, projectId, sourceLanguage, targetLanguage, segment.source_text, termLookupVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Select a term's match in the editor (for hover preview and auto-select)
   // Uses source term match + MT translation match for cross-language detection
@@ -761,12 +896,27 @@ export const SegmentRow = memo(function SegmentRow({
     tiptap.commands.setTextSelection(from + targetTerm.length)
   }
 
+  // A confirm of this row is saving. Cmd+Enter pressed again meanwhile is
+  // dropped: queued, each press would save the row once more (and, on a
+  // repetition source, wait for its own previous propagation) before the
+  // editor moves on. A ref, not saveMut.isPending: key repeat outruns a render.
+  // Settled through this save's own promise: mutate's per-call callbacks run
+  // only for the latest call, so an insert-and-approve save started meanwhile
+  // would drop them and leave the ref set.
+  const confirmingRef = useRef(false)
+  // A save that lands after the user left the row (Cmd+G, a find result) must
+  // not pull them back to the row after it.
+  const isActiveRef = useLatestRef(isActive)
   const confirmAndAdvance = useCallback(() => {
-    const afterSave = () => {
-      // Confirm never locks. Locking is a separate manual action via the lock
-      // toggle button.
-      queryClient.invalidateQueries({ queryKey: queryKeys.job.translations(jobId) })
-      onNavigate('next')
+    if (confirmingRef.current) return
+    // The saved row is already in the translations cache (applySegmentSaveSuccess).
+    const afterSave = () => { if (isActiveRef.current) onNavigate('next') }
+    const confirm = () => {
+      confirmingRef.current = true
+      // A failure is shown by saveMut's onError.
+      saveMut.mutateAsync(undefined)
+        .then(afterSave, () => {})
+        .finally(() => { confirmingRef.current = false })
     }
 
     // No QA check here: the server runs QA on the text being confirmed and
@@ -778,14 +928,14 @@ export const SegmentRow = memo(function SegmentRow({
       const src = plainText ? segment.source_text : segment.source_rich_text || segment.source_text
       setEditText(segment.source_text) // plain text
       editorRef.current?.setText(src)
-      saveMut.mutate(undefined, { onSuccess: afterSave })
+      confirm()
     } else if (editText.trim()) {
       // Always save on Cmd+Enter — confirms/approves the segment even if unedited
-      saveMut.mutate(undefined, { onSuccess: afterSave })
+      confirm()
     } else {
       onNavigate('next')
     }
-  }, [editText, segment.source_text, segment.source_rich_text, plainText, saveMut, onNavigate, queryClient, jobId])
+  }, [editText, segment.source_text, segment.source_rich_text, plainText, saveMut, onNavigate, isActiveRef])
 
   // Copy source → target. Same logic as SegmentEditor's onCopySource
   // prop — extracted here so we can expose it via insertRef for the window-level
@@ -798,88 +948,123 @@ export const SegmentRow = memo(function SegmentRow({
   }, [segment.source_text, segment.source_rich_text, plainText, effectiveReadOnly])
 
   // Source tags missing from target. Show a small bar above the
-  // editor with each missing tag as a clickable chip,
-  // plus F8 / Alt+F8 keyboard shortcuts. Recomputed on every keystroke
-  // (editText) so the bar disappears the moment all tags are back.
+  // editor with each missing tag as a clickable chip; F8 / Alt+F8 insert
+  // them together with the missing placeables and term targets, in source
+  // order. Recomputed on every keystroke (editText) so the bar disappears the
+  // moment all tags are back.
   let missingTags = NO_MISSING_TAGS
   if (isActive && segment.source_rich_text && hasXliffTags(segment.source_rich_text)) {
     const { text, richText } = serializeEditor(editorHandle, editText, plainText)
     missingTags = getMissingTags(segment.source_rich_text, richText || text)
   }
 
-  const insertTagAtCursor = useCallback((tag: MissingTag) => {
-    if (effectiveReadOnly) return
-    const editor = editorRef.current?.getEditor()
-    if (!editor) return
-    editor.chain().focus().insertContent({
-      type: 'xliffTag',
-      attrs: {
-        tagType: tag.tagType,
-        tagId: tag.tagId,
-        ctype: tag.ctype,
-        tagNum: tag.tagNum,
-        closing: tag.closing,
-        rawXml: tag.rawXml,
-      },
-    }).run()
-  }, [effectiveReadOnly])
+  const hasSourceTags = !!segment.source_rich_text && hasXliffTags(segment.source_rich_text)
+  const { insertTag, insertText, insertNext, insertAll } = useSourceInserts({
+    sourceRich: hasSourceTags ? segment.source_rich_text : null,
+    flatSource: isActive && hasSourceTags ? flattenRichText(segment.source_rich_text!) : segment.source_text,
+    placeables, terms: matchingTerms, missingTags, isActive, readOnly: effectiveReadOnly, editorRef,
+    target: isActive ? plainTargetText(editorHandle, editText) : '',
+  })
 
-  const insertNextMissingTag = useCallback(() => {
-    if (missingTags.length > 0) insertTagAtCursor(missingTags[0])
-  }, [missingTags, insertTagAtCursor])
-
-  const insertAllMissingTags = useCallback(() => {
-    // Iterate over the snapshot we computed at the time of the keystroke.
-    // Each insert mutates the doc → editText updates → memo recomputes,
-    // but we want to insert exactly what was missing when the user asked.
-    for (const t of missingTags) insertTagAtCursor(t)
-  }, [missingTags, insertTagAtCursor])
+  // A click on a placeable in the open row's source inserts it at the
+  // target's cursor (renderRanges marks it with data-placeable). Only the first
+  // click of a double click inserts, and a drag that selects text inserts
+  // nothing. The Split caret goes anywhere but inside a placeable, which is
+  // never cut.
+  const insertClickedPlaceable = (e: ReactMouseEvent) => {
+    if (e.detail !== 1 || !(document.getSelection()?.isCollapsed ?? true)) return
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-placeable]')
+    if (!el?.dataset.placeable) return
+    e.preventDefault()
+    insertText(el.dataset.placeable)
+  }
 
   // Imperative handlers for CATEditor's window-level shortcuts (Mod+Enter,
   // Mod+Shift+S, Ctrl+1..5) and the sidebar's inserts. On a read-only or locked
   // row every handler that writes is undefined or a no-op (parity with TipTap's
   // `if (!props.readOnly)` keymap checks); selectTerm, the hover highlight,
   // stays. No deps: re-runs every render so the ref holds the latest closures.
+  // The cleanup hands the ref back empty when the row stops being the open one
+  // or unmounts, so a shortcut never reaches a row the user has left.
   useEffect(() => {
-    if (insertRef) {
-      insertRef.current = {
-        selectAndReplace,
-        selectTerm: selectTermInTextarea,
-        replaceAll: effectiveReadOnly ? undefined : (text: string, insertToken?: string) => {
-          setEditText(text)
-          editorRef.current?.setText(text)
-          // The editor's plain text, as typing sends it; the tags travel in the
-          // rich text the save reads from the editor.
-          if (insertToken) saveDraft({ text: editorRef.current?.getText() ?? text, insertToken }).catch(() => toast.error('Draft save failed'))
-        },
-        confirm: effectiveReadOnly ? undefined : confirmAndAdvance,
-        copySource: effectiveReadOnly ? undefined : copySourceToTarget,
-        clear: canClear ? requestClear : undefined,
-      }
+    if (!insertRef) return
+    insertRef.current = {
+      selectAndReplace,
+      selectTerm: selectTermInTextarea,
+      replaceAll: effectiveReadOnly ? undefined : (text: string, insertToken?: string, approve?: boolean) => {
+        setEditText(text)
+        editorRef.current?.setText(text)
+        if (!insertToken) return
+        // The editor's plain text, as typing sends it; the tags travel in the
+        // rich text the save reads from the editor. The draft records the
+        // match first, so a confirm the QA gate refuses leaves it a draft
+        // that still names its TM match. Only the match itself, still in an
+        // open editor, is approved: a later insert or typing has its own
+        // save, and a closed row has no editor to read the tags from.
+        const inserted = editorRef.current?.getText() ?? text
+        saveDraft({ text: inserted, insertToken })
+          .then(saved => {
+            const editor = editorRef.current
+            if (!saved || !approve || !editor || editor.getText() !== inserted) return
+            saveMut.mutate(serializeEditor(editor, inserted, plainText))
+          })
+          .catch(() => toast.error('Draft save failed'))
+      },
+      confirm: effectiveReadOnly ? undefined : confirmAndAdvance,
+      copySource: effectiveReadOnly ? undefined : copySourceToTarget,
+      clear: canClear ? requestClear : undefined,
+      split: !effectiveReadOnly && onSplit ? () => void splitAtCaret() : undefined,
+      joinNext: !effectiveReadOnly && onJoinNext ? () => void joinWithNext() : undefined,
+      getTermSelection: () => {
+        const { start, end } = cursorPosRef.current
+        const text = editorRef.current?.getText() ?? ''
+        return {
+          source: getSourceSelection(),
+          target: text.slice(Math.min(start, end), Math.max(start, end)).trim(),
+        }
+      },
+      clearSourceSelection,
+      leaveReadOnly: effectiveReadOnly
+        ? (dir, byLine) => onNavigate(dir, byLine ? { line: dir === 'next' ? 'first' : 'last', x: entryCaret && isLineCaret(entryCaret) ? entryCaret.x : 0 } : undefined)
+        : undefined,
     }
+    return () => { insertRef.current = { selectAndReplace: () => {}, selectTerm: () => {} } }
   })
 
   const status = deriveDisplayStatus(translation, { predictedBeforeStep })
+  const statusIcon = statusIconFor(status, translation)
   const originVal = translation?.origin?.valid ? translation.origin.translation_origin : ''
   // Exactly one provenance chip per row (repetition > TM% > APE > MT > File).
   const matchChip = deriveMatchChip({ isRepetitionSource, isRepetition, origin: originVal })
+  const tmChip = tmMatchChipInfo(translation?.tm_match_percent)
   const qe = qeChipInfo(translation)
   // The extras column can be 0px wide (no row in the job has extras); an empty
   // cell then drops its padding so it doesn't spill past the row.
   const hasExtras = isLocked || qe != null || qaIssues.length > 0 || commentCount > 0
 
+  // A click opens the row with the caret where it landed in the translation,
+  // in one click. A selection dragged in the source stays, to be copied.
+  const activateAt = (e: React.MouseEvent) => {
+    const sel = document.getSelection()
+    const source = sourceBoxRef.current
+    if (sel && !sel.isCollapsed && source?.contains(sel.anchorNode) && source.contains(sel.focusNode)) return
+    const target = targetBoxRef.current
+    onActivate((activeText !== '' && target && textCaretAt(target, e.clientX, e.clientY)) || undefined)
+  }
+
   return (
     <div
-      className={`${SEGMENT_GRID_COLS} border-b border-gray-100 dark:border-gray-800 cursor-pointer transition-colors duration-150 ${isActive ? 'bg-blue-50 dark:bg-blue-950/30' : isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted'}`}
+      className={`${SEGMENT_GRID_COLS} border-b border-gray-100 dark:border-gray-800 cursor-pointer transition-colors duration-150 ${isActive ? 'bg-blue-50 dark:bg-blue-950/30 shadow-[inset_1px_0_0_var(--color-blue-500)] dark:shadow-[inset_1px_0_0_var(--color-blue-400)]' : isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/40'}`}
       data-selected={isSelected || undefined}
-      onClick={!isActive ? onActivate : undefined}
+      data-active={isActive || undefined}
+      onClick={!isActive ? activateAt : undefined}
     >
       {onSelectClick && translation ? (
         // The whole cell is the checkbox's click target. Shift+click selects a
         // range; select-none + the mousedown guard keep Shift from also
         // selecting text.
         <div
-          className="flex items-start gap-1.5 px-2 py-3 text-xs text-gray-400 dark:text-gray-500 select-none"
+          className="segment-cell px-2 text-xs text-gray-400 dark:text-gray-500 select-none"
           onMouseDown={e => { if (e.shiftKey) e.preventDefault() }}
           onClick={e => {
             e.stopPropagation()
@@ -887,23 +1072,27 @@ export const SegmentRow = memo(function SegmentRow({
           }}
           data-testid="segment-select-cell"
         >
-          <input
-            type="checkbox"
-            checked={!!isSelected}
-            // The cell handles the click (bubbled from here too); keyboard
-            // Space also arrives as a click.
-            onChange={() => {}}
-            className="mt-px size-3.5 shrink-0 cursor-pointer accent-primary"
-            aria-label={`Select segment ${index}`}
-            data-testid={`segment-select-${index}`}
-          />
-          {index}
-          {heldByName && <SegmentHeldIcon name={heldByName} />}
+          <div className="segment-number flex items-center gap-1.5 leading-5">
+            <input
+              type="checkbox"
+              checked={!!isSelected}
+              // The cell handles the click (bubbled from here too); keyboard
+              // Space also arrives as a click.
+              onChange={() => {}}
+              className="size-3.5 shrink-0 cursor-pointer accent-primary"
+              aria-label={`Select segment ${number}`}
+              data-testid={`segment-select-${number}`}
+            />
+            {number}
+            {heldByName && <SegmentHeldIcon name={heldByName} />}
+          </div>
         </div>
       ) : (
-        <div className="flex items-start gap-1 px-3 py-3 text-xs text-gray-400 dark:text-gray-500">
-          {index}
-          {heldByName && <SegmentHeldIcon name={heldByName} />}
+        <div className="segment-cell px-3 text-xs text-gray-400 dark:text-gray-500">
+          <div className="segment-number flex items-center gap-1 leading-5">
+            {number}
+            {heldByName && <SegmentHeldIcon name={heldByName} />}
+          </div>
         </div>
       )}
       {/* min-w-0 lets the 1fr track stay at its fair share instead of growing to
@@ -911,24 +1100,40 @@ export const SegmentRow = memo(function SegmentRow({
           then wraps that token inside the cell. Without both, a token with no
           spaces (e.g. "Copyright_2026_Deloitte_...") expands the column and
           misaligns the row. */}
-      <div className="px-3 py-3 text-sm text-gray-900 dark:text-gray-100 min-w-0 break-words">
+      <div className={`segment-cell px-3 text-sm min-w-0 break-words ${isActive ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}>
         {/*
-          When the segment is active, the source sits in a dashed grey box.
-          The translation editor has the same border (index.css
-          `.segment-editor .ProseMirror`), so the two read as one frame.
-          Geometry comes from .segment-preview / .segment-source-box
-          (index.css), shared with the translation cell, so the two columns
-          line up and activating the row doesn't move the text.
+          Open or closed, the source sits in a box with an invisible border
+          and no fill, like the translation (index.css
+          `.segment-editor .ProseMirror`, `.segment-target-box`). Geometry comes from
+          .segment-source-box / .segment-editor-frame (index.css), so the two
+          columns line up and activating the row doesn't move the text.
         */}
         <div
-          className={
-            isActive
-              ? 'segment-source-box border border-dashed border-gray-300 dark:border-gray-700 rounded'
-              : 'segment-preview'
-          }
+          ref={sourceBoxRef}
+          className={`segment-source-box relative border border-transparent rounded ${isActive ? '' : 'cursor-text'}`}
           data-testid={isActive ? 'active-source-box' : undefined}
         >
-          <div className={isActive ? undefined : SEGMENT_PREVIEW_CLAMP}>
+          {/* Split's mousedown keeps the caret where the user put it. */}
+          {canSplit && (
+            <SegmentRowActionBar placement={actionsBelow ? 'bottom' : 'top'}>
+              <SegmentRowAction
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => void splitAtCaret()}
+                disabled={!sourceHasCaret}
+                disabledReason="First click in the source text where you want to cut the segment."
+                title={`Split at the cursor (${altKey}⇧T)`}
+                data-testid="split-segment-btn"
+              >✂ Split</SegmentRowAction>
+            </SegmentRowActionBar>
+          )}
+          <div
+            key={sourceFieldKey}
+            className={isActive ? cn(canSplit && 'outline-none cursor-text', !effectiveReadOnly && '[&_[data-placeable]]:cursor-pointer') : SEGMENT_PREVIEW_CLAMP}
+            data-testid={isActive ? 'active-source-text' : undefined}
+            {...sourceFieldProps}
+            ref={attachSourceField}
+            onClick={isActive && !effectiveReadOnly ? insertClickedPlaceable : undefined}
+          >
             {/* SegmentText owns the full rendering-mode resolution (chips →
                 whitespace → terms → find-highlight → plain), so term underlines
                 survive the chip and whitespace paths. Term
@@ -943,11 +1148,12 @@ export const SegmentRow = memo(function SegmentRow({
               highlightTerm={findHighlightTerm}
               showWhitespace={showWhitespace}
               resolveRef={resolveRefSource}
+              placeables={placeables}
             />
           </div>
         </div>
       </div>
-      <div className="px-3 py-3 min-w-0 break-words" data-translation-cell>
+      <div className="segment-cell px-3 min-w-0 break-words" data-translation-cell>
         {isActive ? (
           <div data-active-row>
             {conflictPayload && (
@@ -985,11 +1191,7 @@ export const SegmentRow = memo(function SegmentRow({
                     .then(({ translation: saved, updatedTmIds, taskReopened }) => {
                       // Same post-save sync helper as saveMut/saveDraft, so
                       // every save path clears dirty and advances the baseline.
-                      applySegmentSaveSuccess({
-                        queryClient, jobId, saved,
-                        baselineUpdatedAtRef, dirtyRef, setOriginalText,
-                      })
-                      optimisticAdjustLeverage(queryClient, jobId, translation, saved, segment.word_count, segment.source_text.length)
+                      syncSaved(saved)
                       if (projectId) invalidateJobContext(queryClient, projectId, jobId)
                       // Same post-save TM side effects as the main save path:
                       // the backend writes to the configured TMs identically.
@@ -1017,70 +1219,29 @@ export const SegmentRow = memo(function SegmentRow({
             {!effectiveReadOnly && missingTags.length > 0 && (
               <MissingTagsBar
                 missing={missingTags}
-                onInsert={insertTagAtCursor}
-                onInsertAll={insertAllMissingTags}
+                onInsert={insertTag}
+                onInsertAll={() => { for (const t of missingTags) insertTag(t) }}
               />
             )}
             {/* segment-editor-frame (index.css): activating a row keeps its
                 height and the text stays where the preview drew it. */}
             <div className="segment-editor-frame relative">
-              {/* The action bar floats on the editor's top border; its background
-                  matches the editor's, so it cuts the border like a legend. Half
-                  sits in the cell padding, half in the editor's padding, clear
-                  of the glyphs. */}
-              <div
-                className={`absolute right-1.5 top-0 -translate-y-1/2 z-10 flex items-center gap-2 whitespace-nowrap rounded px-1 ${editorChromeBg}`}
-                data-testid="segment-editor-actions"
-              >
-                {!effectiveReadOnly && <SegmentEditorToolbar editor={editorHandle?.getEditor() ?? null} />}
-                {translation && (
-                  isLocked && readOnly ? (
-                    // Locked, and the row is read-only for this user anyway
-                    // (not their task): a status label, not a dead button.
-                    <span
-                      className="text-[9px] text-amber-500 cursor-not-allowed"
-                      title="Locked"
-                      data-testid="segment-locked-indicator"
-                    >🔒 Locked</span>
-                  ) : (isLocked || (canLock && deriveDisplayStatus(translation) !== 'untranslated')) ? (
-                    // Unlock: anyone who may edit the row. Lock: managers only,
-                    // and only a translated segment — locking approves it.
-                    // eslint-disable-next-line no-restricted-syntax -- compact inline lock/unlock control in the segment row, not a standard button
-                    <button
-                      onClick={() => {
-                        // Pending-guard + error toast: a silent failure would
-                        // hide route-gate 403s, network errors and double-clicks.
-                        if (lockToggleInFlightRef.current) return
-                        lockToggleInFlightRef.current = true
-                        const action = isLocked
-                          ? unlockTranslation(fileId, translation.id)
-                          : lockTranslation(fileId, translation.id)
-                        action
-                          // A lock approves the segment, so counts and the
-                          // progress bar move with it.
-                          .then(() => {
-                            if (projectId) invalidateJobContext(queryClient, projectId, jobId)
-                            else queryClient.invalidateQueries({ queryKey: queryKeys.job.translations(jobId) })
-                          })
-                          .catch((err: Error) => toast.error(`${isLocked ? 'Unlock' : 'Lock'} failed: ${err.message}`))
-                          .finally(() => { lockToggleInFlightRef.current = false })
-                      }}
-                      title={isLocked ? 'Unlock to edit' : 'Lock: approve the segment and make it read-only'}
-                      className={`text-[9px] cursor-pointer ${isLocked ? 'text-amber-500 hover:text-amber-600' : 'text-gray-400 hover:text-amber-500'}`}
-                    >{isLocked ? '🔒 Unlock' : '🔓 Lock'}</button>
-                  ) : null
-                )}
-                {isActive && canClear && (
-                  // eslint-disable-next-line no-restricted-syntax -- compact inline clear control in the segment row, not a standard button
-                  <button
-                    onClick={requestClear}
-                    disabled={clearMut.isPending}
-                    className="text-[9px] text-gray-400 hover:text-red-500 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
-                    title={`Clear translation (${modKey}⇧⌫)`}
-                    data-testid="clear-translation-btn"
-                  >🧹 Clear</button>
-                )}
-              </div>
+              {/* The toolbar and Clear are for an editable box only; a
+                  read-only box draws no bar, rather than an empty one. */}
+              {!effectiveReadOnly && (
+                <SegmentRowActionBar placement={actionsBelow ? 'bottom' : 'top'} data-testid="segment-editor-actions">
+                  <SegmentEditorToolbar editor={editorHandle?.getEditor() ?? null} />
+                  {isActive && canClear && (
+                    <SegmentRowAction
+                      tone="danger"
+                      onClick={requestClear}
+                      disabled={clearMut.isPending}
+                      title={`Clear translation (${modKey}⇧⌫)`}
+                      data-testid="clear-translation-btn"
+                    >🧹 Clear</SegmentRowAction>
+                  )}
+                </SegmentRowActionBar>
+              )}
               <SegmentEditor
                 ref={attachEditor}
                 initialText={editTextReady ? editText : editorInitialText}
@@ -1108,42 +1269,62 @@ export const SegmentRow = memo(function SegmentRow({
                 }}
                 onConfirmAndAdvance={confirmAndAdvance}
                 onNavigate={onNavigate}
+                initialCaret={entryCaret}
                 onDeactivate={onDeactivate}
                 onCopySource={copySourceToTarget}
-                onInsertNextSourceTag={insertNextMissingTag}
-                onInsertAllSourceTags={insertAllMissingTags}
+                onInsertNextFromSource={insertNext}
+                onInsertAllFromSource={insertAll}
                 onClearTranslation={() => { if (canClear) requestClear() }}
               />
             </div>
           </div>
         ) : (
-          <div
-            onClick={onActivate}
-            className="segment-preview text-sm cursor-pointer h-full text-gray-700 dark:text-gray-300"
-          >
-            <div className={SEGMENT_PREVIEW_CLAMP}>
-              {translation?.active_text
-                ? ((!plainText && translation.active_rich_text && hasXliffTags(translation.active_rich_text))
-                      ? <RichSourceText richText={translation.active_rich_text} showWhitespace={showWhitespace} resolveRef={resolveRefTarget} />
-                      : !plainText && hasXliffTags(translation.active_text)
-                        ? <RichSourceText richText={translation.active_text} showWhitespace={showWhitespace} resolveRef={resolveRefTarget} />
-                        : showWhitespace
-                          ? <WhitespaceText text={translation.active_text} highlightTerm={findHighlightTerm} />
-                          : !plainText && hasHTMLFormatting(translation.active_text)
-                            ? <SafeHTML html={translation.active_text} />
-                            : findHighlightTerm
-                              ? highlightText(translation.active_text, findHighlightTerm)
-                              : translation.active_text)
-                : <span className="text-gray-300 dark:text-gray-600 italic">{effectiveReadOnly ? 'Empty' : 'Click to translate'}</span>
-              }
+          // Drawn as the editor box that replaces it, so the click that opens
+          // the row lands where the user aimed (activateAt).
+          <div className="segment-editor-frame">
+            <div
+              ref={targetBoxRef}
+              className={`segment-target-box cursor-text ${effectiveReadOnly ? 'segment-target-box-readonly' : ''}`}
+              data-testid="segment-target-box"
+            >
+              <div className={SEGMENT_PREVIEW_CLAMP}>
+                {trackView
+                  ? <span data-testid={showTrackChanges ? 'track-changes' : undefined}>
+                      <SegmentText
+                        text={activeText}
+                        richText={trackRich}
+                        changesFrom={showTrackChanges ? trackChangesFrom : null}
+                        search={trackSearch}
+                        showWhitespace={showWhitespace}
+                        resolveRef={resolveRefTarget}
+                      />
+                    </span>
+                  : translation?.active_text
+                  ? ((!plainText && translation.active_rich_text && hasXliffTags(translation.active_rich_text))
+                        ? <RichSourceText richText={translation.active_rich_text} showWhitespace={showWhitespace} resolveRef={resolveRefTarget} />
+                        : !plainText && hasXliffTags(translation.active_text)
+                          ? <RichSourceText richText={translation.active_text} showWhitespace={showWhitespace} resolveRef={resolveRefTarget} />
+                          : showWhitespace
+                            ? <WhitespaceText text={translation.active_text} highlightTerm={findHighlightTerm} />
+                            : !plainText && hasHTMLFormatting(translation.active_text)
+                              ? <SafeHTML html={translation.active_text} />
+                              : findHighlightTerm
+                                ? highlightText(translation.active_text, findHighlightTerm)
+                                : translation.active_text)
+                  : <span className="text-gray-300 dark:text-gray-600" data-testid="empty-target">
+                      {pretranslating ? 'Pre-translating…' : effectiveReadOnly ? 'Empty' : 'Click to translate'}
+                    </span>
+                }
+              </div>
             </div>
           </div>
         )}
       </div>
-      <div className="px-2 py-3 flex items-center justify-center">
+      <div className="segment-cell px-2 flex items-center justify-center">
         {/* ONE provenance chip per row — deriveMatchChip picks it with
             priority repetition > TM% > APE > MT > File (mutually exclusive
-            by design).
+            by design). A repetition source from TM keeps its percentage and
+            adds the arrow: 98%→.
 
             Provenance is grey; only the TM percentage carries a colour,
             because only it says something about quality. Otherwise this
@@ -1153,9 +1334,18 @@ export const SegmentRow = memo(function SegmentRow({
             (→R solid = source, ⇢R dashed = derived), not by colour. A dashed
             outline is not available: Chip's edge is a ring, and rings are
             box-shadows, which CSS cannot dash. */}
+        {matchChip === 'tm_repetition_source' && (
+          <Chip
+            color={tmChip.color}
+            title={`${tmChip.title}. ${REPETITION_SOURCE_TITLE}`}
+            data-testid="repetition-source-badge"
+          >
+            {tmChip.label}→
+          </Chip>
+        )}
         {matchChip === 'repetition_source' && (
           <Chip
-            title="Source of repetitions — confirming this auto-propagates to identical-source segments"
+            title={REPETITION_SOURCE_TITLE}
             data-testid="repetition-source-badge"
             className="font-semibold"
           >
@@ -1172,24 +1362,7 @@ export const SegmentRow = memo(function SegmentRow({
           </Chip>
         )}
         {matchChip === 'tm' && (
-          <Chip
-            color={
-              translation!.tm_match_percent != null && translation!.tm_match_percent < 100
-                ? 'yellow'
-                : 'green'
-            }
-            title={
-              translation!.tm_match_percent === 101
-                ? '101% — source and both surrounding segments match'
-                : translation!.tm_match_percent != null && translation!.tm_match_percent < 100
-                  ? 'Fuzzy TM match'
-                  : 'Exact (100%) TM match'
-            }
-          >
-            {translation!.tm_match_percent != null
-              ? `${translation!.tm_match_percent}%`
-              : '100%'}
-          </Chip>
+          <Chip color={tmChip.color} title={tmChip.title}>{tmChip.label}</Chip>
         )}
         {matchChip === 'ape' && (
           <Chip title="Machine translated, post-edited by APE">APE</Chip>
@@ -1197,33 +1370,25 @@ export const SegmentRow = memo(function SegmentRow({
         {matchChip === 'mt' && <Chip title="Machine translated">MT</Chip>}
         {matchChip === 'file' && <Chip title="Imported from bilingual file">File</Chip>}
       </div>
-      <div className="px-2 py-3 flex flex-wrap items-center gap-1">
-        {/* Empty for untranslated / pre_translated (default states) — the
-            Status column only flags progress: Draft / Auto-approved /
-            Approved. Provenance for pretranslated rows shows in Match.
-            "Confirmed by assistant" stacks under Approved; the column is as
-            wide as its widest chip (lib/segment-columns). */}
-        {showStatusChip(status) && (
-          <Chip color={STATUS_CHIP_COLORS[status]}>{statusLabel(status)}</Chip>
-        )}
-        {isAssistantConfirmed(translation) && (
-          <Chip color="grey">{ASSISTANT_CONFIRMED_LABEL}</Chip>
-        )}
-        {/* Grey: it is history, the chip above is the state of this step. */}
-        {autoApprovedBeforeStep && (
-          <Tooltip>
-            <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-              <Chip color="grey" data-testid="previous-step-chip">{statusLabel('auto_approved')}</Chip>
-            </TooltipTrigger>
-            <TooltipContent side="top">{PREVIOUS_AUTO_APPROVED_TOOLTIP}</TooltipContent>
-          </Tooltip>
+      <div className="segment-cell px-2 flex flex-wrap items-center gap-1">
+        {/* At most one icon (statusIconFor). The previous step's auto-approval
+            shows, grey, only until this step marks the segment itself. */}
+        {statusIcon ? (
+          <SegmentStatusIcon kind={statusIcon.kind} label={statusIcon.label} />
+        ) : autoApprovedBeforeStep && (
+          <SegmentStatusIcon kind="machine_approved" label={PREVIOUS_AUTO_APPROVED_TOOLTIP} history data-testid="previous-step-status" />
         )}
       </div>
-      <div className={hasExtras ? 'px-2 py-3 text-xs text-gray-500 dark:text-gray-400 flex items-center' : undefined}>
+      <div className={hasExtras ? 'segment-cell px-2 text-xs text-gray-500 dark:text-gray-400 flex items-center' : undefined}>
         {/* Everything that is not the match or the status, in one group that
             wraps to a second line when it runs out of room. */}
         <div className="flex-1 min-w-0 flex flex-wrap items-center gap-1">
-        {isLocked && <span title="Locked">🔒</span>}
+        {isLocked && (
+          <LockIcon
+            onUnlock={readOnly || !translation ? undefined : () => unlockMut.mutate(translation.id)}
+            pending={unlockMut.isPending}
+          />
+        )}
         {/* LLM QE+APE score chip (a segment can be MT *and* scored). */}
         {qe && (
           <Chip color={qe.color} data-testid="qe-note-badge" title={qe.title}>
@@ -1237,9 +1402,9 @@ export const SegmentRow = memo(function SegmentRow({
           <Tooltip>
             <TooltipTrigger>
               <Chip
-                // Same colour as the Approved status chip — read from the
-                // map rather than hard-coded, so a theme change to one
-                // moves the other with it.
+                // Same colour as the Approved chip in the History section —
+                // read from the map rather than hard-coded, so a theme change
+                // to one moves the other with it.
                 color={STATUS_CHIP_COLORS.approved}
                 icon={<MessageSquare className="fill-current" />}
                 data-testid="segment-comment-indicator"

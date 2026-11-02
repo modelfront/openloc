@@ -5,6 +5,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"openloc/internal/segmentation"
 )
 
 // sentenceSegmenter splits each block an inner parser extracts (a paragraph, a
@@ -19,6 +23,8 @@ type sentenceSegmenter struct {
 	// text (chips) when it has one, rather than plain text; see
 	// exportTranslations in internal/pipeline.
 	richExport bool
+	// seg splits each block; nil is the conservative built-in set.
+	seg *segmentation.Segmenter
 }
 
 func (s sentenceSegmenter) Parse(content []byte) ([]Segment, error) {
@@ -26,7 +32,10 @@ func (s sentenceSegmenter) Parse(content []byte) ([]Segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	plans := sentencePlans(blocks)
+	plans, err := sentencePlans(segmenterOr(s.seg), blocks)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Segment, 0, len(blocks))
 	for _, b := range blocks {
 		plan, ok := plans[b.Key]
@@ -58,12 +67,16 @@ func (s sentenceSegmenter) Reconstruct(original []byte, translations map[string]
 	if err != nil {
 		return nil, err
 	}
-	plans := sentencePlans(blocks)
+	plans, err := sentencePlans(segmenterOr(s.seg), blocks)
+	if err != nil {
+		return nil, err
+	}
 	merged := make(map[string]string, len(translations))
 	for k, v := range translations {
 		merged[k] = v
 	}
 	joined := map[string][]sentencePiece{}
+	ranges := numberedRanges(translations)
 	for _, b := range blocks {
 		plan, ok := plans[b.Key]
 		if !ok {
@@ -79,7 +92,24 @@ func (s sentenceSegmenter) Reconstruct(original []byte, translations map[string]
 		}
 		pieces := []sentencePiece{{text: gaps[0]}}
 		translated := false
-		for i, part := range plan.parts {
+		// A joined run of sentences is written over them and the gaps
+		// between them; its chips are numbered as plan.run numbers them.
+		runs := runsByStart(ranges[b.Key], len(plan.parts))
+		for i := 0; i < len(plan.parts); i++ {
+			if r, ok := runs[i]; ok {
+				t := translations[r.key]
+				delete(merged, r.key)
+				if rich {
+					_, runRich := plan.joinParts(r.i, r.j)
+					_, base := renumberChipIDs(runRich)
+					t = shiftChipIDs(t, base)
+				}
+				translated = true
+				pieces = append(pieces, sentencePiece{text: t, translated: true}, sentencePiece{text: gaps[r.j+1]})
+				i = r.j
+				continue
+			}
+			part := plan.parts[i]
 			key := sentenceKey(b.Key, i)
 			piece := sentencePiece{}
 			if t, ok := translations[key]; ok {
@@ -170,7 +200,7 @@ type sentencePart struct {
 // not line up with its chips, a sentence or the space between two would hold
 // half of an inline element, or a sentence key would clash with a key the
 // file already has. No sentence ends inside "{…}".
-func sentencePlans(blocks []Segment) map[string]sentencePlan {
+func sentencePlans(seg *segmentation.Segmenter, blocks []Segment) (map[string]sentencePlan, error) {
 	keys := make(map[string]bool, len(blocks))
 	for _, b := range blocks {
 		keys[b.Key] = true
@@ -180,7 +210,10 @@ func sentencePlans(blocks []Segment) map[string]sentencePlan {
 		if b.Key == "" || b.Target != "" || b.TargetRichText != "" {
 			continue
 		}
-		plan, ok := planSentences(b.Text, b.RichText)
+		plan, ok, err := planSentences(seg.Split, b.Text, b.RichText)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || len(plan.parts) < 2 {
 			continue
 		}
@@ -195,7 +228,7 @@ func sentencePlans(blocks []Segment) map[string]sentencePlan {
 			plans[b.Key] = plan
 		}
 	}
-	return plans
+	return plans, nil
 }
 
 // richToken matches the chips a rich text holds: a <g …> opener, its </g>
@@ -224,13 +257,20 @@ func braceFree(text string) func(p int) bool {
 	return func(p int) bool { return open[p] == 0 }
 }
 
+// splitFunc cuts text into ranges, breaking only where canBreak allows:
+// Segmenter.Split, or a cut at one position (SplitSourceAt).
+type splitFunc func(text string, canBreak func(pos int) bool) ([]segmentation.TextRange, error)
+
 // planSentences splits text (and rich, its chip form, when set) into
-// sentences. ok is false when rich does not line up with text, or a split
-// would leave a chip open across sentences.
-func planSentences(text, rich string) (sentencePlan, bool) {
+// sentences with split. ok is false when rich does not line up with text, or a
+// split would leave a chip open across sentences.
+func planSentences(split splitFunc, text, rich string) (sentencePlan, bool, error) {
 	outsideBraces := braceFree(text)
 	if rich == "" {
-		ranges := SplitSentences(text, outsideBraces)
+		ranges, err := split(text, outsideBraces)
+		if err != nil {
+			return sentencePlan{}, false, err
+		}
 		plan := sentencePlan{}
 		prev := 0
 		for _, r := range ranges {
@@ -239,7 +279,7 @@ func planSentences(text, rich string) (sentencePlan, bool) {
 			prev = r.End
 		}
 		plan.plainGaps = append(plan.plainGaps, text[prev:])
-		return plan, true
+		return plan, true, nil
 	}
 
 	// The plain text of rich, byte by byte, with where each byte sits in rich
@@ -264,7 +304,7 @@ func planSentences(text, rich string) (sentencePlan, bool) {
 		case strings.HasPrefix(tag, "</g"):
 			open--
 			if open < 0 {
-				return sentencePlan{}, false
+				return sentencePlan{}, false, nil
 			}
 		case strings.HasPrefix(tag, "<g"):
 			open++
@@ -277,7 +317,7 @@ func planSentences(text, rich string) (sentencePlan, bool) {
 		add(rich[i], i, i+1)
 	}
 	if open != 0 || view.String() != text {
-		return sentencePlan{}, false
+		return sentencePlan{}, false, nil
 	}
 
 	// lo is where rich resumes after the byte before p; hi is where the byte
@@ -301,22 +341,64 @@ func planSentences(text, rich string) (sentencePlan, bool) {
 		}
 		return depth[p]
 	}
-	ranges := SplitSentences(text, func(p int) bool { return depthAt(p) == 0 && outsideBraces(p) })
+	// touch is where rich splits between two sentences that meet with no
+	// text between them (a full-width terminator breaks without a space):
+	// closing tags stay with the sentence before, the rest go to the one after.
+	touch := func(p int) int {
+		at := lo(p)
+		for {
+			m := richToken.FindStringIndex(rich[at:hi(p)])
+			if m == nil || m[0] != 0 || !strings.HasPrefix(rich[at:], "</g") {
+				return at
+			}
+			at += m[1]
+		}
+	}
+
+	// A break after whitespace needs no tag open at the next sentence's first
+	// character. A break with no gap (the next sentence starts right at it)
+	// needs none open at the touch point, after the closing tags.
+	canBreak := func(p int) bool {
+		if !outsideBraces(p) {
+			return false
+		}
+		if depthAt(p) == 0 {
+			return true
+		}
+		if p == 0 || p == len(text) {
+			return false
+		}
+		if r, _ := utf8.DecodeRuneInString(text[p:]); unicode.IsSpace(r) {
+			return false
+		}
+		closed := len(richToken.FindAllString(rich[lo(p):touch(p)], -1))
+		return depth[p-1]-closed == 0
+	}
+	ranges, err := split(text, canBreak)
+	if err != nil {
+		return sentencePlan{}, false, err
+	}
 
 	plan := sentencePlan{}
 	prevPlain, prevRich := 0, 0
-	for _, r := range ranges {
+	for i, r := range ranges {
 		rs, re := lo(r.Start), hi(r.End)
+		if i > 0 && r.Start == ranges[i-1].End {
+			rs = touch(r.Start)
+		}
+		if i+1 < len(ranges) && ranges[i+1].Start == r.End {
+			re = touch(r.End)
+		}
 		gap := rich[prevRich:rs]
 		if strings.Contains(gap, "<g") || strings.Contains(gap, "</g") {
-			return sentencePlan{}, false
+			return sentencePlan{}, false, nil
 		}
 		plan.plainGaps = append(plan.plainGaps, text[prevPlain:r.Start])
 		plan.richGaps = append(plan.richGaps, gap)
 		part := sentencePart{text: text[r.Start:r.End]}
 		if src := rich[rs:re]; richToken.MatchString(src) {
 			if !balancedChips(src) {
-				return sentencePlan{}, false
+				return sentencePlan{}, false, nil
 			}
 			part.sourceRich = src
 			part.rich, part.idBase = renumberChipIDs(src)
@@ -326,11 +408,11 @@ func planSentences(text, rich string) (sentencePlan, bool) {
 	}
 	tail := rich[prevRich:]
 	if strings.Contains(tail, "<g") || strings.Contains(tail, "</g") {
-		return sentencePlan{}, false
+		return sentencePlan{}, false, nil
 	}
 	plan.plainGaps = append(plan.plainGaps, text[prevPlain:])
 	plan.richGaps = append(plan.richGaps, tail)
-	return plan, true
+	return plan, true, nil
 }
 
 func balancedChips(s string) bool {

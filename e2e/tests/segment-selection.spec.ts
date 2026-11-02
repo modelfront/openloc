@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, authHeaders, createIsolatedCATJob, getSeedTemplateMTRouter } from "./helpers";
+import { login, authHeaders, createIsolatedCATJob, getSeedTemplateMTRouter, seedDrafts } from "./helpers";
 
 // Multi-segment selection in the CAT editor: the # checkboxes, Shift range,
 // Cmd/Ctrl+click, select-all, and the bulk Lock / Unlock / Clear actions on
@@ -24,13 +24,6 @@ async function rows(page: Page, jobId: number): Promise<Row[]> {
   expect(res.ok()).toBe(true);
   const data: Row[] = (await res.json()).data;
   return data.sort((a, b) => a.segment_id - b.segment_id);
-}
-
-/** Gives every row a draft translation, so Clear has something to clear. */
-async function translateAll(page: Page, fileId: number, jobId: number) {
-  const fixes = (await rows(page, jobId)).map((r, i) => ({ translation_id: r.id, human_text: TARGETS[i] }));
-  const res = await page.request.put(`/api/files/${fileId}/translations/batch-draft`, { data: { fixes } });
-  expect(res.ok(), await res.text()).toBe(true);
 }
 
 const bulkResponse = (page: Page, action: string) =>
@@ -62,7 +55,7 @@ test.describe("Segment selection", () => {
       content: LINES.join("\n"),
     });
     // Locking approves a segment, so it needs a translation.
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     await job.navigateToEditor(/Line one/);
 
     await page.getByTestId("segment-select-1").click();
@@ -93,7 +86,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-clear-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     await job.navigateToEditor(/Line one/);
 
     await page.getByText("Line two").click({ modifiers: ["ControlOrMeta"] });
@@ -119,7 +112,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-confirm-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     const before = await rows(page, job.jobId);
     const lock = await page.request.post(`/api/jobs/${job.jobId}/translations/lock`, {
       data: { translation_ids: [before[2].id] },
@@ -170,7 +163,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-spell-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     const ids = (await rows(page, job.jobId)).map(r => r.id);
     const lock = await page.request.post(`/api/jobs/${job.jobId}/translations/lock`, { data: { translation_ids: [ids[1]] } });
     expect(lock.ok()).toBe(true);
@@ -197,7 +190,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-fr-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     const ids = (await rows(page, job.jobId)).map(r => r.id);
     // Row 1 confirmed: a replace is an edit, so it goes back to draft.
     const confirm = await page.request.post(`/api/jobs/${job.jobId}/translations/confirm`, { data: { translation_ids: [ids[0]] } });
@@ -226,7 +219,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-fr-locked-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     const ids = (await rows(page, job.jobId)).map(r => r.id);
     const lock = await page.request.post(`/api/jobs/${job.jobId}/translations/lock`, { data: { translation_ids: [ids[1]] } });
     expect(lock.ok()).toBe(true);
@@ -268,12 +261,8 @@ test.describe("Segment selection", () => {
     const router = await getSeedTemplateMTRouter(page);
     const settings = await page.request.patch(`/api/projects/${job.projectId}/settings`, { data: { mt_router_id: router.id } });
     expect(settings.ok(), await settings.text()).toBe(true);
-    const ids = (await rows(page, job.jobId)).map(r => r.id);
     // A locked segment always has a translation: give row 2 one, then lock it.
-    const draft = await page.request.put(`/api/files/${job.fileId}/translations/batch-draft`, {
-      data: { fixes: [{ translation_id: ids[1], human_text: TARGETS[1] }] },
-    });
-    expect(draft.ok(), await draft.text()).toBe(true);
+    const ids = (await seedDrafts(page, job, ["", TARGETS[1]])).map(r => r.id);
     const lock = await page.request.post(`/api/jobs/${job.jobId}/translations/lock`, { data: { translation_ids: [ids[1]] } });
     expect(lock.ok()).toBe(true);
     await job.navigateToEditor(/Line one/);
@@ -299,7 +288,7 @@ test.describe("Segment selection", () => {
       fileName: `seg-select-filter-${Date.now()}.txt`,
       content: LINES.join("\n"),
     });
-    await translateAll(page, job.fileId, job.jobId);
+    await seedDrafts(page, job, TARGETS);
     const ids = (await rows(page, job.jobId)).map(r => r.id);
     await job.navigateToEditor(/Line one/);
 

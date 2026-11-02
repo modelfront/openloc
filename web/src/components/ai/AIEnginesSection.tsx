@@ -32,6 +32,7 @@ import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import { LoadFailed } from '@/components/layout/LoadFailed'
 import { EmptyState } from '@/components/layout/EmptyState'
 import { Button } from '@/components/ui/button'
+import { CreateButton } from '@/components/ui/create-button'
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import { FormField } from '@/components/ui/form-field'
 import { ListSection, type SectionLayout } from '@/components/layout/SectionHeader'
@@ -234,7 +235,7 @@ export function AIEnginesSection({ canWrite, purpose, title, layout = 'collapsib
       info={info}
       defaultOpen
       action={canWrite && (
-        <Button size="sm" onClick={() => { setEditingId(null); setShowCreate(true) }} data-testid="ai-engine-add">{createLabel}</Button>
+        <CreateButton onClick={() => { setEditingId(null); setShowCreate(true) }} data-testid="ai-engine-add">{createLabel}</CreateButton>
       )}
       data-testid="ai-engines-section"
     >

@@ -18,7 +18,9 @@ func registerDeadlines(s *Server, srv *sdk.Server, managerTier bool, b Backend) 
 			"default and when it is due — the step's own date plus any target language " +
 			"with a date of its own. Start here to answer \"when is X due?\" and to get " +
 			"the workflow_step_id openloc_set_workflow_step_deadlines needs. " +
-			"An AI step runs by itself and never has a deadline.",
+			"An AI step runs by itself and never has a deadline. " +
+			"A locked step is one jobs have reached (or one before it): " +
+			"openloc_set_project_workflow_steps must keep it in place, and only the steps after the last locked one can change.",
 		requireManager: true,
 	}, b.ListProjectWorkflowSteps)
 
