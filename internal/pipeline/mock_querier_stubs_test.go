@@ -40,10 +40,22 @@ func (m *mockQuerier) CarryStepPredictions(context.Context, int64) error { panic
 func (m *mockQuerier) ClaimFailedJobForRerun(context.Context, db.ClaimFailedJobForRerunParams) (int64, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ClaimInactivityWarnings(context.Context, db.ClaimInactivityWarningsParams) ([]db.ClaimInactivityWarningsRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ClaimJobPipeline(context.Context, db.ClaimJobPipelineParams) (db.ClaimJobPipelineRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ClearFilterProfileDefault(context.Context, db.ClearFilterProfileDefaultParams) error {
+	panic("not used")
+}
+func (m *mockQuerier) ClearFilterProfileFromProjects(context.Context, db.ClearFilterProfileFromProjectsParams) (int64, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ClearSegmentationProfileFromProjects(context.Context, db.ClearSegmentationProfileFromProjectsParams) (int64, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ClearSettingsFilterProfile(context.Context, db.ClearSettingsFilterProfileParams) error {
 	panic("not used")
 }
 func (m *mockQuerier) ClearStepEdited(context.Context, int64) error { panic("not used") }
@@ -71,6 +83,9 @@ func (m *mockQuerier) ConfirmTranslationsHuman(context.Context, db.ConfirmTransl
 func (m *mockQuerier) ConsumeOAuthCode(context.Context, string) (db.ConsumeOAuthCodeRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) CopySettingsFilterProfiles(context.Context, db.CopySettingsFilterProfilesParams) error {
+	panic("not used")
+}
 func (m *mockQuerier) CountAIEnginesForPrompt(context.Context, *int64) (int32, error) {
 	panic("not used")
 }
@@ -90,7 +105,13 @@ func (m *mockQuerier) CountConceptTermsInLang(context.Context, db.CountConceptTe
 func (m *mockQuerier) CountConcepts(context.Context, db.CountConceptsParams) (int64, error) {
 	panic("not used")
 }
+func (m *mockQuerier) CountEditorComments(context.Context, db.CountEditorCommentsParams) ([]db.CountEditorCommentsRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) CountFilesByProject(context.Context, int64) (int64, error) { panic("not used") }
+func (m *mockQuerier) CountFilterProfileUses(context.Context, db.CountFilterProfileUsesParams) (db.CountFilterProfileUsesRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) CountHeldClearableByJob(context.Context, db.CountHeldClearableByJobParams) (int64, error) {
 	panic("not used")
 }
@@ -101,6 +122,9 @@ func (m *mockQuerier) CountJobRowsInside(context.Context, db.CountJobRowsInsideP
 	panic("not used")
 }
 func (m *mockQuerier) CountJobSegmentsPage(context.Context, db.CountJobSegmentsPageParams) (int64, error) {
+	panic("not used")
+}
+func (m *mockQuerier) CountJobsAssignedToUser(context.Context, db.CountJobsAssignedToUserParams) (int32, error) {
 	panic("not used")
 }
 func (m *mockQuerier) CountJobsByFiles(context.Context, []int64) ([]db.CountJobsByFilesRow, error) {
@@ -179,6 +203,9 @@ func (m *mockQuerier) CountTokensForConnection(context.Context, int64) (int32, e
 func (m *mockQuerier) CountUnreadNotifications(context.Context, db.CountUnreadNotificationsParams) (int64, error) {
 	panic("not used")
 }
+func (m *mockQuerier) CreateAIComment(context.Context, db.CreateAICommentParams) (db.SegmentComment, error) {
+	panic("not used")
+}
 func (m *mockQuerier) CreateAIConnection(context.Context, db.CreateAIConnectionParams) (db.AiConnection, error) {
 	panic("not used")
 }
@@ -228,6 +255,9 @@ func (m *mockQuerier) CreateDemoTenant(context.Context, db.CreateDemoTenantParam
 	panic("not used")
 }
 func (m *mockQuerier) CreateFile(context.Context, db.CreateFileParams) (db.File, error) {
+	panic("not used")
+}
+func (m *mockQuerier) CreateFilterProfile(context.Context, db.CreateFilterProfileParams) (int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) CreateInvite(context.Context, db.CreateInviteParams) (db.Invite, error) {
@@ -354,6 +384,9 @@ func (m *mockQuerier) CreateTranslationWithOrigin(context.Context, db.CreateTran
 	panic("not used")
 }
 func (m *mockQuerier) CreateUser(context.Context, db.CreateUserParams) (db.User, error) {
+	panic("not used")
+}
+func (m *mockQuerier) CreateVendorTenant(context.Context, db.CreateVendorTenantParams) (db.Tenant, error) {
 	panic("not used")
 }
 func (m *mockQuerier) CreateVendorToken(context.Context, db.CreateVendorTokenParams) (db.AiVendorToken, error) {
@@ -497,7 +530,16 @@ func (m *mockQuerier) DeleteWorkflowStepAssignments(context.Context, int64) erro
 func (m *mockQuerier) DemoWorkspacePresent(context.Context, db.DemoWorkspacePresentParams) (bool, error) {
 	panic("not used")
 }
+func (m *mockQuerier) DisableInactiveVendorMemberships(context.Context, db.DisableInactiveVendorMembershipsParams) (int64, error) {
+	panic("not used")
+}
 func (m *mockQuerier) DismissJobFailure(context.Context, db.DismissJobFailureParams) (*string, error) {
+	panic("not used")
+}
+func (m *mockQuerier) EnableMembership(context.Context, db.EnableMembershipParams) (db.Membership, error) {
+	panic("not used")
+}
+func (m *mockQuerier) EnableVendorAdmin(context.Context, db.EnableVendorAdminParams) (db.Membership, error) {
 	panic("not used")
 }
 func (m *mockQuerier) EnsureDeploymentMTEngine(context.Context, db.EnsureDeploymentMTEngineParams) error {
@@ -574,6 +616,9 @@ func (m *mockQuerier) GetApplicableStepDefinition(context.Context, db.GetApplica
 func (m *mockQuerier) GetApplicableWorkflow(context.Context, db.GetApplicableWorkflowParams) (db.Workflow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) GetBuiltinFilterProfileByKey(context.Context, *string) (db.FilterProfileCatalog, error) {
+	panic("not used")
+}
 func (m *mockQuerier) GetChartByShareToken(context.Context, db.GetChartByShareTokenParams) (db.GetChartByShareTokenRow, error) {
 	panic("not used")
 }
@@ -604,6 +649,9 @@ func (m *mockQuerier) GetDashboardTenant(context.Context, db.GetDashboardTenantP
 func (m *mockQuerier) GetDefaultAssigneeForStep(context.Context, int64) (*int64, error) {
 	panic("not used")
 }
+func (m *mockQuerier) GetDefaultFilterProfile(context.Context, string) (db.FilterProfileCatalog, error) {
+	panic("not used")
+}
 func (m *mockQuerier) GetDeletedProject(context.Context, db.GetDeletedProjectParams) (db.GetDeletedProjectRow, error) {
 	panic("not used")
 }
@@ -615,6 +663,12 @@ func (m *mockQuerier) GetExtension(context.Context, db.GetExtensionParams) (db.E
 	panic("not used")
 }
 func (m *mockQuerier) GetExtensionIcon(context.Context, db.GetExtensionIconParams) ([]byte, error) {
+	panic("not used")
+}
+func (m *mockQuerier) GetFilterProfile(context.Context, db.GetFilterProfileParams) (db.FilterProfileCatalog, error) {
+	panic("not used")
+}
+func (m *mockQuerier) GetFilterProfileForImport(context.Context, db.GetFilterProfileForImportParams) (db.FilterProfileCatalog, error) {
 	panic("not used")
 }
 func (m *mockQuerier) GetHoldTarget(context.Context, db.GetHoldTargetParams) (db.Translation, error) {
@@ -642,6 +696,7 @@ func (m *mockQuerier) GetIssueSlackMessage(context.Context, int64) (db.GetIssueS
 func (m *mockQuerier) GetJobAnalysis(context.Context, db.GetJobAnalysisParams) ([]db.GetJobAnalysisRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) GetJobCurrentStepID(context.Context, int64) (*int64, error) { panic("not used") }
 func (m *mockQuerier) GetJobForAnalysis(context.Context, int64) (db.GetJobForAnalysisRow, error) {
 	panic("not used")
 }
@@ -792,6 +847,9 @@ func (m *mockQuerier) GetSegmentationProfile(context.Context, db.GetSegmentation
 func (m *mockQuerier) GetSegmentationProfileForImport(context.Context, db.GetSegmentationProfileForImportParams) (db.SegmentationProfileCatalog, error) {
 	panic("not used")
 }
+func (m *mockQuerier) GetSettingsFilterProfile(context.Context, db.GetSettingsFilterProfileParams) (int64, error) {
+	panic("not used")
+}
 func (m *mockQuerier) GetSharedSegmentByKey(context.Context, db.GetSharedSegmentByKeyParams) (db.Segment, error) {
 	panic("not used")
 }
@@ -835,9 +893,6 @@ func (m *mockQuerier) GetTMProfile(context.Context, db.GetTMProfileParams) (db.T
 func (m *mockQuerier) GetTMProfileWithStats(context.Context, db.GetTMProfileWithStatsParams) (db.GetTMProfileWithStatsRow, error) {
 	panic("not used")
 }
-func (m *mockQuerier) GetTaskEditState(context.Context, db.GetTaskEditStateParams) (db.GetTaskEditStateRow, error) {
-	panic("not used")
-}
 func (m *mockQuerier) GetTaskEditStateForTranslation(context.Context, db.GetTaskEditStateForTranslationParams) (db.GetTaskEditStateForTranslationRow, error) {
 	panic("not used")
 }
@@ -853,7 +908,13 @@ func (m *mockQuerier) GetTenantByDomainOpenReg(context.Context, *string) (db.Ten
 	panic("not used")
 }
 func (m *mockQuerier) GetTenantBySlug(context.Context, string) (db.Tenant, error) { panic("not used") }
+func (m *mockQuerier) GetTenantGate(context.Context, int64) (db.GetTenantGateRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) GetTenantOwner(context.Context, int64) (db.GetTenantOwnerRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) GetTenantProfile(context.Context, int64) (db.GetTenantProfileRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) GetTenantStatus(context.Context, int64) (db.GetTenantStatusRow, error) {
@@ -935,10 +996,16 @@ func (m *mockQuerier) InsertJobAnalysis(context.Context, db.InsertJobAnalysisPar
 func (m *mockQuerier) InsertMCPToolCall(context.Context, db.InsertMCPToolCallParams) error {
 	panic("not used")
 }
+func (m *mockQuerier) InsertPropagationHistoryBatch(context.Context, db.InsertPropagationHistoryBatchParams) error {
+	panic("not used")
+}
 func (m *mockQuerier) InsertTMHistoryFromEntries(context.Context, db.InsertTMHistoryFromEntriesParams) error {
 	panic("not used")
 }
 func (m *mockQuerier) InsertUserLanguagePair(context.Context, db.InsertUserLanguagePairParams) error {
+	panic("not used")
+}
+func (m *mockQuerier) IsFilterProfileDefault(context.Context, db.IsFilterProfileDefaultParams) (bool, error) {
 	panic("not used")
 }
 func (m *mockQuerier) IsUserAssignedToFile(context.Context, db.IsUserAssignedToFileParams) (bool, error) {
@@ -976,6 +1043,9 @@ func (m *mockQuerier) ListAPITokensByTenant(context.Context, int64) ([]db.ListAP
 	panic("not used")
 }
 func (m *mockQuerier) ListAPITokensByUser(context.Context, db.ListAPITokensByUserParams) ([]db.ListAPITokensByUserRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListAcceptedInvitesPage(context.Context, db.ListAcceptedInvitesPageParams) ([]db.ListAcceptedInvitesPageRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListActiveStepsForProject(context.Context, db.ListActiveStepsForProjectParams) ([]db.ListActiveStepsForProjectRow, error) {
@@ -1037,13 +1107,19 @@ func (m *mockQuerier) ListDemoWorkspaceItems(context.Context, int64) ([]db.ListD
 func (m *mockQuerier) ListDuplicatesToReopen(context.Context, int64) ([]int64, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ListEditorFuzzyCandidates(context.Context, db.ListEditorFuzzyCandidatesParams) ([]db.ListEditorFuzzyCandidatesRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ListEditorIndex(context.Context, db.ListEditorIndexParams) ([]db.ListEditorIndexRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListEditorPreviousStepTexts(context.Context, db.ListEditorPreviousStepTextsParams) ([]db.ListEditorPreviousStepTextsRow, error) {
 	panic("not used")
 }
-func (m *mockQuerier) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]string, error) {
+func (m *mockQuerier) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]db.ListEditorRefSourcesRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListEditorScopeJobs(context.Context, db.ListEditorScopeJobsParams) ([]db.ListEditorScopeJobsRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListEditorSegmentsByIDs(context.Context, db.ListEditorSegmentsByIDsParams) ([]db.Segment, error) {
@@ -1074,6 +1150,15 @@ func (m *mockQuerier) ListFilesPaginated(context.Context, db.ListFilesPaginatedP
 	panic("not used")
 }
 func (m *mockQuerier) ListFilesWithoutJobs(context.Context, db.ListFilesWithoutJobsParams) ([]db.File, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListFilterProfileDefaults(context.Context, int64) ([]db.ListFilterProfileDefaultsRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListFilterProfiles(context.Context, db.ListFilterProfilesParams) ([]db.FilterProfileCatalog, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListFilterProfilesPage(context.Context, db.ListFilterProfilesPageParams) ([]db.FilterProfileCatalog, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListIgnoredQAResultsForTranslations(context.Context, []int64) ([]db.ListIgnoredQAResultsForTranslationsRow, error) {
@@ -1156,6 +1241,9 @@ func (m *mockQuerier) ListJobsForSettingsProfile(context.Context, int64) ([]db.L
 func (m *mockQuerier) ListJobsForUserStep(context.Context, *int64) ([]db.ListJobsForUserStepRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ListJobsWithPreviousStep(context.Context, db.ListJobsWithPreviousStepParams) ([]int64, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ListKeylessAIEngineRows(context.Context, db.ListKeylessAIEngineRowsParams) ([]db.ListKeylessAIEngineRowsRow, error) {
 	panic("not used")
 }
@@ -1169,6 +1257,9 @@ func (m *mockQuerier) ListLabelValueUsage(context.Context, int64) ([]db.ListLabe
 	panic("not used")
 }
 func (m *mockQuerier) ListLabelValues(context.Context, int64) ([]db.LabelValue, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListLanguagePairsForMembers(context.Context, db.ListLanguagePairsForMembersParams) ([]db.ListLanguagePairsForMembersRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListLanguages(context.Context) ([]db.Language, error) { panic("not used") }
@@ -1210,6 +1301,12 @@ func (m *mockQuerier) ListMTRouterRulesForTenant(context.Context, int64) ([]db.M
 	panic("not used")
 }
 func (m *mockQuerier) ListMTRouters(context.Context, int64) ([]db.MtRouter, error) { panic("not used") }
+func (m *mockQuerier) ListMemberFacetPairs(context.Context, db.ListMemberFacetPairsParams) ([]db.ListMemberFacetPairsRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListMemberFacetRoles(context.Context, db.ListMemberFacetRolesParams) ([]string, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ListMemberIssueAttachments(context.Context, int64) ([]db.IssueAttachment, error) {
 	panic("not used")
 }
@@ -1217,6 +1314,9 @@ func (m *mockQuerier) ListMemberIssueComments(context.Context, db.ListMemberIssu
 	panic("not used")
 }
 func (m *mockQuerier) ListMembersByTenant(context.Context, db.ListMembersByTenantParams) ([]db.ListMembersByTenantRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListMembersPage(context.Context, db.ListMembersPageParams) ([]db.ListMembersPageRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListMembershipsWithTenant(context.Context, int64) ([]db.ListMembershipsWithTenantRow, error) {
@@ -1269,6 +1369,9 @@ func (m *mockQuerier) ListQAErrorHotspots(context.Context, db.ListQAErrorHotspot
 func (m *mockQuerier) ListQAProfiles(context.Context, int64) ([]db.QaProfile, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ListQAResultsForFiles(context.Context, db.ListQAResultsForFilesParams) ([]db.ListQAResultsForFilesRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ListQAResultsForJob(context.Context, db.ListQAResultsForJobParams) ([]db.ListQAResultsForJobRow, error) {
 	panic("not used")
 }
@@ -1292,6 +1395,9 @@ func (m *mockQuerier) ListSegmentsByFile(context.Context, int64) ([]db.Segment, 
 	panic("not used")
 }
 func (m *mockQuerier) ListSegmentsByFileTenant(context.Context, db.ListSegmentsByFileTenantParams) ([]db.Segment, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListSettingsFilterProfiles(context.Context, int64) ([]db.ListSettingsFilterProfilesRow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListSettingsTMAssignments(context.Context, int64) ([]db.SettingsTmAssignment, error) {
@@ -1349,6 +1455,9 @@ func (m *mockQuerier) ListTMProfiles(context.Context, int64) ([]db.ListTMProfile
 func (m *mockQuerier) ListTargetsForSources(context.Context, db.ListTargetsForSourcesParams) ([]db.ListTargetsForSourcesRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ListTaskEditStates(context.Context, db.ListTaskEditStatesParams) ([]db.ListTaskEditStatesRow, error) {
+	panic("not used")
+}
 func (m *mockQuerier) ListTaskStepNames(context.Context, db.ListTaskStepNamesParams) ([]string, error) {
 	panic("not used")
 }
@@ -1362,6 +1471,7 @@ func (m *mockQuerier) ListTemplates(context.Context, int64) ([]db.Template, erro
 func (m *mockQuerier) ListTemplatesFiltered(context.Context, db.ListTemplatesFilteredParams) ([]db.Template, error) {
 	panic("not used")
 }
+func (m *mockQuerier) ListTenantAdminIDs(context.Context, int64) ([]int64, error) { panic("not used") }
 func (m *mockQuerier) ListTenantFileIDsIn(context.Context, db.ListTenantFileIDsInParams) ([]int64, error) {
 	panic("not used")
 }
@@ -1381,6 +1491,9 @@ func (m *mockQuerier) ListTermBases(context.Context, int64) ([]db.ListTermBasesR
 	panic("not used")
 }
 func (m *mockQuerier) ListTermsForConcepts(context.Context, []int64) ([]db.ListTermsForConceptsRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListTranslationFilesForQA(context.Context, db.ListTranslationFilesForQAParams) ([]db.ListTranslationFilesForQARow, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListTranslationHistory(context.Context, int64) ([]db.ListTranslationHistoryRow, error) {
@@ -1420,6 +1533,18 @@ func (m *mockQuerier) ListUsersByEmails(context.Context, []string) ([]db.ListUse
 	panic("not used")
 }
 func (m *mockQuerier) ListUsersForLanguagePair(context.Context, db.ListUsersForLanguagePairParams) ([]db.ListUsersForLanguagePairRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListVendorOrgFacetPairs(context.Context, db.ListVendorOrgFacetPairsParams) ([]db.ListVendorOrgFacetPairsRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListVendorOrgLanguagePairs(context.Context, db.ListVendorOrgLanguagePairsParams) ([]db.ListVendorOrgLanguagePairsRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListVendorOrgsForClient(context.Context, db.ListVendorOrgsForClientParams) ([]db.ListVendorOrgsForClientRow, error) {
+	panic("not used")
+}
+func (m *mockQuerier) ListVendorTenantIDs(context.Context, *int64) ([]int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) ListVendorTokenKeys(context.Context, db.ListVendorTokenKeysParams) ([]db.ListVendorTokenKeysRow, error) {
@@ -1471,6 +1596,9 @@ func (m *mockQuerier) LockJobsForWrite(context.Context, db.LockJobsForWriteParam
 func (m *mockQuerier) LockMemberIssue(context.Context, db.LockMemberIssueParams) (db.Issue, error) {
 	panic("not used")
 }
+func (m *mockQuerier) LockPendingInviteForAccept(context.Context, int64) (db.Invite, error) {
+	panic("not used")
+}
 func (m *mockQuerier) LockProfileJobsForWrite(context.Context, db.LockProfileJobsForWriteParams) ([]int64, error) {
 	panic("not used")
 }
@@ -1493,6 +1621,7 @@ func (m *mockQuerier) LookupTMAll(context.Context, db.LookupTMAllParams) ([]db.T
 func (m *mockQuerier) MarkAllNotificationsRead(context.Context, db.MarkAllNotificationsReadParams) error {
 	panic("not used")
 }
+func (m *mockQuerier) MarkInactivityWarned(context.Context, int64) error { panic("not used") }
 func (m *mockQuerier) MarkJobReopened(context.Context, db.MarkJobReopenedParams) (int64, error) {
 	panic("not used")
 }
@@ -1584,6 +1713,7 @@ func (m *mockQuerier) RefreshJobStepAssignmentDeadlines(context.Context, db.Refr
 func (m *mockQuerier) RejectStepAssignment(context.Context, db.RejectStepAssignmentParams) error {
 	panic("not used")
 }
+func (m *mockQuerier) ReleaseInactivityClaims(context.Context, []int64) error { panic("not used") }
 func (m *mockQuerier) ReleaseTabHold(context.Context, db.ReleaseTabHoldParams) error {
 	panic("not used")
 }
@@ -1684,6 +1814,9 @@ func (m *mockQuerier) SearchTMEntries(context.Context, db.SearchTMEntriesParams)
 func (m *mockQuerier) SearchTMEntriesCursor(context.Context, db.SearchTMEntriesCursorParams) ([]db.SearchTMEntriesCursorRow, error) {
 	panic("not used")
 }
+func (m *mockQuerier) SeedMembershipIdle(context.Context, db.SeedMembershipIdleParams) error {
+	panic("not used")
+}
 func (m *mockQuerier) SetAnalysisJobIDs(context.Context, db.SetAnalysisJobIDsParams) error {
 	panic("not used")
 }
@@ -1694,6 +1827,9 @@ func (m *mockQuerier) SetChatVendorToken(context.Context, db.SetChatVendorTokenP
 	panic("not used")
 }
 func (m *mockQuerier) SetDashboardOwner(context.Context, db.SetDashboardOwnerParams) (int64, error) {
+	panic("not used")
+}
+func (m *mockQuerier) SetFilterProfileDefault(context.Context, db.SetFilterProfileDefaultParams) (int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) SetIssueAssignee(context.Context, db.SetIssueAssigneeParams) (db.Issue, error) {
@@ -1731,6 +1867,9 @@ func (m *mockQuerier) SetProjectTemplate(context.Context, db.SetProjectTemplateP
 	panic("not used")
 }
 func (m *mockQuerier) SetQAResultIgnored(context.Context, db.SetQAResultIgnoredParams) (db.QaResult, error) {
+	panic("not used")
+}
+func (m *mockQuerier) SetSettingsFilterProfile(context.Context, db.SetSettingsFilterProfileParams) (int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) SetSettingsProfileMTRouter(context.Context, db.SetSettingsProfileMTRouterParams) error {
@@ -1783,6 +1922,9 @@ func (m *mockQuerier) SoftDeleteDashboard(context.Context, db.SoftDeleteDashboar
 	panic("not used")
 }
 func (m *mockQuerier) SoftDeleteDashboardChart(context.Context, db.SoftDeleteDashboardChartParams) (int64, error) {
+	panic("not used")
+}
+func (m *mockQuerier) SoftDeleteFilterProfile(context.Context, db.SoftDeleteFilterProfileParams) (int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) SoftDeleteIssueForPlatform(context.Context, int64) (int64, error) {
@@ -1849,7 +1991,10 @@ func (m *mockQuerier) TouchAPIToken(context.Context, db.TouchAPITokenParams) err
 func (m *mockQuerier) TouchChatConversation(context.Context, db.TouchChatConversationParams) error {
 	panic("not used")
 }
-func (m *mockQuerier) TouchOAuthToken(context.Context, int64) error                { panic("not used") }
+func (m *mockQuerier) TouchOAuthToken(context.Context, int64) error { panic("not used") }
+func (m *mockQuerier) TouchVendorMembership(context.Context, db.TouchVendorMembershipParams) (bool, error) {
+	panic("not used")
+}
 func (m *mockQuerier) TouchWorkflow(context.Context, db.TouchWorkflowParams) error { panic("not used") }
 func (m *mockQuerier) TrimUserJobHolds(context.Context, db.TrimUserJobHoldsParams) error {
 	panic("not used")
@@ -1901,6 +2046,9 @@ func (m *mockQuerier) UpdateFileSegmentation(context.Context, db.UpdateFileSegme
 	panic("not used")
 }
 func (m *mockQuerier) UpdateFileXLSXLayout(context.Context, db.UpdateFileXLSXLayoutParams) (db.File, error) {
+	panic("not used")
+}
+func (m *mockQuerier) UpdateFilterProfile(context.Context, db.UpdateFilterProfileParams) (int64, error) {
 	panic("not used")
 }
 func (m *mockQuerier) UpdateIssueActivity(context.Context, db.UpdateIssueActivityParams) (db.Issue, error) {
@@ -2031,5 +2179,8 @@ func (m *mockQuerier) UpsertQARule(context.Context, db.UpsertQARuleParams) (db.Q
 	panic("not used")
 }
 func (m *mockQuerier) UpsertUserAppearance(context.Context, db.UpsertUserAppearanceParams) (db.UserAppearance, error) {
+	panic("not used")
+}
+func (m *mockQuerier) WithdrawUnusableVendorWarnings(context.Context) (int64, error) {
 	panic("not used")
 }

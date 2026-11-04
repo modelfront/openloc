@@ -1,12 +1,15 @@
 import type { QaProfile, QaRule, WorkflowStep } from '../types/generated';
 import type { AIModelParam, ModelSettings } from './ai';
 import type { UnusableReason } from './ai-engines';
-import type { RegexRuleConfig, ReportDTO } from '../types/qa';
+import type { RegexRuleConfig, ReportDTO, ScopeRunJob } from '../types/qa';
+import { editorApiPath, type EditorId } from '../lib/editor-scope';
 import { downloadFrom } from './download';
 import type { QaFinding } from '../lib/qa-findings';
 import { request } from './request';
 import { listTemplateWorkflowSteps } from './workflows';
 import type { LinguistTerms, TMLookupOrder } from '../lib/settings-values';
+import type { FilterProfileChoice } from './filter-profiles';
+import type { FilterProfileIds } from './projects';
 
 // MT engines
 export interface MTEngine {
@@ -119,8 +122,8 @@ export interface Template {
   // Optional so a payload predating the field falls back to
   // the column default (on) rather than reading as disabled.
   auto_complete?: boolean;
-  // Optional like auto_complete: an older payload reads as the default (on).
-  inline_html?: boolean;
+  // The filter profile per file format; a format left out uses its Default.
+  filter_profiles?: FilterProfileChoice[];
   linguist_terms?: LinguistTerms;
   qa_profile_id?: number | null;
   // The segmentation profile a project made from the template starts with.
@@ -205,7 +208,7 @@ export const getTemplate = async (id: number): Promise<TemplateDetail> => {
 // createProject's, so the New project form saves as either.
 export interface SetupPayload {
   settings?: {
-    fuzzy_threshold?: number; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms;
+    fuzzy_threshold?: number; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; filter_profile_ids?: FilterProfileIds; linguist_terms?: LinguistTerms;
     sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder;
     qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null;
   };
@@ -225,7 +228,7 @@ export interface CreateTemplatePayload extends SetupPayload {
 export const createTemplate = (data: CreateTemplatePayload) =>
   request<{ data: Template }>('/templates', { method: 'POST', body: JSON.stringify(data) }).then(r => r.data);
 
-export const updateTemplate = (id: number, data: { name: string; mt_on_upload: boolean; tm_on_upload: boolean; fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null; project_name?: string; source_language?: string; target_languages?: string[]; customer_id?: number | null; domain?: string }) =>
+export const updateTemplate = (id: number, data: { name: string; mt_on_upload: boolean; tm_on_upload: boolean; fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; auto_complete?: boolean; filter_profile_ids?: FilterProfileIds; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null; project_name?: string; source_language?: string; target_languages?: string[]; customer_id?: number | null; domain?: string }) =>
   request<{ data: Template }>(`/templates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }).then(r => r.data);
 
 export const deleteTemplate = (id: number) =>
@@ -342,6 +345,25 @@ export const runQA = (jobId: number, translationIds?: number[]) =>
 
 export const getQAReport = (jobId: number) =>
   request<{ data: QAReport }>(`/jobs/${jobId}/qa-report`).then(r => r.data);
+
+/** The stored findings of an editor: one job's report, or one report over a
+ *  multi-file editor's files. */
+export const getEditorQAReport = (id: EditorId) =>
+  typeof id === 'number'
+    ? getQAReport(id)
+    : request<{ data: QAReport }>(editorApiPath(id, 'qa-report')).then(r => r.data);
+
+/** Runs QA on the files of a multi-file editor (all, or `jobIds`), or on the
+ *  given translations (at most SEGMENT_BULK_MAX): an outcome per job, in
+ *  editor order. */
+export const runEditorQA = (id: EditorId, opts: { translationIds?: number[]; jobIds?: number[] } = {}) =>
+  request<{ data: ScopeRunJob[] }>(editorApiPath(id, 'run-qa'), {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(opts.translationIds ? { translation_ids: opts.translationIds } : {}),
+      ...(opts.jobIds ? { job_ids: opts.jobIds } : {}),
+    }),
+  }).then(r => r.data);
 
 export const getTranslationQA = (translationId: number) =>
   request<{ data: QaFinding[] }>(`/translations/${translationId}/qa`).then(r => r.data);

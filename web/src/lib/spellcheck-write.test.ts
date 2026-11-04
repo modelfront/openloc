@@ -29,7 +29,7 @@ function result(over: Partial<BatchDraftResult> = {}): BatchDraftResult {
 
 function args(over: Partial<WriteSpellFixesArgs> = {}): WriteSpellFixesArgs {
   return {
-    fileId: 11,
+    fileOf: () => ({ jobId: 1, fileId: 11 }),
     errors: [typo(1), typo(2)],
     replacement: 'Hello',
     includeLocked: false,
@@ -71,6 +71,60 @@ describe('writeSpellFixes', () => {
     const a = args()
 
     await expect(writeSpellFixes(a)).resolves.toBeNull()
-    expect(a.onTaskLocked).toHaveBeenCalledWith(locked)
+    expect(a.onTaskLocked).toHaveBeenCalledWith(locked, 1)
+  })
+
+  // A multi-file editor: translations 1 and 2 in file 11 (job 1), 3 in file 33 (job 3).
+  const twoFiles = (id: number) => (id < 3 ? { jobId: 1, fileId: 11 } : { jobId: 3, fileId: 33 })
+
+  it('sends one batch per file', async () => {
+    mockBatchDraft.mockImplementation(async (_fileId: number, fixes: { translation_id: number }[]) =>
+      result({ applied: fixes.map(f => ({ id: f.translation_id }) as Translation) }))
+
+    await expect(writeSpellFixes(args({ fileOf: twoFiles, errors: [typo(1), typo(3), typo(2)] }))).resolves.toBe(3)
+    expect(mockBatchDraft.mock.calls.map(c => [c[0], c[1].map((f: { translation_id: number }) => f.translation_id)]))
+      .toEqual([[11, [1, 2]], [33, [3]]])
+  })
+
+  it('a file whose task refuses the write leaves the others written', async () => {
+    const locked = new ApiError(409, 'This task is completed.', { error: { code: 'task_completed' } })
+    mockBatchDraft.mockImplementation(async (fileId: number) => {
+      if (fileId === 11) throw locked
+      return result({ applied: [{ id: 3 } as Translation], taskReopened: true })
+    })
+    const a = args({ fileOf: twoFiles, errors: [typo(1), typo(3)] })
+
+    await expect(writeSpellFixes(a)).resolves.toBe(1)
+    expect(a.onTaskLocked).toHaveBeenCalledWith(locked, 1)
+    expect(a.onTaskReopened).toHaveBeenCalledWith(3)
+  })
+
+  it('a file whose write fails for another reason leaves the others written', async () => {
+    mockBatchDraft.mockImplementation(async (fileId: number) => {
+      if (fileId === 11) throw new Error('Server error')
+      return result({ applied: [{ id: 3 } as Translation] })
+    })
+
+    await expect(writeSpellFixes(args({ fileOf: twoFiles, errors: [typo(1), typo(3)] }))).resolves.toBe(1)
+    expect(mockBatchDraft).toHaveBeenCalledTimes(2)
+    expect(toast.warning).toHaveBeenCalledWith('1 file could not be saved, try again')
+  })
+
+  it('throws when no file could be written for another reason', async () => {
+    const boom = new Error('Server error')
+    mockBatchDraft.mockRejectedValue(boom)
+    await expect(writeSpellFixes(args())).rejects.toBe(boom)
+  })
+
+  it('a locked file and a failed one, nothing written: both are reported', async () => {
+    const locked = new ApiError(409, 'This task is completed.', { error: { code: 'task_completed' } })
+    mockBatchDraft.mockImplementation(async (fileId: number) => {
+      throw fileId === 11 ? locked : new Error('Server error')
+    })
+    const a = args({ fileOf: twoFiles, errors: [typo(1), typo(3)] })
+
+    await expect(writeSpellFixes(a)).resolves.toBeNull()
+    expect(a.onTaskLocked).toHaveBeenCalledWith(locked, 1)
+    expect(toast.warning).toHaveBeenCalledWith('1 file could not be saved, try again')
   })
 })

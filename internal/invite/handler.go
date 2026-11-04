@@ -35,14 +35,17 @@ func NewHandler(q db.Querier, jwtSecret string, svc *Service) *Handler {
 // HandleCreate creates an invite (managers; see Service.Create for the rules).
 func (h *Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email string `json:"email"`
-		Role  string `json:"role"`
+		Email         string  `json:"email"`
+		Role          string  `json:"role"`
+		VendorOrgName *string `json:"vendor_org_name"`
 	}
 	if err := httputil.Decode(r, &req); err != nil {
 		httputil.BadRequest(w, "invalid request body")
 		return
 	}
-	inv, err := h.svc.Create(r.Context(), auth.ActorFromContext(r.Context()), req.Email, req.Role)
+	inv, err := h.svc.Create(r.Context(), auth.ActorFromContext(r.Context()), NewInvite{
+		Email: req.Email, Role: req.Role, VendorOrgName: req.VendorOrgName,
+	})
 	if err != nil {
 		writeError(w, r, err, "create", "invite.create_failed")
 		return
@@ -71,9 +74,18 @@ func writeError(w http.ResponseWriter, r *http.Request, err error, verb, action 
 }
 
 // HandleList returns the current tenant's invites the caller may handle
-// (managers; see mayHandle).
+// (managers; see mayHandle); ?status=pending leaves out the accepted ones.
 func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
-	invites, err := List(r.Context(), h.queries, auth.ActorFromContext(r.Context()))
+	var pendingOnly bool
+	switch r.URL.Query().Get("status") {
+	case "":
+	case "pending":
+		pendingOnly = true
+	default:
+		httputil.BadRequest(w, "status must be 'pending' or left out")
+		return
+	}
+	invites, err := list(r.Context(), h.queries, auth.ActorFromContext(r.Context()), pendingOnly)
 	if err != nil {
 		logging.Error(r.Context(), err, "listing invites failed", "invite.list_failed")
 		httputil.ServerError(w, "list", "invites")
@@ -136,13 +148,18 @@ func (h *Handler) HandleLookup(w http.ResponseWriter, r *http.Request) {
 		userExists = true
 		hasPassword = u.PasswordHash != nil && *u.PasswordHash != ""
 	}
-	httputil.Data(w, map[string]any{
+	resp := map[string]any{
 		"email":        inv.Email,
 		"org_name":     tenant.Name,
 		"role":         inv.Role,
+		"kind":         inv.Kind,
 		"user_exists":  userExists,
 		"has_password": hasPassword,
-	})
+	}
+	if inv.VendorOrgName != nil {
+		resp["vendor_org_name"] = *inv.VendorOrgName
+	}
+	httputil.Data(w, resp)
 }
 
 // NOTE: invites are accepted by signing in via

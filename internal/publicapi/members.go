@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
@@ -30,25 +29,32 @@ func memberDTO(m db.ListMembersByTenantRow) Member {
 }
 
 // Invite is a pending, accepted or expired invitation. The join link is sent
-// by email only and is never returned.
+// by email only and is never returned. Kind member invites someone into the
+// organization; kind vendor_org invites someone to set up the vendor
+// organization VendorOrgName, as its admin.
 type Invite struct {
-	ID        int64  `json:"id"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	ExpiresAt string `json:"expires_at"`
-	CreatedAt string `json:"created_at"`
+	ID            int64   `json:"id"`
+	Email         string  `json:"email"`
+	Role          string  `json:"role"`
+	Kind          string  `json:"kind"`
+	VendorOrgName *string `json:"vendor_org_name,omitempty"`
+	Status        string  `json:"status"`
+	ExpiresAt     string  `json:"expires_at"`
+	CreatedAt     string  `json:"created_at"`
 }
 
-func inviteDTO(id int64, email, role string, accepted, expires, created pgtype.Timestamptz) Invite {
+func inviteViewDTO(i invite.View) Invite {
 	status := "pending"
 	switch {
-	case accepted.Valid:
+	case i.AcceptedAt.Valid:
 		status = "accepted"
-	case expires.Valid && expires.Time.Before(time.Now()):
+	case i.ExpiresAt.Valid && i.ExpiresAt.Time.Before(time.Now()):
 		status = "expired"
 	}
-	return Invite{ID: id, Email: email, Role: role, Status: status, ExpiresAt: timestamp(expires), CreatedAt: timestamp(created)}
+	return Invite{
+		ID: i.ID, Email: i.Email, Role: i.Role, Kind: i.Kind, VendorOrgName: i.VendorOrgName,
+		Status: status, ExpiresAt: timestamp(i.ExpiresAt), CreatedAt: timestamp(i.CreatedAt),
+	}
 }
 
 func (h Handlers) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +123,6 @@ func (h Handlers) listInvites(w http.ResponseWriter, r *http.Request) {
 	writeAll(w, rows, inviteViewDTO)
 }
 
-func inviteViewDTO(i invite.View) Invite {
-	return inviteDTO(i.ID, i.Email, i.Role, i.AcceptedAt, i.ExpiresAt, i.CreatedAt)
-}
-
 // writeInviteError writes an invite rule refusal with its own status.
 func writeInviteError(w http.ResponseWriter, err error, verb string) {
 	var rule invite.RuleError
@@ -146,7 +148,7 @@ func (h Handlers) createInvite(w http.ResponseWriter, r *http.Request) {
 		httputil.BadRequest(w, "invalid request body")
 		return
 	}
-	inv, err := h.Invites.Create(r.Context(), auth.ActorFromContext(r.Context()), req.Email, req.Role)
+	inv, err := h.Invites.Create(r.Context(), auth.ActorFromContext(r.Context()), invite.NewInvite{Email: req.Email, Role: req.Role})
 	if err != nil {
 		writeInviteError(w, err, "create")
 		return

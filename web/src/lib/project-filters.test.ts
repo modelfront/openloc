@@ -85,4 +85,13 @@ describe('parseProjectFilters', () => {
       '{"status":"draft","customer_id":5,"source":"en","target":"es","created_by":1,"q":"acme"}',
     )
   })
+
+  // Two URLs naming the same bands in another order are one filter, so they
+  // must be one cache key and one request.
+  it('parses deadline bands in the filter order, dropping unknown ones', () => {
+    expect(parseProjectFilters(params({ deadline: 'none,overdue' }))).toEqual({ deadline: ['overdue', 'none'] })
+    expect(parseProjectFilters(params({ deadline: 'approaching,garbage,done' }))).toEqual({ deadline: ['approaching'] })
+    expect(parseProjectFilters(params({ deadline: 'garbage' }))).toEqual({})
+    expect(parseProjectFilters(params({ deadline: '' }))).toEqual({})
+  })
 })

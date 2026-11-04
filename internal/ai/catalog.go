@@ -116,6 +116,13 @@ type Catalog struct {
 	// provider call. Without it, a page that renders five vendor sections on a
 	// cold cache fires five identical requests.
 	group singleflight.Group
+
+	// forgets counts Forget calls per pair and forgetAll counts ForgetAll
+	// calls; their sum is a pair's version. A fetch stores its result only if
+	// the version it started at is still current, so a fetch made with the
+	// old keys cannot put their list or cooldown back after a key change.
+	forgets   map[catalogKey]uint64
+	forgetAll uint64
 }
 
 func NewCatalog(lister ModelLister, keys KeyLoader, limit int) *Catalog {
@@ -128,6 +135,7 @@ func NewCatalog(lister ModelLister, keys KeyLoader, limit int) *Catalog {
 		limit:    limit,
 		entries:  make(map[catalogKey]*entry),
 		failures: make(map[catalogKey]failure),
+		forgets:  make(map[catalogKey]uint64),
 	}
 }
 
@@ -247,7 +255,10 @@ func (c *Catalog) Refresh(ctx context.Context, tenantID int64, provider string) 
 
 func (c *Catalog) fetch(ctx context.Context, tenantID int64, provider string, useCached bool) ([]Model, error) {
 	key := catalogKey{tenantID: tenantID, provider: provider}
-	res, err, _ := c.group.Do(fmt.Sprintf("%d|%s|%t", tenantID, provider, useCached), func() (any, error) {
+	// The version is part of the flight key: a read after Forget starts a new
+	// fetch instead of joining one made with the old keys.
+	ver := c.version(key)
+	res, err, _ := c.group.Do(fmt.Sprintf("%d|%s|%t|%d", tenantID, provider, useCached, ver), func() (any, error) {
 		// Re-check inside the flight: a caller that missed the cache just before
 		// another caller's fetch stored it would otherwise start a second,
 		// identical request the moment the first one finished.
@@ -284,12 +295,12 @@ func (c *Catalog) fetch(ctx context.Context, tenantID int64, provider string, us
 				continue
 			}
 			models := classifyAll(provider, remote)
-			c.store(key, models)
+			c.store(key, ver, models)
 			return models, nil
 		}
 		// Report the PREFERRED key's failure, not the last one tried: that is the
 		// key the runtime spends, so it is the one worth fixing.
-		c.recordFailure(key, failureReason(firstErr))
+		c.recordFailure(key, ver, failureReason(firstErr))
 		return nil, firstErr
 	})
 	if err != nil {
@@ -300,7 +311,42 @@ func (c *Catalog) fetch(ctx context.Context, tenantID int64, provider string, us
 
 // Set replaces one tenant+vendor's entry. Used by Refresher and by tests.
 func (c *Catalog) Set(tenantID int64, provider string, models []Model) {
-	c.store(catalogKey{tenantID: tenantID, provider: provider}, models)
+	key := catalogKey{tenantID: tenantID, provider: provider}
+	c.store(key, c.version(key), models)
+}
+
+// Forget drops one tenant+vendor's cached list and its failure, so the next read
+// fetches with the keys stored now. Called whenever a key or endpoint changes:
+// without it a new key waits out the failure cooldown or the refresh tick. The
+// handler calls it on its own process; the other processes get the change
+// through ListenOn.
+func (c *Catalog) Forget(tenantID int64, provider string) {
+	key := catalogKey{tenantID: tenantID, provider: provider}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+	delete(c.failures, key)
+	c.forgets[key]++
+}
+
+// ForgetAll drops every cached list and failure. Called when this process may
+// have missed a key change made on another process.
+func (c *Catalog) ForgetAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.entries)
+	clear(c.failures)
+	c.forgetAll++
+}
+
+func (c *Catalog) version(key catalogKey) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.versionLocked(key)
+}
+
+func (c *Catalog) versionLocked(key catalogKey) uint64 {
+	return c.forgets[key] + c.forgetAll
 }
 
 // cooling reports whether a recent failure should suppress another on-demand
@@ -312,15 +358,21 @@ func (c *Catalog) cooling(key catalogKey) bool {
 }
 
 // recordFailure stores why a pair last failed, for the cooldown and for the UI.
-func (c *Catalog) recordFailure(key catalogKey, reason string) {
+func (c *Catalog) recordFailure(key catalogKey, ver uint64, reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.versionLocked(key) != ver {
+		return
+	}
 	c.failures[key] = failure{at: time.Now(), reason: reason}
 }
 
-func (c *Catalog) store(key catalogKey, models []Model) {
+func (c *Catalog) store(key catalogKey, ver uint64, models []Model) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.versionLocked(key) != ver {
+		return
+	}
 	// Preserve lastUsed across a refresh — a refetch is not a read, and treating
 	// it as one would keep an abandoned entry warm forever.
 	e := &entry{models: models, fetchedAt: time.Now()}

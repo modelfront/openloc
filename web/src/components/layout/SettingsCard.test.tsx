@@ -36,4 +36,36 @@ describe('SettingsCard', () => {
     const { container } = render(<SettingsCard title="Profile"><div>form</div></SettingsCard>)
     expect(container.querySelector('section > p')).toBeNull()
   })
+
+  it('is always open: header, toolbar, description and body show, with no toggle', () => {
+    render(
+      <SettingsCard
+        title="Members"
+        summary="59 members"
+        toolbar={<input aria-label="Search" />}
+        action={<button type="button">Invite member</button>}
+        description="Everyone in the organization."
+      >
+        <p>member table</p>
+      </SettingsCard>,
+    )
+    const section = screen.getByRole('region', { name: 'Members' })
+    for (const text of ['59 members', 'Everyone in the organization.', 'member table']) {
+      expect(within(section).getByText(text)).toBeVisible()
+    }
+    expect(within(section).getByRole('textbox', { name: 'Search' })).toBeVisible()
+    expect(within(section).getByRole('button', { name: 'Invite member' })).toBeVisible()
+    expect(section.querySelector('[aria-expanded]')).toBeNull()
+  })
+
+  it('anchors the section at its id, the slug of the title by default', () => {
+    render(
+      <>
+        <SettingsCard title="Analysis weights"><p>bands</p></SettingsCard>
+        <SettingsCard title="Members" id="members-list"><p>rows</p></SettingsCard>
+      </>,
+    )
+    expect(screen.getByRole('region', { name: 'Analysis weights' })).toHaveAttribute('id', 'analysis-weights')
+    expect(screen.getByRole('region', { name: 'Members' })).toHaveAttribute('id', 'members-list')
+  })
 })

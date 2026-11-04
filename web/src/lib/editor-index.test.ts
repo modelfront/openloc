@@ -32,3 +32,23 @@ describe('rowForNumber', () => {
     expect(rowForNumber([], '1')).toBeUndefined()
   })
 })
+
+describe('toIndexData files', () => {
+  it('gives each row the file whose rows it falls in', async () => {
+    const { toIndexData } = await import('./editor-index')
+    const n = 5
+    const col = <T,>(v: T) => Array.from({ length: n }, () => v)
+    const data = toIndexData({
+      segment_ids: [1, 2, 3, 4, 5], translation_ids: [1, 2, 3, 4, 5], positions: [0, 1, 0, 1, 2], sub_positions: col(0),
+      word_counts: col(1), statuses: col('needs_review'), has_target: col(false), step_edited: col(false), predicted: col(false),
+      origins: col(''), tm_match: col(undefined), locked: col(false), in_flight: col(''), confirmed_via: col(''), qe_note_heads: col(''),
+      joins_next: col(false), repetition: col(0), repetition_stats: { segments: 0, words: 0, characters: 0 },
+      files: [
+        { job_id: 7, file_id: 70, file_name: 'a', file_format: 'txt', inline_html: true, first_row: 0, row_count: 2, step_name: '', has_previous_step: false },
+        { job_id: 8, file_id: 80, file_name: 'b', file_format: 'txt', inline_html: true, first_row: 2, row_count: 3, step_name: '', has_previous_step: false },
+      ],
+    })
+    expect(data.rows.map(r => r.fileIdx)).toEqual([0, 0, 1, 1, 1])
+    expect(data.files.map(f => f.job_id)).toEqual([7, 8])
+  })
+})

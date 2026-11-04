@@ -354,6 +354,11 @@ test.describe("Task matrix", () => {
     await popup.getByRole("button", { name: "de", exact: true }).click();
     await expect(page).toHaveURL(/target=de/);
     await expect(page.getByTestId("task-filter-language")).toContainText("de");
+    // The chip's border is on the frame around it and its ×; the filter icon
+    // beside it is drawn to the same (sm) height.
+    const chipFrame = (await page.getByTestId("task-filter-language").locator("..").boundingBox())!;
+    const icon = (await page.getByTestId("task-filter-menu").boundingBox())!;
+    expect(icon.height, "filter icon height").toBeCloseTo(chipFrame.height, 0);
     await openTaskSteps(page);
     await expect(page.locator('[data-testid^="task-row-job:"]')).toHaveCount(1);
 

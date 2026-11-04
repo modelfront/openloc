@@ -3,10 +3,12 @@ package pipeline
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -47,8 +49,9 @@ type downloadRequest struct {
 type downloadEntry struct {
 	name string
 	data []byte
-	// event is emitted only once the whole batch succeeded.
-	event projectevents.Event
+	// events are emitted only once the whole batch succeeded: one per job, so
+	// a multilingual workbook records each language it carries.
+	events []projectevents.Event
 }
 
 // HandleProjectDownload builds every requested artifact and returns either the
@@ -91,9 +94,10 @@ func (h *Handler) HandleProjectDownload(w http.ResponseWriter, r *http.Request) 
 	// keeps the History tab rendering unchanged for job.exported.
 	actorID, actorName := projectevents.ActorFromContext(r.Context())
 	for _, e := range entries {
-		ev := e.event
-		ev.ActorID, ev.ActorName = actorID, actorName
-		projectevents.Emit(r.Context(), h.queries, ev)
+		for _, ev := range e.events {
+			ev.ActorID, ev.ActorName = actorID, actorName
+			projectevents.Emit(r.Context(), h.queries, ev)
+		}
 	}
 
 	if len(entries) == 1 {
@@ -172,19 +176,22 @@ func (h *Handler) buildDownloadEntries(r *http.Request, project db.Project, req 
 			entries = append(entries, downloadEntry{
 				name: file.Name,
 				data: data,
-				event: projectevents.Event{
+				events: []projectevents.Event{{
 					ProjectID: project.ID,
 					TenantID:  tenantID,
 					Type:      projectevents.TypeFileDownloaded,
 					FileID:    &fileID,
 					Details:   map[string]any{"file_name": file.Name},
-				},
+				}},
 			})
 		}
 		return entries, nil
 	}
 
-	entries := make([]downloadEntry, 0, len(req.JobIDs))
+	// Every job resolves first: a multilingual workbook gathers all of its
+	// picked languages into one entry, wherever its jobs sit in the list.
+	picks := make([]jobPick, 0, len(req.JobIDs))
+	byFile := map[int64][]jobPick{}
 	for _, jobID := range req.JobIDs {
 		job, err := h.queries.GetJobTenant(ctx, db.GetJobTenantParams{ID: jobID, TenantID: tenantID})
 		if err != nil {
@@ -196,6 +203,38 @@ func (h *Handler) buildDownloadEntries(r *http.Request, project db.Project, req 
 		if err != nil {
 			return nil, err
 		}
+		p := jobPick{jobID: job.ID, lang: job.TargetLanguage, file: file}
+		picks = append(picks, p)
+		byFile[file.ID] = append(byFile[file.ID], p)
+	}
+
+	entries := make([]downloadEntry, 0, len(picks))
+	combined := map[int64]bool{}
+	for _, p := range picks {
+		file := p.file
+		if req.Format == "source" && MultilingualWorkbook(file) {
+			if combined[file.ID] {
+				continue
+			}
+			combined[file.ID] = true
+			var langs []string
+			var events []projectevents.Event
+			for _, q := range byFile[file.ID] {
+				if !slices.Contains(langs, q.lang) {
+					langs = append(langs, q.lang)
+				}
+				events = append(events, jobExportedEvent(tenantID, file, &q.jobID, q.lang, req.Format))
+			}
+			data, name, err := h.service.ExportFileLanguages(ctx, tenantID, file.ID, langs)
+			if err != nil {
+				return nil, downloadExportError(ctx, file, p.jobID, req.Format, err)
+			}
+			if len(langs) == 1 {
+				name = langs[0] + "_" + name
+			}
+			entries = append(entries, downloadEntry{name: name, data: data, events: events})
+			continue
+		}
 
 		var (
 			data     []byte
@@ -203,30 +242,39 @@ func (h *Handler) buildDownloadEntries(r *http.Request, project db.Project, req 
 			expErr   error
 		)
 		if req.Format == "xliff" {
-			data, filename, expErr = h.service.ExportBilingualXLIFF(ctx, tenantID, file.ID, project.SourceLanguage, job.TargetLanguage)
+			data, filename, expErr = h.service.ExportBilingualXLIFF(ctx, tenantID, file.ID, project.SourceLanguage, p.lang)
 		} else {
 			var base string
-			data, base, expErr = h.service.ExportFile(ctx, tenantID, file.ID, job.TargetLanguage)
-			filename = job.TargetLanguage + "_" + base
+			data, base, expErr = h.service.ExportFile(ctx, tenantID, file.ID, p.lang)
+			filename = p.lang + "_" + base
 		}
 		if expErr != nil {
-			// One file the user must fix stops the whole download; the message
-			// names the file so they know which one.
-			if msg, ok := UserExportMessage(expErr); ok {
-				return nil, &downloadError{http.StatusBadRequest, file.Name + ": " + msg}
-			}
-			logging.Error(ctx, expErr, "download export failed", "download-export-failed", logging.JobID(job.ID), logging.Label("format", req.Format))
-			return nil, &downloadError{http.StatusInternalServerError, "failed to export " + file.Name}
+			return nil, downloadExportError(ctx, file, p.jobID, req.Format, expErr)
 		}
-
-		jobID := job.ID
 		entries = append(entries, downloadEntry{
-			name:  filename,
-			data:  data,
-			event: jobExportedEvent(tenantID, file, &jobID, job.TargetLanguage, req.Format),
+			name:   filename,
+			data:   data,
+			events: []projectevents.Event{jobExportedEvent(tenantID, file, &p.jobID, p.lang, req.Format)},
 		})
 	}
 	return entries, nil
+}
+
+// jobPick is one requested job with its file.
+type jobPick struct {
+	jobID int64
+	lang  string
+	file  db.File
+}
+
+// downloadExportError maps a failed export: one file the user must fix stops
+// the whole download, and the message names the file so they know which one.
+func downloadExportError(ctx context.Context, file db.File, jobID int64, format string, err error) error {
+	if msg, ok := UserExportMessage(err); ok {
+		return &downloadError{http.StatusBadRequest, file.Name + ": " + msg}
+	}
+	logging.Error(ctx, err, "download export failed", "download-export-failed", logging.JobID(jobID), logging.Label("format", format))
+	return &downloadError{http.StatusInternalServerError, "failed to export " + file.Name}
 }
 
 // fileInProject resolves a file inside the tenant AND asserts it belongs to the

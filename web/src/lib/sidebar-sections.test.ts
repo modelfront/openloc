@@ -21,14 +21,14 @@ describe('normalizeLayout', () => {
 
   it('drops unknown ids and duplicates but keeps the stored order', () => {
     const out = normalizeLayout({ order: ['comments', 'bogus', 'tm', 'tm'], hidden: ['qa', 'qa', 'nope'] })
-    expect(out.order).toEqual(['comments', 'tm', 'mt', 'terminology', 'references', 'history', 'qa'])
+    expect(out.order).toEqual(['comments', 'tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'qa'])
     expect(out.hidden).toEqual(['qa'])
   })
 
   it('appends sections the stored order does not know about, visible', () => {
-    // A layout saved before "qa" and "references" existed.
+    // A layout saved before "fuzzy", "qa" and "references" existed.
     const out = normalizeLayout({ order: ['comments', 'tm', 'mt', 'terminology'], hidden: [] })
-    expect(out.order).toEqual(['comments', 'tm', 'mt', 'terminology', 'references', 'history', 'qa'])
+    expect(out.order).toEqual(['comments', 'tm', 'mt', 'terminology', 'fuzzy', 'references', 'history', 'qa'])
     expect(visibleSections(out)).toHaveLength(SIDEBAR_SECTION_IDS.length)
   })
 })
@@ -36,7 +36,7 @@ describe('normalizeLayout', () => {
 describe('moveSection', () => {
   it('moves a section down and up', () => {
     const down = moveSection(DEFAULT_LAYOUT, 0, 2)
-    expect(down.order).toEqual(['mt', 'terminology', 'tm', 'references', 'history', 'qa', 'comments'])
+    expect(down.order).toEqual(['fuzzy', 'mt', 'tm', 'terminology', 'references', 'history', 'qa', 'comments'])
     const up = moveSection(down, 2, 0)
     expect(up.order).toEqual(DEFAULT_LAYOUT.order)
   })

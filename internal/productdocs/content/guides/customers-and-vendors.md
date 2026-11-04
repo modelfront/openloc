@@ -1,20 +1,28 @@
 ---
 title: "Labels and vendors"
-summary: "Classify projects with labels and invite external linguists as vendors."
+summary: "Classify projects with labels, invite vendor organizations, and manage members."
 order: 90
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-17
+updated_at: 2026-11-03
 sources:
   - web/src/pages/LabelsPage.tsx
   - web/src/components/label/**
   - web/src/pages/org/**
-  - web/src/components/vendors/**
   - web/src/pages/AcceptInvite.tsx
   - web/src/components/customer/**
+  - web/src/components/project/ProjectFilterBar.tsx
   - web/src/components/org/**
   - web/src/components/userpair/**
   - internal/label/**
   - internal/invite/**
+  - internal/api/vendor_admin_notice.go
+  - internal/vendoridle/**
+  - internal/auth/member_enable.go
+  - web/src/pages/OrgPicker.tsx
+  - web/src/components/OrgSwitcher.tsx
+  - web/src/pages/AwaitingApproval.tsx
+limitations:
+  - vendor-org-no-work
 related:
   - reference/roles-and-permissions
   - guides/projects-and-files
@@ -22,7 +30,7 @@ related:
   - guides/analytics
   - guides/translation-memory
 ---
-A **label** classifies a project: **Customer** (the company you translate for), **Domain** (the subject matter), and any others your organization adds. A **vendor** is an external translator you bring into your organization. Language pairs connect people to work.
+A **label** classifies a project: **Customer** (the company you translate for), **Domain** (the subject matter), and any others your organization adds. A **vendor** is a translation company with an organization of its own, linked to yours. Language pairs connect people to work.
 
 ## Who can do what
 
@@ -30,10 +38,11 @@ A **label** classifies a project: **Customer** (the company you translate for), 
 | --- | --- | --- | --- |
 | Create labels, add values, and choose a project's labels | ✓ | ✓ | ✓ |
 | Delete a value, or a whole label | ✓ | ✓ | — |
-| Invite vendors, and resend or revoke their invitations | ✓ | ✓ | ✓ |
-| Edit a member's language pairs | ✓ | ✓ | — |
+| Invite a vendor, and resend or revoke that invitation | ✓ | ✓ | — |
+| Invite your own admins, project managers and linguists, and resend or revoke those invitations | ✓ | ✓ | Linguists only, through the API or a connected AI tool |
+| Edit a member's role and language pairs | ✓ | ✓ | — |
 
-Linguists, including vendors, see none of these pages. See [Roles and permissions](/docs/reference/roles-and-permissions).
+Linguists see none of these pages. See [Roles and permissions](/docs/reference/roles-and-permissions).
 
 ## Create a label
 
@@ -68,40 +77,63 @@ Every label is optional. Translation memories carry a customer of their own, whi
 
 ## Filter projects by customer
 
-On the **Projects** page, click the **Customer** filter chip and pick a value. The **Projects** list shows each project's customer in its row. Filters are part of the page address, so a filtered view can be bookmarked.
+On the **Projects** page, click the filter icon at the end of the filter bar, pick **Customer**, then pick a value; the customer then shows as a chip on the bar. The **Projects** list shows each project's customer in its row. Filters are part of the page address, so a filtered view can be bookmarked.
 
-## Invite a vendor
+## Invite a vendor (owner or admin)
 
-Vendors are invited from the **Vendors** tab of the **Organization** page. The account that is created always has the **Linguist** role, so a vendor sees only their own tasks.
+A vendor is its own organization. Its people, roles and settings are separate from yours.
 
-1. Open **Organization settings** from the account menu. Owners and admins then click the **Vendors** tab; a project manager lands on it directly.
-2. Type the address in **Invite a vendor by email** and click **Send invitation**.
+1. Open **Organization settings** from the account menu.
+2. Click **Invite vendor** at the top of the **Vendors** list. In the window, type the company's name in **Vendor name** (up to 120 characters) and the address of the person who will run it in **Admin email**. Click **Send invite**.
 
-The invitation is emailed with a link that stays valid for seven days. The vendor appears in the table with the status **Not joined yet** and the date invited. An address can have only one pending invitation at a time, and someone who is already a member cannot be invited again.
+The invitation is emailed with a link that stays valid for seven days. It asks the person to set up the vendor with you as its client, and to be its admin. Accepting creates the vendor organization; it does not make the person a member of yours.
+
+On your **Members** tab the invitation appears under **Pending invites** with a **Vendor org admin** label, the vendor name and the expiry date. Once accepted, it moves to **Accepted invites**, with the same label, the vendor name and the date it was accepted, and the vendor organization is listed under **Vendors**, below **Members**, with its admins, the languages its people work in and the date it joined. Search the list by vendor name or admin email, or filter it by **Source** and **Target** language to find a vendor for a language pair; it shows 10 vendors per page. An address can have only one pending invitation at a time, and someone who is already a member cannot be invited again.
+
+## Invite a member
+
+**Invite member**, at the top of the members list, opens a window with **Email** and a **Role**: **Admin**, **Project manager** or **Linguist**. A linguist you invite here is an in-house linguist: they join your organization and see only their own tasks. Their invitation appears under **Pending invites** with that role.
 
 ## Resend an invitation
 
-The invitation link is sent only by email. If the email does not arrive, click the send icon (**Resend invite**) on the pending row of the **Vendors** tab. A new link is emailed, valid for seven days, and the link in any earlier email stops working.
+The invitation link is sent only by email. If the email does not arrive, click the send icon (**Resend invite**) on the invitation's row under **Pending invites**. A new link is emailed, valid for seven days, and the link in any earlier email stops working.
 
 If you send a lot of invitation emails in a short time, new invitations and resends together, the app asks you to wait a minute before you send more.
 
 ## Revoke an invitation
 
-On the **Vendors** tab, click the trash icon (**Revoke invite**) on the pending row. The link stops working at once. You can invite the same address again later.
+Under **Pending invites**, click the trash icon (**Revoke invite**) on the invitation's row. The link stops working at once. You can invite the same address again later.
 
-## What the vendor sees
+## What the invitee sees
 
-The link opens a **Join organization** page. The vendor either signs in with Google or Microsoft, or, if they have no account yet, enters a **Name** and sets a **Password** (at least 8 characters). Someone who already has an account signs in with the invited address.
+The link opens a **Join organization** page. The invitee either signs in with Google or Microsoft, or, if they have no account yet, enters a **Name** and sets a **Password** (at least 8 characters). Someone who already has an account signs in with the invited address.
 
-After joining, the row on the **Vendors** tab turns **Active** with the date joined. The vendor's left menu has only **Tasks**; **Docs** is in the account menu. They open jobs assigned to them in the CAT editor, translate, run QA and complete their step. They cannot open project pages, browse memories or see other people's jobs. The **Vendors** tab lists every linguist in the organization, not only those invited from it.
+An in-house linguist is then listed under **Members** with the **Linguist** role. Their left menu has only **Tasks**; **Docs** is in the account menu. They open jobs assigned to them in the CAT editor, translate, run QA and complete their step. They cannot open project pages, browse memories or see other people's jobs.
 
-## Set a member's language pairs (owner or admin)
+## Run a vendor organization
 
-Language pairs record which source-to-target combinations a person works in. When you assign a workflow step, the list of people is limited to members who have that pair; owners, admins and project managers are always listed.
+A **Vendor** chip next to the organization's name, in the header and in the organization picker, marks a vendor organization. The vendor's admin opens **Organization settings** in the vendor organization. The page is titled **Organization** with **Vendor for** and your organization's name under it, and it has only the **Members** tab. For its roles and what each one sees, see [Vendor organizations](/docs/reference/roles-and-permissions#vendor-organizations).
+
+- **Invite member** offers **Project manager** and **Linguist**. To make someone an admin, change their role in the member window. When someone becomes an admin, the client's owners and admins get a notification in their bell; clicking it opens their **Vendors** list.
+- The vendor organization works only while your organization is active.
+
+### Access after 90 days without use
+
+Someone who has not used the vendor organization for 90 days loses access to it. Seven days before, they get an email asking them to sign in; using the organization at any time starts the 90 days again. Only their access to that vendor organization ends: their account and any other organizations stay open.
+
+They then see **Your access to** and the vendor's name **is disabled** when they open it, and the organization picker marks it **Disabled**. In the vendor's **Members** list they have a **Disabled** chip. Open their row: the window says **Access disabled** and has **Enable**.
+
+- The vendor's admins enable any member: an admin, a project manager or a linguist. Project managers and linguists cannot enable anyone.
+- In your **Vendors** list, a vendor with disabled admins has a **Disabled** chip next to its name, and only its enabled admins are listed under it. Open the vendor's row to see all its admins, and **Enable** the disabled ones you choose. Your owners and admins can enable a vendor's admins at any time, for example when all of them are disabled.
+
+## Set a member's role and language pairs (owner or admin)
+
+Language pairs record which source-to-target combinations a person works in. When you assign a workflow step, the list of people is limited to members who have that pair; owners, admins and project managers are always listed. Each organization sets its own pairs for a person: someone who is also in a vendor organization, or in another organization, can have different pairs there, and they never change yours.
 
 1. Open **Organization settings** from the account menu.
-2. On the **Members** tab, click **Language pairs** next to the person (or **Edit** if pairs exist).
-3. In each row, pick one or more **Sources** and one or more **Targets**. Every source is paired with every target in that row. Click **Add languages** for another row.
-4. Check the pair count under the rows and click **Save**.
+2. On the **Members** tab, click the person's row. The window has their **Role** and their **Language pairs**. The list shows owners first, then admins, project managers and linguists, 10 per page, with page numbers under the list. To find someone, search by name or email, or narrow it with the **Role**, **Source** and **Target** filters. Each filter lists only the values that still find someone, given the other filters.
+3. To change the role, pick another one in **Role**. Switching someone down to **Linguist** asks you to confirm, because they lose project-manager access.
+4. In each language-pair row, pick one or more **Sources** and one or more **Targets**. Every source is paired with every target in that row. Click **Add languages** for another row.
+5. Check the pair count under the rows and click **Save**. **Save** stays unavailable until something changes, and one click stores the role and the pairs together.
 
 Pairs appear as small chips next to the member's name. A member may have up to 100 pairs. Saving with no pairs asks you to confirm **Remove all**.

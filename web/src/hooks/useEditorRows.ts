@@ -2,6 +2,7 @@ import { useQueries, useQuery, type QueryClient, type UseQueryResult } from '@ta
 import { ApiError, getEditorIndex, getEditorRefs, getEditorRows, searchEditor, type EditorRow, type EditorSearch } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { indexLookup, toIndexData, type IndexRow } from '../lib/editor-index'
+import type { EditorId } from '../lib/editor-scope'
 
 const EMPTY_LOOKUP = indexLookup([])
 
@@ -18,16 +19,17 @@ const PAGE_STALE_MS = 30_000
  * every save. Counts, filters, selection and navigation work over it, so they
  * cover the whole file while only the rows on screen carry their text.
  */
-export function useEditorIndex(jobId: number, enabled: boolean) {
+export function useEditorIndex(editorId: EditorId, enabled: boolean) {
   const query = useQuery({
-    queryKey: queryKeys.job.editorIndex(jobId),
-    queryFn: async () => toIndexData(await getEditorIndex(jobId)),
+    queryKey: queryKeys.job.editorIndex(editorId),
+    queryFn: async () => toIndexData(await getEditorIndex(editorId)),
     enabled,
   })
   return {
     rows: query.data?.rows,
     lookup: query.data?.lookup ?? EMPTY_LOOKUP,
     repetitionStats: query.data?.repetitionStats,
+    files: query.data?.files,
     isPending: query.isPending,
     // Only a failed first load: a failed refetch keeps the rows already shown.
     error: query.isLoadingError ? query.error : null,
@@ -60,20 +62,20 @@ function combineRows(results: UseQueryResult<EditorRow[]>[]): Map<number, Editor
  * own query: pages leave the cache a while after they scroll out of view, and
  * a job-wide invalidation refetches only the pages still on screen.
  */
-export function useEditorPages(jobId: number, rows: readonly IndexRow[] | undefined, indices: Iterable<number>) {
+export function useEditorPages(editorId: EditorId, rows: readonly IndexRow[] | undefined, indices: Iterable<number>) {
   const pages = rows ? pagesFor(indices) : []
   return useQueries({
-    queries: pages.map(page => editorPageQuery(jobId, rows!, page)),
+    queries: pages.map(page => editorPageQuery(editorId, rows!, page)),
     combine: combineRows,
   })
 }
 
 /** The query of one page of rows of this index. */
-function editorPageQuery(jobId: number, rows: readonly IndexRow[], page: number) {
+function editorPageQuery(editorId: EditorId, rows: readonly IndexRow[], page: number) {
   const slice = rows.slice(page * EDITOR_PAGE_SIZE, (page + 1) * EDITOR_PAGE_SIZE)
   return {
-    queryKey: queryKeys.job.editorPage(jobId, page, editorPageKey(slice)),
-    queryFn: () => getEditorRows(jobId, slice.map(r => r.segmentId)),
+    queryKey: queryKeys.job.editorPage(editorId, page, editorPageKey(slice)),
+    queryFn: () => getEditorRows(editorId, slice.map(r => r.segmentId)),
     enabled: slice.length > 0,
     staleTime: PAGE_STALE_MS,
   }
@@ -90,17 +92,17 @@ function editorPageQuery(jobId: number, rows: readonly IndexRow[], page: number)
  * page that fails to load rejects the whole refresh, so the caller does not
  * trust the cached rows.
  */
-export async function refetchIndexWithPages(queryClient: QueryClient, jobId: number): Promise<void> {
-  const data = toIndexData(await getEditorIndex(jobId))
+export async function refetchIndexWithPages(queryClient: QueryClient, editorId: EditorId): Promise<void> {
+  const data = toIndexData(await getEditorIndex(editorId))
   const shown = queryClient.getQueryCache()
-    .findAll({ queryKey: queryKeys.job.editorRows(jobId), type: 'active' })
+    .findAll({ queryKey: queryKeys.job.editorRows(editorId), type: 'active' })
     .map(q => q.queryKey[3] as number)
   const pages = shown.length ? new Set([...shown, Math.max(...shown) + 1]) : new Set<number>()
   await Promise.all([...pages].map(page => {
-    const query = editorPageQuery(jobId, data.rows, page)
+    const query = editorPageQuery(editorId, data.rows, page)
     return query.enabled ? queryClient.fetchQuery({ ...query, staleTime: 0 }) : undefined
   }))
-  queryClient.setQueryData(queryKeys.job.editorIndex(jobId), data)
+  queryClient.setQueryData(queryKeys.job.editorIndex(editorId), data)
 }
 
 /** Where the server text search stands; null when it has answered or there is no search. */
@@ -113,10 +115,10 @@ export type EditorSearchState = 'pending' | 'failed' | 'invalid' | null
  * search has not found is shown or selected; `state` says why. A pattern the
  * server refuses (RE2 has no lookahead, for one) is `invalid`.
  */
-export function useEditorSearch(jobId: number, search: EditorSearch | null): { matches: ReadonlySet<number> | null; state: EditorSearchState } {
+export function useEditorSearch(editorId: EditorId, search: EditorSearch | null): { matches: ReadonlySet<number> | null; state: EditorSearchState } {
   const query = useQuery({
-    queryKey: queryKeys.job.editorSearch(jobId, search ?? { text: '', source: true, target: true, caseSensitive: false, regex: false }),
-    queryFn: async ({ signal }) => new Set(await searchEditor(jobId, search!, signal)),
+    queryKey: queryKeys.job.editorSearch(editorId, search ?? { text: '', source: true, target: true, caseSensitive: false, regex: false }),
+    queryFn: async ({ signal }) => new Set(await searchEditor(editorId, search!, signal)),
     enabled: search !== null,
     retry: false,
   })
@@ -132,10 +134,10 @@ export function useEditorSearch(jobId: number, search: EditorSearch | null): { m
 const EMPTY: ReadonlySet<number> = new Set()
 
 /** The segments the file's cross-reference chips point at, by key. */
-export function useEditorRefs(jobId: number, enabled: boolean) {
+export function useEditorRefs(editorId: EditorId, enabled: boolean) {
   return useQuery({
-    queryKey: queryKeys.job.editorRefs(jobId),
-    queryFn: () => getEditorRefs(jobId),
+    queryKey: queryKeys.job.editorRefs(editorId),
+    queryFn: () => getEditorRefs(editorId),
     enabled,
   })
 }

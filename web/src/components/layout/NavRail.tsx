@@ -32,6 +32,8 @@ interface NavItem {
   icon: LucideIcon
   end?: boolean
   linguistAllowed?: boolean
+  // Shown in a vendor org, which has Projects and Tasks only.
+  vendorAllowed?: boolean
   guide?: string
 }
 
@@ -39,8 +41,8 @@ interface NavItem {
 // linguist sees (`linguistAllowed`); every other tab is manager-only
 // (owner/admin/PM).
 const NAV_ITEMS: NavItem[] = [
-  { to: '/projects', label: 'Projects', icon: FolderKanban, end: true, guide: 'nav.projects' },
-  { to: '/tasks', label: 'Tasks', icon: ListChecks, linguistAllowed: true, guide: 'nav.tasks' },
+  { to: '/projects', label: 'Projects', icon: FolderKanban, end: true, vendorAllowed: true, guide: 'nav.projects' },
+  { to: '/tasks', label: 'Tasks', icon: ListChecks, linguistAllowed: true, vendorAllowed: true, guide: 'nav.tasks' },
   { to: '/memories', label: 'Translation memories', icon: Database, guide: 'nav.memories' },
   { to: '/terminology', label: 'Terminology', icon: BookMarked, guide: 'nav.terminology' },
   { to: '/labels', label: 'Labels', icon: Tags, guide: 'nav.labels' },
@@ -58,10 +60,12 @@ const NAV_ITEMS: NavItem[] = [
 const PLATFORM_ITEM: NavItem = { to: '/platform/orgs', label: 'Organizations', icon: ClipboardCheck }
 
 // Nav items for a role. Linguists see ONLY their Tasks tab; managers
-// (owner/admin/PM) see everything. Settings, Organization, AI settings and Help
-// live in the account dropdown, not the nav.
-export function navItemsForRole(role: string, isPlatformAdmin: boolean): NavItem[] {
+// (owner/admin/PM) see everything. A vendor org shows Projects and Tasks
+// only, and nothing of the platform. Settings, Organization, AI settings and
+// Help live in the account dropdown, not the nav.
+export function navItemsForRole(role: string, isPlatformAdmin: boolean, vendorOrg = false): NavItem[] {
   const items = isLinguistRole(role) ? NAV_ITEMS.filter(i => i.linguistAllowed) : NAV_ITEMS
+  if (vendorOrg) return items.filter(i => i.vendorAllowed)
   return isPlatformAdmin ? [...items, PLATFORM_ITEM] : items
 }
 
@@ -102,7 +106,7 @@ function RailLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
  * alone. Expanded there, it lies over the page (a spacer keeps the icon strip's
  * width in the layout), and a page pick or a tap on the backdrop collapses it.
  */
-export function NavRail({ role, isPlatformAdmin }: { role: string; isPlatformAdmin: boolean }) {
+export function NavRail({ role, isPlatformAdmin, vendorOrg = false }: { role: string; isPlatformAdmin: boolean; vendorOrg?: boolean }) {
   const [storedCollapsed, setStoredCollapsed] = useStoredState('nav-rail-collapsed', stored => stored === true)
   const isPhone = useMediaQuery('(max-width: 767px)')
   const [phoneExpanded, setPhoneExpanded] = useState(false)
@@ -176,7 +180,7 @@ export function NavRail({ role, isPlatformAdmin }: { role: string; isPlatformAdm
             collapsed && 'items-center',
           )}
         >
-          {navItemsForRole(role, isPlatformAdmin).map(item => (
+          {navItemsForRole(role, isPlatformAdmin, vendorOrg).map(item => (
             <RailLink key={item.to} item={item} collapsed={collapsed} />
           ))}
         </nav>

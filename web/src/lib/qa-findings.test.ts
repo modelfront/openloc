@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { chipDotClass, chipTextClass } from '@/components/ui/chip'
-import { activeIssues, countQASummary, qaButtonLabel, qaRunToast, qaSelectionToast, qaIssuesEqual, mergeQAReportRows, patchQAReport, groupFindingsByTranslation, severityDotClass, severityTextClass, severityColor, severityLabel, worstSeverity, findingDotClass, IGNORED_DOT_CLASS, EMPTY_QA_SUMMARY, type QaFinding } from './qa-findings'
+import { activeIssues, countQASummary, qaButtonLabel, qaRunToast, qaSelectionToast, qaIssuesEqual, mergeQAReportRows, patchQAReport, groupFindingsByTranslation, severityDotClass, severityTextClass, severityColor, severityLabel, worstSeverity, findingDotClass, IGNORED_DOT_CLASS, EMPTY_QA_SUMMARY, mergeScopeRuns, scopeQARunWarning, NO_QA_PROFILE_REASON, type QaFinding } from './qa-findings'
 
 const finding = (over: Partial<QaFinding>): QaFinding => ({
   id: 1, translation_id: 10, check_type: 'punctuation', severity: 'warning',
@@ -208,5 +208,27 @@ describe('findingDotClass', () => {
   it('fills by severity, rings when ignored', () => {
     expect(findingDotClass(finding({ severity: 'error' }))).toBe(chipDotClass('red'))
     expect(findingDotClass(finding({ severity: 'error', ignored: true }))).toBe(IGNORED_DOT_CLASS)
+  })
+})
+
+describe('mergeScopeRuns', () => {
+  it('adds up a job\'s chunks, and a failed chunk fails the job', () => {
+    expect(mergeScopeRuns([
+      [{ job_id: 1, outcome: 'done', issues: 2 }, { job_id: 2, outcome: 'done', issues: 0 }],
+      [{ job_id: 1, outcome: 'failed', issues: 1 }, { job_id: 2, outcome: 'done', issues: 3 }],
+    ])).toEqual([{ job_id: 1, outcome: 'failed', issues: 3 }, { job_id: 2, outcome: 'done', issues: 3 }])
+  })
+})
+
+describe('scopeQARunWarning', () => {
+  const name = (id: number) => `file${id}.txt`
+  it('names the files QA could not check', () => {
+    expect(scopeQARunWarning([{ job_id: 1, outcome: 'done', issues: 0 }], name)).toBeNull()
+    expect(scopeQARunWarning([
+      { job_id: 1, outcome: 'failed', issues: 0 }, { job_id: 2, outcome: 'done', issues: 1 }, { job_id: 3, outcome: 'failed', issues: 0 },
+    ], name)).toBe('QA could not check file1.txt, file3.txt. Run it again.')
+  })
+  it('says the project has no QA profile', () => {
+    expect(scopeQARunWarning([{ job_id: 1, outcome: 'no_profile', issues: 0 }], name)).toBe(NO_QA_PROFILE_REASON)
   })
 })

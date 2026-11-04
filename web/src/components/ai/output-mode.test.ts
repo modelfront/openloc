@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { derivePurpose, extensionMode, flagsToMode, type OutputFlags } from './output-mode'
+import { MODE_FLAGS, derivePurpose, extensionMode, flagsToMode, type OutputFlags, type OutputMode } from './output-mode'
 
 // Flag fixtures matching the built-in default prompts (internal/aiprompt/defaults.go).
 const MT: OutputFlags = { out_status: false, out_text: true, out_note: true, out_comments: false }
 const QE: OutputFlags = { out_status: true, out_text: false, out_note: true, out_comments: true }
 const QE_APE: OutputFlags = { out_status: true, out_text: true, out_note: true, out_comments: true }
 const APE: OutputFlags = { out_status: false, out_text: true, out_note: true, out_comments: true }
+const COMMENT: OutputFlags = { out_status: false, out_text: false, out_note: false, out_comments: true }
 
 describe('flagsToMode', () => {
   it('classifies each default prompt by its flags', () => {
@@ -13,6 +14,13 @@ describe('flagsToMode', () => {
     expect(flagsToMode(QE)).toBe('qe')
     expect(flagsToMode(QE_APE)).toBe('qe_ape')
     expect(flagsToMode(APE)).toBe('ape')
+    expect(flagsToMode(COMMENT)).toBe('comment')
+  })
+
+  it('reads every mode back from the flags it sets', () => {
+    for (const mode of Object.keys(MODE_FLAGS) as OutputMode[]) {
+      expect(flagsToMode(MODE_FLAGS[mode])).toBe(mode)
+    }
   })
 })
 
@@ -28,6 +36,7 @@ describe('derivePurpose', () => {
     expect(derivePurpose(undefined, false, QE_APE)).toBe('qe_ape')
     expect(derivePurpose(undefined, false, QE)).toBe('qe_ape')
     expect(derivePurpose(undefined, false, APE)).toBe('qe_ape')
+    expect(derivePurpose(undefined, false, COMMENT)).toBe('qe_ape')
   })
 
   it('a new extension engine is always QE+APE, regardless of prompt', () => {

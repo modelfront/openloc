@@ -84,7 +84,7 @@ func matchPath(path string) (*pageDef, []string) {
 	if path == "" {
 		path = "/" // raw was exactly "/" — the projects list
 	}
-	for _, list := range [][]pageDef{pages, platformPages} {
+	for _, list := range [][]pageDef{pages, describedPages, platformPages} {
 		for i := range list {
 			if m := list[i].pattern.FindStringSubmatch(path); m != nil {
 				return &list[i], m

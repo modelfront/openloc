@@ -305,6 +305,7 @@ func writeAIStepResponse(w http.ResponseWriter, jobID int64, res pipeline.AIStep
 		"total":         res.Total,
 		"auto_approved": res.AutoApproved,
 		"needs_review":  res.NeedsReview,
+		"commented":     res.Commented,
 	}
 	if res.SkipReason == pipeline.PhaseSkipNoSegments {
 		resp["skip_reason"] = string(pipeline.PhaseSkipNoSegments)

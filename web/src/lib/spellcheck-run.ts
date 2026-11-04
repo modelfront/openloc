@@ -72,11 +72,41 @@ export function isIgnored(
   return ignoredWords.has(text.slice(match.offset, match.offset + match.length))
 }
 
+/** Checks one chunk of translation ids. */
+export type SpellcheckChunk = (ids: number[], signal?: AbortSignal) => Promise<SpellcheckJobResult>
+
+/**
+ * A check that sends each translation to its own job's endpoint, job by job,
+ * and puts the results together: the multi-file editor's check. Ids without a
+ * job are left out.
+ */
+export function checkByJob(
+  jobOf: (translationId: number) => number | undefined,
+  checkJob: (jobId: number, ids: number[], signal?: AbortSignal) => Promise<SpellcheckJobResult>,
+): SpellcheckChunk {
+  return async (ids, signal) => {
+    const byJob = new Map<number, number[]>()
+    for (const id of ids) {
+      const jobId = jobOf(id)
+      if (jobId === undefined) continue
+      const list = byJob.get(jobId)
+      if (list) list.push(id)
+      else byJob.set(jobId, [id])
+    }
+    const out: SpellcheckJobResult = { results: [], failed: 0 }
+    for (const [jobId, part] of byJob) {
+      const r = await checkJob(jobId, part, signal)
+      out.results.push(...(r.results ?? []))
+      out.failed += r.failed ?? 0
+    }
+    return out
+  }
+}
+
 export interface RunSpellcheckOptions {
-  jobId: number
   translationIds: number[]
   ignoredWords: Set<string>
-  check: (jobId: number, ids: number[], signal?: AbortSignal) => Promise<SpellcheckJobResult>
+  check: SpellcheckChunk
   segmentIdFor?: (translationId: number) => number
   segmentIndexFor?: (translationId: number) => number
   chunkSize?: number
@@ -94,7 +124,7 @@ export interface RunSpellcheckOptions {
  */
 export async function runSpellcheck(opts: RunSpellcheckOptions): Promise<SpellcheckRunResult> {
   const {
-    jobId, translationIds, ignoredWords, check,
+    translationIds, ignoredWords, check,
     segmentIdFor, segmentIndexFor, signal, onProgress,
   } = opts
   const size = opts.chunkSize ?? SPELLCHECK_CHUNK_SIZE
@@ -106,7 +136,7 @@ export async function runSpellcheck(opts: RunSpellcheckOptions): Promise<Spellch
   for (const ids of chunk(translationIds, size)) {
     if (signal?.aborted) return { errors, failed, aborted: true }
 
-    const result = await check(jobId, ids, signal)
+    const result = await check(ids, signal)
     failed += result.failed ?? 0
 
     for (const segment of result.results ?? []) {

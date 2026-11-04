@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { getProjectSettings, getSegmentationProfile, getTemplate, getWorkflow, type Project, type WorkflowDetail } from '../api'
 import { projectSettingsToValues } from '../lib/settings-values'
+import { choicesToMap } from './useFilterProfiles'
 import { isPretranslateOnly, workflowDefinitionStepsToDrafts, workflowStepsFromApi } from '../lib/workflow-steps'
 import type { SettingsValues } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
 import { errorText } from '@/lib/error-text'
 import { isAnyLanguageDefault } from './useSegmentationProfiles'
 
@@ -117,7 +118,7 @@ export function usePrefillFromSource(cb: PrefillCallbacks) {
         mtOnUpload: t.mt_on_upload,
         tmOnUpload: t.tm_on_upload,
         autoComplete: t.auto_complete ?? DEFAULT_AUTO_COMPLETE,
-        inlineHTML: t.inline_html ?? DEFAULT_INLINE_HTML,
+        filterProfileIds: choicesToMap(t.filter_profiles),
         linguistTerms: toLinguistTerms(t.linguist_terms),
         qaProfileId: t.qa_profile_id ?? null,
         segmentationProfileId,

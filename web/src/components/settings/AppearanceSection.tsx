@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTheme } from 'next-themes'
-import { Sun, Moon, Monitor, Plus, Pencil, Check, Copy } from 'lucide-react'
+import { Sun, Moon, Monitor, Plus, Pencil, Check, Copy, Palette as PaletteIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '../ui/button'
 import { DeleteButton } from '../ui/delete-button'
@@ -56,21 +56,28 @@ export function AppearanceSection() {
     toast.success('Palette deleted')
   }
 
+  const mode = MODES.find(m => m.value === theme)
+  const paletteName = (m: PaletteMode, id: string) =>
+    palettesForMode(m, appearance.custom_palettes).find(p => p.id === id)?.name ?? id
+  const darkName = paletteName('dark', appearance.dark_palette)
+  const lightName = paletteName('light', appearance.light_palette)
+  const shown = theme === 'dark' ? darkName : theme === 'light' ? lightName : `${darkName} / ${lightName}`
+
   return (
     <SettingsCard
       title="Appearance"
-      className="mb-6"
-      description="Your palette choices are saved to your account and follow you across organizations."
-    >
-
-      <div className="mb-6">
+      icon={<PaletteIcon />}
+      summary={mode ? `${mode.label} · ${shown}` : shown}
+      toolbar={
         <ChoiceToggle
           aria-label="Theme"
           options={MODES}
-          value={MODES.find(m => m.value === theme)?.value ?? null}
+          value={mode?.value ?? null}
           onChange={setTheme}
         />
-      </div>
+      }
+      description="Your palette choices are saved to your account and follow you across organizations."
+    >
 
       <PaletteGroup
         mode="dark"

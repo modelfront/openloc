@@ -20,6 +20,7 @@ sources:
   - web/src/components/project/files/file-columns.tsx
   - web/src/lib/file-readiness.ts
   - web/src/pages/CATEditor.tsx
+  - web/src/components/editor/**
   - web/src/components/SettingsEditor.tsx
   - web/src/components/settings/TMProfilePicker.tsx
   - web/src/components/project/BulkJobActionsBar.tsx

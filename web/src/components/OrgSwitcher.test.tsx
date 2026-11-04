@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { OrgSwitcher } from './OrgSwitcher'
@@ -106,5 +106,26 @@ describe('OrgSwitcher inside the Playground', () => {
     expect(api.leaveDemo).toHaveBeenCalled()
     expect(screen.queryByTestId('org-switcher-demo')).toBeNull()
     expect(api.listOrgs).not.toHaveBeenCalled()
+  })
+
+  it('marks vendor orgs with a Vendor chip, in the menu and on the current org', async () => {
+    api.getMe.mockResolvedValue({ tenant_id: 3, tenant_name: 'Acme Vendors', tenant_kind: 'vendor' })
+    api.listOrgs.mockResolvedValue([
+      { tenant_id: 2, tenant_name: 'Example', role: 'owner', tenant_kind: 'customer' },
+      { tenant_id: 3, tenant_name: 'Acme Vendors', role: 'admin', tenant_kind: 'vendor' },
+    ])
+    const trigger = await renderSwitcher()
+    expect(within(trigger).getByTestId('org-kind-vendor')).toHaveTextContent('Vendor')
+    fireEvent.mouseMove(trigger)
+    const items = await screen.findAllByRole('menuitem')
+    const vendorRow = items.find(i => i.textContent?.includes('Acme Vendors'))!
+    const customerRow = items.find(i => i.textContent?.includes('Example'))!
+    expect(within(vendorRow).getByTestId('org-kind-vendor')).toBeInTheDocument()
+    expect(within(customerRow).queryByTestId('org-kind-vendor')).toBeNull()
+  })
+
+  it('has no Vendor chip on a customer org', async () => {
+    const trigger = await renderSwitcher()
+    expect(within(trigger).queryByTestId('org-kind-vendor')).toBeNull()
   })
 })

@@ -242,6 +242,7 @@ components:
       - id
       - email
       - role
+      - kind
       - status
       - expires_at
       - created_at
@@ -253,6 +254,19 @@ components:
           type: string
         role:
           $ref: '#/components/schemas/Role'
+        kind:
+          type: string
+          enum:
+          - member
+          - vendor_org
+          description: >-
+            `member` invites someone into your organization. `vendor_org` invites
+            someone to set up a vendor organization of yours, named in
+            `vendor_org_name`, as its admin; it never makes them a member of your
+            organization.
+        vendor_org_name:
+          type: string
+          description: The vendor organization's name. Only on a `vendor_org` invite.
         status:
           type: string
           enum:

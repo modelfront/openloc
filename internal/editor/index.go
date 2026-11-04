@@ -2,16 +2,19 @@ package editor
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf16"
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/inlinetag"
+	"openloc/internal/taskedit"
 )
 
 // buildIndex turns the index rows into one array per field and marks
-// repetitions: two segments repeat when their source text is identical.
+// repetitions: two segments repeat when their source text is identical, in
+// the same file or in two files of the scope.
 func buildIndex(rows []db.ListEditorIndexRow) Index {
 	n := len(rows)
 	idx := Index{
@@ -57,10 +60,42 @@ func buildIndex(rows []db.ListEditorIndexRow) Index {
 		}
 	}
 	for i := 0; i+1 < n; i++ {
-		idx.JoinsNext[i] = rows[i].Position == rows[i+1].Position ||
-			sameBlock(rows[i].FileFormat, rows[i].UnitKey, rows[i+1].UnitKey)
+		idx.JoinsNext[i] = rows[i].FileID == rows[i+1].FileID &&
+			(rows[i].Position == rows[i+1].Position ||
+				sameBlock(rows[i].FileFormat, rows[i].UnitKey, rows[i+1].UnitKey))
 	}
 	return idx
+}
+
+// scopeFiles describes each file of the scope: where its rows are in the
+// index (rows come file by file, in scope order) and the caller's edit
+// refusal, if any, from blocks. A job missing from blocks has no task state
+// to refuse on and reads as editable, as taskedit.Guard.Check allows it.
+// withPrevious holds the jobs with a finished step round.
+func scopeFiles(scope Scope, rows []db.ListEditorIndexRow, blocks map[int64]*taskedit.LockedError, withPrevious []int64) []ScopeFile {
+	counts := make(map[int64]int, len(scope.Jobs))
+	for _, r := range rows {
+		counts[r.FileID]++
+	}
+	out := make([]ScopeFile, len(scope.Jobs))
+	first := 0
+	for i, j := range scope.Jobs {
+		f := ScopeFile{
+			JobID: j.JobID, FileID: j.FileID, FileName: j.FileName, FileFormat: string(j.FileFormat),
+			InlineHTML: j.InlineHTML, FirstRow: first, RowCount: counts[j.FileID],
+			StepName: j.StepName, StepAssignee: j.StepAssignee,
+			HasPreviousStep: slices.Contains(withPrevious, j.JobID),
+		}
+		if j.StepID != 0 {
+			f.StepID = &j.StepID
+		}
+		if b := blocks[j.JobID]; b != nil {
+			f.EditBlock = &EditBlock{Code: b.Code, Message: b.Message}
+		}
+		out[i] = f
+		first += f.RowCount
+	}
+	return out
 }
 
 // Sentence and range keys: "<block>#<n>" and "<block>#<n>-<m>" where a

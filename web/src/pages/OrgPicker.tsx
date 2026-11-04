@@ -5,6 +5,7 @@ import { queryKeys } from '../lib/query-keys'
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { CreateOrgCard } from '../components/CreateOrgCard'
 import { Button } from '../components/ui/button'
+import { MemberDisabledChip, VendorOrgChip } from '../components/ui/chip-presets'
 import { usePageTitle } from '../hooks/usePageTitle'
 import { LoadingPlaceholder } from '@/components/layout/LoadingPlaceholder'
 import { LoadFailed } from '@/components/layout/LoadFailed'
@@ -53,7 +54,9 @@ export default function OrgPicker() {
                   {/* eslint-disable-next-line no-restricted-syntax -- whole-card org selection target, not an action button */}
                   <button
                     type="button"
-                    disabled={enter.isPending}
+                    // A vendor org disabled this membership for disuse: its
+                    // admin enables it; until then there is nothing to enter.
+                    disabled={enter.isPending || !!org.disabled_at}
                     onClick={() => enter.mutate(org.tenant_id)}
                     className="w-full flex items-center gap-3 px-3 py-3 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 cursor-pointer"
                   >
@@ -61,13 +64,27 @@ export default function OrgPicker() {
                       <Building2 className="w-5 h-5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                        {org.tenant_name}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {org.tenant_name}
+                        </span>
+                        {org.tenant_kind === 'vendor' && <VendorOrgChip />}
                       </span>
+                      {org.tenant_kind === 'vendor' && org.client_org_name && (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400 truncate" data-testid={`org-vendor-for-${org.tenant_id}`}>
+                          Vendor for {org.client_org_name}
+                        </span>
+                      )}
                       <span className="block text-xs text-gray-500 dark:text-gray-400 capitalize">
                         {org.role.replace('_', ' ')}
                       </span>
+                      {org.disabled_at && (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400" data-testid={`org-disabled-${org.tenant_id}`}>
+                          Not used for 90 days. Ask its admin to enable your access.
+                        </span>
+                      )}
                     </span>
+                    {org.disabled_at && <MemberDisabledChip />}
                   </button>
                 </li>
               ))}

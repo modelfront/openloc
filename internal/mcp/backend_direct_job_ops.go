@@ -329,7 +329,7 @@ func (b *directBackend) RerunAIStep(ctx context.Context, in GetJobIn) (AIStepRun
 	if err != nil {
 		return AIStepRunResult{}, serviceErr(err, "ai step")
 	}
-	out := AIStepRunResult{JobID: j.ID, Stopped: res.Stopped, Total: res.Total, AutoApproved: res.AutoApproved, NeedsReview: res.NeedsReview}
+	out := AIStepRunResult{JobID: j.ID, Stopped: res.Stopped, Total: res.Total, AutoApproved: res.AutoApproved, NeedsReview: res.NeedsReview, Commented: res.Commented}
 	if res.SkipReason == pipeline.PhaseSkipNoSegments {
 		out.SkipReason = string(res.SkipReason)
 	}

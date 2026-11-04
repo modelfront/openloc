@@ -3,9 +3,11 @@
 import type { ReactNode } from 'react'
 import { SectionPageFrame } from '@/components/layout/SectionPageFrame'
 import { SEGMENTATION_PROFILES_PATH } from '../segmentation/segmentation-paths'
+import { FILTER_PROFILES_PATH } from '../filter-profiles/filter-profile-paths'
 
 const FILE_CONFIGURATION_TABS = [
   { to: SEGMENTATION_PROFILES_PATH, label: 'Segmentation profiles' },
+  { to: FILTER_PROFILES_PATH, label: 'Filter profiles' },
 ]
 
 export function FileConfigurationsPageFrame({ actions, children }: {

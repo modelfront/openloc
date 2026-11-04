@@ -36,9 +36,10 @@ var ErrTenantNotApproved = errors.New("auth: organization not approved")
 // means the check could not run (503). Passed as a callback so auth needn't
 // import db; pass nil to disable the check (used by unit tests).
 //
-// demo reports the shared demo organization, which the
-// middleware keeps read-only.
-type TenantActive func(ctx context.Context, tenantID int64) (demo bool, err error)
+// The TenantGate of an approved tenant names its kind: the middleware keeps
+// the shared demo organization read-only and holds a vendor org to its
+// client's status and its short allow-list (vendororg.go).
+type TenantActive func(ctx context.Context, tenantID, userID int64) (TenantGate, error)
 
 // writeCheckFailed answers a request whose credential could not be checked
 // because the database failed: 503, so the client keeps its session and
@@ -105,7 +106,7 @@ func Middleware(jwtSecret string, userExists UserExists, tenantActive TenantActi
 					httputil.Error(w, http.StatusUnauthorized, "invalid or expired access key")
 					return
 				}
-				r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, false)
+				r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, claims.UserID, false)
 				if !ok {
 					return
 				}
@@ -145,7 +146,7 @@ func Middleware(jwtSecret string, userExists UserExists, tenantActive TenantActi
 					httputil.Error(w, http.StatusUnauthorized, "invalid or expired token")
 					return
 				}
-				r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, false)
+				r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, claims.UserID, false)
 				if !ok {
 					return
 				}
@@ -185,7 +186,7 @@ func Middleware(jwtSecret string, userExists UserExists, tenantActive TenantActi
 			// Pending-gate: a self-serve org sits in 'pending' until a
 			// platform operator approves it. Checked per-request so approval takes
 			// effect without a re-login.
-			r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, claims.Demo)
+			r, ok := checkTenantActive(w, r, tenantActive, claims.TenantID, claims.UserID, claims.Demo)
 			if !ok {
 				return
 			}
@@ -200,16 +201,17 @@ func Middleware(jwtSecret string, userExists UserExists, tenantActive TenantActi
 // continue; on a non-approved tenant it writes a 403 org_pending and returns
 // false. A nil callback (unit tests) always continues.
 //
-// It also holds the demo organization's read-only barrier: every credential
-// path passes here, so no route can write to the demo org by accident.
+// It also holds the demo organization's read-only barrier and the vendor
+// org barrier: every credential path passes here, so no route can write to
+// the demo org or reach a vendor org by accident.
 //
 // demoToken is a demo visit: its tenant goes away when the demo organization
 // is rebuilt, which answers demo_reset so the app can enter the new one.
-func checkTenantActive(w http.ResponseWriter, r *http.Request, tenantActive TenantActive, tenantID int64, demoToken bool) (*http.Request, bool) {
+func checkTenantActive(w http.ResponseWriter, r *http.Request, tenantActive TenantActive, tenantID, userID int64, demoToken bool) (*http.Request, bool) {
 	if tenantActive == nil {
 		return r, true
 	}
-	demo, err := tenantActive(r.Context(), tenantID)
+	gate, err := tenantActive(r.Context(), tenantID, userID)
 	if err != nil && !errors.Is(err, ErrTenantNotApproved) && !errors.Is(err, pgx.ErrNoRows) {
 		writeCheckFailed(w, r, err)
 		return r, false
@@ -222,12 +224,17 @@ func checkTenantActive(w http.ResponseWriter, r *http.Request, tenantActive Tena
 		httputil.ErrorCode(w, http.StatusForbidden, "org_pending", "your organization is awaiting approval")
 		return r, false
 	}
-	if demo {
+	switch gate.Kind {
+	case TenantKindDemo:
 		if !demoRequestAllowed(r) {
 			writeDemoReadOnly(w)
 			return r, false
 		}
 		r = r.WithContext(withDemo(r.Context()))
+	case TenantKindVendor:
+		if vendorGate(w, r, gate) {
+			return r, false
+		}
 	}
 	return r, true
 }

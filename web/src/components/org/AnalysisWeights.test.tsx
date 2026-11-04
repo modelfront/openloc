@@ -28,6 +28,7 @@ function renderWeights() {
 }
 
 beforeEach(() => {
+  localStorage.clear()
   api.getAnalyticsWeights.mockReset()
   api.updateAnalyticsWeights.mockReset()
   toast.success.mockReset()

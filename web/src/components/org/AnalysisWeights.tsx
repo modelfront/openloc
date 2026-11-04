@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Scale } from 'lucide-react'
 import { Button, NOTHING_CHANGED_REASON } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { QueryBoundary } from '@/components/layout/QueryBoundary'
@@ -22,6 +23,15 @@ const WEIGHT_BANDS = [
   { band: 'repetitions', label: 'Repetitions', description: 'Repeated segments (2nd+ occurrence)' },
   { band: 'qe', label: 'QE approved', description: 'Auto-approved by quality estimation' },
 ]
+
+const pctOf = (weights: WeightEntry[], band: string) => weights.find(w => w.band === band)?.weight_pct ?? 100
+
+function weightSummary(weights: WeightEntry[]) {
+  const fuzzy = WEIGHT_BANDS.filter(b => b.band.startsWith('tm_fuzzy')).map(b => pctOf(weights, b.band))
+  const lo = Math.min(...fuzzy)
+  const hi = Math.max(...fuzzy)
+  return `Exact ${pctOf(weights, 'tm_exact')}% · fuzzy ${lo === hi ? lo : `${lo}–${hi}`}% · new ${pctOf(weights, 'new')}%`
+}
 
 function AnalysisWeightsSection() {
   const queryClient = useQueryClient()
@@ -49,7 +59,8 @@ function AnalysisWeightsSection() {
   return (
     <SettingsCard
       title="Analysis weights"
-      className="mt-6"
+      icon={<Scale />}
+      summary={weightsQuery.data && weightSummary(weightsQuery.data)}
       description={<>
         Configure how match bands are weighted into weighted words. Weight 0% means no effort (free), 100% means full effort.
         Industry defaults: exact matches = 0%, new words = 100%.
@@ -61,8 +72,7 @@ function AnalysisWeightsSection() {
         return (<>
           <div className="space-y-3">
             {WEIGHT_BANDS.map(({ band, label, description }) => {
-              const entry = weights.find(w => w.band === band)
-              const pct = entry?.weight_pct ?? 100
+              const pct = pctOf(weights, band)
               return (
                 <div key={band} className="flex items-center gap-4">
                   <div className="flex-1 min-w-0">

@@ -13,7 +13,7 @@ import (
 
 // AIPrompt is a v1 system prompt for AI engines. mode is what the engine
 // returns with it: qe (a quality verdict), qe_ape (a verdict and a fix),
-// ape (a fix) or mt (a translation).
+// ape (a fix), comment (a remark only) or mt (a translation).
 type AIPrompt struct {
 	ID                int64                       `json:"id"`
 	Name              string                      `json:"name"`
@@ -133,7 +133,7 @@ func (h Handlers) decodePrompt(w http.ResponseWriter, r *http.Request) (aiprompt
 	}
 	in, ok := req.input()
 	if !ok {
-		httputil.FieldError(w, http.StatusBadRequest, "mode", "mode must be qe, qe_ape, ape or mt")
+		httputil.FieldError(w, http.StatusBadRequest, "mode", "mode must be qe, qe_ape, ape, comment or mt")
 		return aiprompt.Input{}, false
 	}
 	return in, true

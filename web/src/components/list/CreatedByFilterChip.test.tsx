@@ -55,7 +55,7 @@ describe('CreatedByFilterChip', () => {
     renderChip({ options: [{ id: 2, name: 'Ana Ruiz' }] })
 
     expect(screen.getByText('Ana Ruiz')).toBeInTheDocument()
-    expect(screen.queryByText('Val Vendor')).toBeNull()
+    expect(screen.queryByText('Ivy Inhouse')).toBeNull()
     expect(screen.queryByText('nameless@test.com')).toBeNull()
   })
 

@@ -22,6 +22,7 @@ import (
 //	QE+APE: {"postedit": string|null, "approved": bool, "score": 0-100,
 //	         "postedit_approved": bool|null, "postedit_score": 0-100|null,
 //	         "comment": string|null}
+//	Comment: {"comment": string|null}
 //
 // — which the pipeline routes through the same 4-outcome logic as an
 // extension's predict result.
@@ -32,7 +33,9 @@ import (
 // lands in needs_review with the postedit applied. QE+APE does both —
 // approved/score judge the ORIGINAL translation, postedit_approved/
 // postedit_score judge the postedit, and the postedit is applied only when
-// postedit_approved (an unapproved one is discarded).
+// postedit_approved (an unapproved one is discarded). Comment only advises: the
+// comment is its whole answer, and the segment's text and status stay as they
+// are.
 //
 // The prompt editor previews this contract by asking the server to assemble it
 // (internal/aiprompt preview), so there is no second copy to keep in sync.
@@ -56,8 +59,8 @@ type PredictConfig struct {
 	// on, in segmentprompt's key vocabulary. The contract describes exactly
 	// these and no more — a field the segment will not carry must not be named.
 	SegmentContext []string
-	// Mode is the prompt's output mode — ModeQE, ModeAPE or ModeQEAPE — and
-	// picks the contract. Empty means QE+APE, the widest of the three.
+	// Mode is the prompt's output mode — ModeQE, ModeAPE, ModeQEAPE or
+	// ModeComment — and picks the contract. Empty means QE+APE, the widest.
 	//
 	// Not a pair of booleans: the three modes differ in which HALF they ask
 	// for. QE judges and does not rewrite, APE rewrites and does not judge —
@@ -75,14 +78,17 @@ type PredictConfig struct {
 // reviewing prompt has always run (see aiprompt.Mode).
 func (c PredictConfig) mode() string {
 	switch c.Mode {
-	case ModeQE, ModeAPE:
+	case ModeQE, ModeAPE, ModeComment:
 		return c.Mode
 	}
 	return ModeQEAPE
 }
 
 // wantsPostedit reports whether the model may return a corrected translation.
-func (c PredictConfig) wantsPostedit() bool { return c.mode() != ModeQE }
+func (c PredictConfig) wantsPostedit() bool {
+	m := c.mode()
+	return m == ModeAPE || m == ModeQEAPE
+}
 
 // PredictInput is one segment to evaluate.
 type PredictInput struct {
@@ -327,6 +333,8 @@ func predictFormats(cfg PredictConfig) promptFormats {
 		// it never decides whether a segment ships, and scoring is that same
 		// judgement by another name.
 		fields = `"postedit": string or null, "comment": string or null`
+	case ModeComment:
+		fields = `"comment": string or null`
 	default:
 		fields = `"postedit": string or null, "approved": true or false, "score": number, "postedit_approved": true or false or null, "postedit_score": number or null, "comment": string or null`
 	}
@@ -340,9 +348,9 @@ func predictFormats(cfg PredictConfig) promptFormats {
 //
 // Each mode is validated on the one field it cannot answer without, which is
 // how a reply that ignored the contract is told from one that simply had
-// nothing to report: "approved" for the judging modes, "postedit" for APE.
-// Both may be null for APE — an explicit null is an answer ("nothing to fix"),
-// an absent key is not.
+// nothing to report: "approved" for the judging modes, "postedit" for APE,
+// "comment" for comment-only. Postedit and comment may be null — an explicit
+// null is an answer ("nothing to fix", "nothing to flag"), an absent key is not.
 func parsePredictOutput(raw, mode string) PredictResult {
 	res := PredictResult{Raw: raw}
 	payload := extractJSONObject(raw)
@@ -353,7 +361,7 @@ func parsePredictOutput(raw, mode string) PredictResult {
 	var p struct {
 		Approved         *bool           `json:"approved"`
 		Score            *float64        `json:"score"`
-		Comment          *string         `json:"comment"`
+		Comment          json.RawMessage `json:"comment"`
 		Postedit         json.RawMessage `json:"postedit"`
 		PosteditApproved *bool           `json:"postedit_approved"`
 		PosteditScore    *float64        `json:"postedit_score"`
@@ -362,14 +370,36 @@ func parsePredictOutput(raw, mode string) PredictResult {
 		res.Invalid = true
 		return res
 	}
-	if mode == ModeAPE {
+	// A comment that is present but not a string or null ignored the shape;
+	// the reply is not trusted, whatever else it says.
+	var comment *string
+	if p.Comment != nil {
+		if err := json.Unmarshal(p.Comment, &comment); err != nil {
+			res.Invalid = true
+			return res
+		}
+	}
+	if comment != nil && strings.TrimSpace(*comment) != "" {
+		res.Comment = comment
+	}
+	switch mode {
+	case ModeComment:
+		// Only the comment is read: anything else the model volunteers would
+		// change a segment this mode promises to leave alone.
+		if p.Comment == nil {
+			res.Invalid = true
+		}
+		return res
+	case ModeAPE:
 		if p.Postedit == nil {
 			res.Invalid = true
 			return res
 		}
-	} else if p.Approved == nil {
-		res.Invalid = true
-		return res
+	default:
+		if p.Approved == nil {
+			res.Invalid = true
+			return res
+		}
 	}
 	// A verdict is read only where one was asked for. A model that volunteers
 	// "approved" on an APE call is answering a question the contract does not
@@ -378,10 +408,6 @@ func parsePredictOutput(raw, mode string) PredictResult {
 		res.Approved = *p.Approved
 	}
 	res.Score = clampScore(p.Score)
-	if p.Comment != nil && strings.TrimSpace(*p.Comment) != "" {
-		c := *p.Comment
-		res.Comment = &c
-	}
 	var postedit *string
 	if err := json.Unmarshal(p.Postedit, &postedit); err == nil && postedit != nil && strings.TrimSpace(*postedit) != "" {
 		res.Postedit = postedit

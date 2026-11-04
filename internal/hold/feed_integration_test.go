@@ -51,7 +51,7 @@ func subscribe(t *testing.T, feed *hold.Feed, jobID int64) (changes, down <-chan
 	t.Cleanup(cancel)
 	testutil.WaitFor(t, func() bool {
 		var ok bool
-		changes, down, ok = feed.Subscribe(ctx, jobID)
+		changes, down, ok = feed.Subscribe(ctx, []int64{jobID})
 		return ok
 	}, "the feed receiving")
 	return changes, down
@@ -142,4 +142,29 @@ func TestIntegrationHoldFeed_ALostConnectionEndsSubscriptions(t *testing.T) {
 	changes, _ := subscribe(t, feed, f.job.ID)
 	testutil.AssertStatus(t, acquire(t, f, f.linguist, f.t1, "tab-ana"), http.StatusOK)
 	testutil.Receive(t, changes, "a hold taken after the reconnect")
+}
+
+// One subscription to several jobs (a multi-file editor's stream) wakes on a
+// change in any of them, and ending it unsubscribes from all of them.
+func TestIntegrationHoldFeed_OneSubscriptionCoversSeveralJobs(t *testing.T) {
+	f, cleanup := newHoldFixture(t)
+	defer cleanup()
+	feed := startListening(t, hold.NewFeed(), f.pool.Config().ConnConfig)
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes <-chan struct{}
+	testutil.WaitFor(t, func() bool {
+		var ok bool
+		changes, _, ok = feed.Subscribe(ctx, []int64{f.job.ID, f.otherJob.ID})
+		return ok
+	}, "the feed receiving")
+
+	testutil.AssertStatus(t, f.do(t, f.otherUser, http.MethodPut, holdPath(f.otherJob.ID, f.otherT.ID), map[string]any{"tab_id": "x"}), http.StatusOK)
+	testutil.Receive(t, changes, "a hold taken in the second job")
+	settle(changes)
+
+	testutil.AssertStatus(t, acquire(t, f, f.linguist, f.t1, "tab-ana"), http.StatusOK)
+	testutil.Receive(t, changes, "a hold taken in the first job")
+
+	cancel()
+	testutil.Closed(t, changes, "the subscription ended with its context")
 }

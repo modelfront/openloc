@@ -3,7 +3,7 @@ title: "How a translation flows"
 summary: "From upload to delivery: segments, jobs, pre-translation, editing, review and export."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-27
+updated_at: 2026-11-02
 sources:
   - internal/pipeline/**
   - internal/job/**
@@ -38,6 +38,8 @@ A file that enters OpenLoc goes through fixed stages: it is cut into segments, s
 ## Stage 1: The file becomes segments
 
 On upload, OpenLoc extracts only the translatable text: a Word document's paragraphs, an XLIFF file's translation units, a JSON file's string values, an Excel sheet's text cells. Layout and code stay behind and are put back at the end.
+
+For HTML, Excel, JSON, PO/POT, plain text and generic XML, a [filter profile](/docs/guides/filter-profiles) sets what counts as translatable.
 
 Each piece of text is a **segment**, usually one sentence or one short paragraph. Segments are the unit of everything that follows: matching, checking, editing and counting.
 
@@ -86,6 +88,8 @@ The analysis measures what pre-translation produced, so it cannot run before it.
 ## Stage 5: Quality estimation and automatic post-editing
 
 A **Hybrid** or **AI** workflow step points at an **AI router**, which picks the QE+APE engine for each job by its target language — from any connected provider that reviews translations. A router with no rule for that language and no default engine leaves the job unchecked; see [AI routers](/docs/guides/ai-engines-and-prompts#send-each-language-to-the-right-engine-with-an-ai-router). When a job reaches that step, the check looks at every **Pretranslated** segment and either approves it as it is, rewrites it, or leaves it for a human. Good translations, and rewrites the check is confident in, become **Auto-approved**; the rest wait as **Draft**. [Quality estimation](/docs/concepts/quality-estimation#the-four-outcomes) sets out the four outcomes in full.
+
+A step whose prompt is **Comment only** works differently: it reads every segment with text, a person's included, and only adds AI comments, changing nothing. See [Choose what the model sends back](/docs/guides/ai-engines-and-prompts#choose-what-the-model-sends-back).
 
 The check sees a segment's inline tags as the same chips the editor shows, so it also judges where each tag sits, and a rewrite arrives with its tags in place. If it returns a tag that does not match the source, the segment gets a comment naming it, so a person can put the tags right.
 

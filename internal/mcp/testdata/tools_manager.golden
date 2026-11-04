@@ -21,6 +21,7 @@ openloc_create_ai_router write
 openloc_create_chart write
 openloc_create_concept write
 openloc_create_customer write
+openloc_create_filter_profile write
 openloc_create_label write
 openloc_create_mt_engine write
 openloc_create_mt_router write
@@ -39,6 +40,7 @@ openloc_delete_chart destructive
 openloc_delete_comment destructive
 openloc_delete_concept destructive
 openloc_delete_custom_palette destructive
+openloc_delete_filter_profile destructive
 openloc_delete_label destructive
 openloc_delete_label_value destructive
 openloc_delete_mt_engine destructive
@@ -68,6 +70,7 @@ openloc_get_concept read
 openloc_get_dashboard read
 openloc_get_doc_page read
 openloc_get_file read
+openloc_get_filter_profile read
 openloc_get_job read
 openloc_get_job_analysis read
 openloc_get_job_leverage read
@@ -104,6 +107,7 @@ openloc_list_customers read
 openloc_list_dashboards read
 openloc_list_docs read
 openloc_list_files read
+openloc_list_filter_profiles read
 openloc_list_invites read
 openloc_list_job_steps read
 openloc_list_jobs read
@@ -159,6 +163,7 @@ openloc_search_tm read
 openloc_set_active_palette write
 openloc_set_chart_filters write
 openloc_set_dashboard_filters write
+openloc_set_filter_profile_default write
 openloc_set_member_language_pairs write
 openloc_set_project_labels write
 openloc_set_project_mt_router write
@@ -172,6 +177,7 @@ openloc_update_ai_prompt write
 openloc_update_ai_router write
 openloc_update_chart write
 openloc_update_concept write
+openloc_update_filter_profile write
 openloc_update_mt_engine write
 openloc_update_mt_router write
 openloc_update_notification_preferences write

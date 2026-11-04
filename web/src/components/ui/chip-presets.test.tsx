@@ -8,6 +8,7 @@ import {
   AIStepChip,
   HumanStepChip,
   HybridStepChip,
+  MemberDisabledChip,
   OverflowChip,
   STEP_TYPE_CHIPS,
   STEP_TYPE_PRESETS,
@@ -103,6 +104,14 @@ describe('preset chip components', () => {
     unmount()
   })
 
+  it('renders the Disabled member chip at the slim size, beside a row\'s other chips', () => {
+    render(<MemberDisabledChip />)
+    const el = screen.getByTestId('member-disabled')
+    // The small size's padding and text, not the default's.
+    expect(el).toHaveClass('px-1', 'py-0', 'text-[10px]')
+    expect(el).not.toHaveClass('px-2', 'py-0.5', 'text-xs')
+    expect(el).toHaveTextContent('Disabled')
+  })
 })
 
 describe('OverflowChip', () => {

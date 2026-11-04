@@ -103,7 +103,7 @@ func TestIntegrationHold_WriteWithoutActorBlockedByAnyHold(t *testing.T) {
 		t.Fatalf("clear with no actor: err = %v, want no rows", err)
 	}
 	sibs, err := f.q.PropagateTranslation(ctx, db.PropagateTranslationParams{
-		HumanText: &text, FileID: f.fileID, SourceText: "Save", TargetLanguage: "de", ExcludeID: f.twin.ID,
+		HumanText: &text, FileIds: []int64{f.fileID}, SourceText: "Save", TargetLanguage: "de", ExcludeID: f.twin.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -81,10 +81,10 @@ func TestConservativeMatchesOracle_Fixtures(t *testing.T) {
 	var walk func(n *xmlNode)
 	blocks := 0
 	walk = func(n *xmlNode) {
-		if isSegmentContainer(doc.src, n) {
+		if isSegmentContainer(doc, n) {
 			_, rng := trimmedContentRange(doc.src, n)
 			if rng.Start < rng.End {
-				full := buildXMLContent(doc.src, rng, n, buildReferenceIndex(doc))
+				full := buildXMLContent(doc.src, rng, n, buildReferenceIndex(doc), doc.rules)
 				blocks++
 				got, err := segmentation.Conservative().Split(full.plain, full.canBreakAt())
 				if err != nil {

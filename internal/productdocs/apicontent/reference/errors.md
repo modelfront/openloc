@@ -3,7 +3,7 @@ title: "Errors and limits"
 summary: "What an error response looks like, the codes to handle, and the rate limit."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-26
+updated_at: 2026-11-02
 sources:
   - internal/httputil/errors.go
   - internal/httputil/response.go
@@ -11,10 +11,12 @@ sources:
   - internal/auth/ratelimit.go
   - internal/auth/pat_gate.go
   - internal/auth/middleware.go
+  - internal/auth/vendororg.go
   - internal/api/api.go
   - internal/publicapi/*.go
   - internal/hold/errors.go
   - internal/segmentedit/errors.go
+  - internal/filterprofile/*.go
 related: [getting-started/authentication]
 ---
 ## Error shape
@@ -38,7 +40,7 @@ Every error has the same body:
 |---|---|
 | `400` | The request is wrong, or an upload is too large. `message` says what to fix. |
 | `401` | The key is missing, expired or revoked. |
-| `403` | Your role may not call this endpoint, or the key is **Read only** (`read_only_key`). |
+| `403` | Your role may not call this endpoint, or the key is **Read only** (`read_only_key`). A key of a vendor organization gets `vendor_org_restricted` ("Vendor organizations can’t use this.") on every `/api/v1` endpoint, and `client_inactive` ("The organization this vendor works for is not active.") while the client organization it works for is not approved. Neither passes on retry. |
 | `404` | The item does not exist in your organization. |
 | `409` | The item changed since you read it, or its state does not allow the action. Read it again, then retry. With `segment_held`, someone has the segment open in the editor; `message` names them. Try again later, not at once. |
 | `422` | Quality checks block a segment confirm (`QAErrorsBlocked`). `qa_issues` lists each failed check with its `check_type`, `severity` and `message`. Fix the translation, then confirm again. |
@@ -67,6 +69,20 @@ Every error has the same body:
 | `409` | `segment_held` | Someone has a segment open in the editor. |
 
 Retry the `409` codes when the cause has passed.
+
+## Filter profile errors
+
+The filter profile endpoints and a `filter_profile_id` on an upload refuse with these statuses. They carry no specific `code`; check the status and read `message`. [Filter profiles](/api-docs/guides/filter-profiles) has the calls.
+
+| Status | When |
+|---|---|
+| `400` | `filter_profile_id` on an upload is not a profile of the file's format, or the format has no filter profiles. |
+| `400` | `options` has a column that is not a column letter, a sheet name outside 1 to 31 characters, an element or attribute name that is not a valid name, an attribute that is not a text attribute or any attribute of `meta`, `link`, `base`, `html` or `head` (see [Filter profiles](/api-docs/guides/filter-profiles)), an XML do-not-translate marker without a value, or a list longer than its cap. |
+| `409` | The profile is built-in: it cannot be replaced or deleted. |
+| `409` | `updated_at` on a replace no longer matches the profile. Read it again and resend. |
+| `409` | A profile with this name already exists for the format. |
+| `409` | Templates still use the profile you delete. Choose another profile for them first. |
+| `409` | The profile you delete is the organization's default for its format. Set another default first. |
 
 ## Rate limits
 

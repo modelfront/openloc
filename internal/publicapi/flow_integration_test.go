@@ -164,6 +164,18 @@ func TestIntegrationV1_ListsPaginate(t *testing.T) {
 
 	rec := c.do(http.MethodGet, "/api/v1/projects?status=nope", nil, key)
 	wantStatus(t, rec, http.StatusBadRequest)
+	rec = c.do(http.MethodGet, "/api/v1/projects?deadline=nope", nil, key)
+	wantStatus(t, rec, http.StatusBadRequest)
+	// None of the three projects has a deadline.
+	rec = c.do(http.MethodGet, "/api/v1/projects?deadline=none", nil, key)
+	wantStatus(t, rec, http.StatusOK)
+	var none struct {
+		Data []publicapi.Project `json:"data"`
+	}
+	decodeJSON(t, rec, &none)
+	if len(none.Data) != 3 {
+		t.Fatalf("deadline=none: %d projects, want 3", len(none.Data))
+	}
 }
 
 // A file id is only valid under the project it belongs to.

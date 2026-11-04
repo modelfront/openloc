@@ -203,7 +203,8 @@ func AsValidation(err error) (string, bool) {
 // Mode is a prompt's output mode, derived from its flags: the single choice a
 // user makes in the UI, which the four booleans encode. Mirrors flagsToMode in
 // web/src/components/ai/output-mode.ts. APE and MT both emit text with no
-// status; the comment flag tells them apart.
+// status; the comment flag tells them apart. A comment with neither status nor
+// text is comment-only.
 func Mode(p db.AiPrompt) string {
 	return ModeForFlags(p.OutStatus, p.OutText, p.OutComments)
 }
@@ -216,8 +217,10 @@ func ModeForFlags(outStatus, outText, outComments bool) string {
 		return "qe_ape"
 	case outStatus:
 		return "qe"
-	case outComments:
+	case outText && outComments:
 		return "ape"
+	case outComments:
+		return "comment"
 	default:
 		return "mt"
 	}
@@ -236,6 +239,8 @@ func FlagsForMode(mode string) (Input, bool) {
 		return Input{OutText: true, OutNote: true, OutComments: true}, true
 	case "mt":
 		return Input{OutText: true, OutNote: true}, true
+	case "comment":
+		return Input{OutComments: true}, true
 	}
 	return Input{}, false
 }

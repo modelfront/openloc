@@ -203,7 +203,7 @@ func TestIntegrationEditor_SearchMatchesLikeTheFilterBar(t *testing.T) {
 func TestIntegrationEditor_RefsResolveTheReferencedSegment(t *testing.T) {
 	f := newFixture(t)
 	refs := getData[[]editor.Ref](t, f, "refs")
-	want := []editor.Ref{{Key: "k-dry", SegmentID: f.segs[4].ID, Source: "Dry", Target: "Trocken"}}
+	want := []editor.Ref{{FileID: f.job.FileID, Key: "k-dry", SegmentID: f.segs[4].ID, Source: "Dry", Target: "Trocken"}}
 	if !slices.Equal(refs, want) {
 		t.Fatalf("refs = %+v, want %+v", refs, want)
 	}

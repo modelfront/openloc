@@ -148,6 +148,9 @@ func ResultsSchema(mode string) map[string]any {
 		// a human makes that one on every segment this mode touches.
 		add("postedit", nullable(strProp()))
 		add("comment", nullable(strProp()))
+	case ModeComment:
+		// Advice only: nothing that could change the segment's text or status.
+		add("comment", nullable(strProp()))
 	default: // QE+APE judges and post-edits.
 		add("postedit", nullable(strProp()))
 		add("approved", boolProp())

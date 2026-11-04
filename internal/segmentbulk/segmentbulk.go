@@ -43,6 +43,19 @@ const (
 	AutoApproved SkipReason = "auto_approved"
 )
 
+// BlocksStepCompletion reports whether a row "Approve all and complete" left
+// unapproved for this reason keeps the step open: the person fixes it first
+// (a QA error, a tag the source lacks, a change made meanwhile) or waits for
+// another user to let go of it. The editor's completion dialog names the same
+// reasons.
+func (r SkipReason) BlocksStepCompletion() bool {
+	switch r {
+	case Held, QAError, TagNotInSource, Conflict:
+		return true
+	}
+	return false
+}
+
 // Skip is one row a bulk action left alone, and why.
 type Skip struct {
 	ID     int64      `json:"id"`

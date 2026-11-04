@@ -7,6 +7,7 @@ import {
   login,
   createProjectViaAPI,
   deleteProjectViaAPI,
+  expectSelectionBarPins,
   uploadFileViaAPI,
 } from "./helpers";
 
@@ -50,6 +51,14 @@ const tasksResponse = (page: Page, param: string) =>
 test.describe("Tasks", () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
+  });
+
+  // The seed login sees every assignee's tasks, so in a short window the list scrolls.
+  test("the selection bar stays solid and pinned under the header while the list scrolls", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 420 });
+    await page.goto("/tasks");
+    await page.getByRole("checkbox", { name: /^Select / }).first().check();
+    await expectSelectionBarPins(page, page.getByTestId("tasks-actions-bar"));
   });
 
   // A file name is user text and can be one long unbreakable word. The card

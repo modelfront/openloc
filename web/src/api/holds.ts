@@ -1,5 +1,6 @@
 import { request } from './request';
 import type { Translation } from './projects';
+import { editorApiPath, type EditorId } from '../lib/editor-scope';
 
 // Segment holds: who has a segment open in the CAT editor. While another user
 // holds a segment, it is read-only here and writes to it are refused.
@@ -23,8 +24,14 @@ export interface AcquiredHold {
 /** Error code of a refusal because another user holds the segment. */
 export const SEGMENT_HELD_CODE = 'segment_held';
 
-export const listHolds = (jobId: number) =>
-  request<{ data: SegmentHold[] }>(`/jobs/${jobId}/holds`).then(r => r.data);
+/** The live holds of an editor's jobs: one job's, or a multi-file editor's. */
+export const holdsPath = (id: EditorId, stream = false) => {
+  const route = stream ? 'holds/stream' : 'holds';
+  return typeof id === 'number' ? `/jobs/${id}/${route}` : editorApiPath(id, route);
+};
+
+export const listHolds = (id: EditorId) =>
+  request<{ data: SegmentHold[] }>(holdsPath(id)).then(r => r.data);
 
 export const acquireHold = (jobId: number, translationId: number, tabId: string) =>
   request<{ data: AcquiredHold }>(`/jobs/${jobId}/holds/${translationId}`, {

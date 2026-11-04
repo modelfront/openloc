@@ -3,7 +3,7 @@ title: "Machine translation"
 summary: "Connect MT engines, route each target language to one with an MT router, and pre-translate with TM first and MT second."
 order: 70
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-29
+updated_at: 2026-11-03
 sources:
   - web/src/pages/mt/**
   - web/src/components/mt/**
@@ -144,6 +144,6 @@ When the engine handles tags itself, a segment's tags travel with the text as th
 
 In the CAT editor, the **Resources** sidebar has an **MT suggestion** section. It shows the machine translation the pipeline already produced for the active segment, with the engine's name on the right; a segment that has none is translated on demand. Changing the project's router does not refresh a suggestion that is already stored — run **Apply MT** again for that. Click the suggestion to insert it, even when the segment already holds a memory match. The insert is saved as a **Draft** and **Match** shows **MT**, as after pre-translation; see [Origins and other marks](/docs/reference/segment-statuses#origins-and-other-marks). **No MT available** means the project has no router, the router has no route for the language, or the engine returned an error.
 
-![The editor sidebar: memory matches, the MT suggestion, glossary terms, QA findings and comments](assets/editor-sidebar.png)
+![The editor sidebar: memory matches, internal matches, the MT suggestion, glossary terms, history, QA findings and comments](assets/editor-sidebar.png)
 
 MT output is marked **Pretranslated**, so a person checks it before it counts as done — except with **Raw MT**, whose task completes itself once MT has run. Confirmed translations go to memory; raw MT never does. See [The CAT editor](/docs/guides/cat-editor).

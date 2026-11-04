@@ -1,30 +1,34 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getMe } from '../../api'
-import { queryKeys } from '../../lib/query-keys'
-import { isAdminRole } from '../../lib/roles'
 import { SectionPageFrame } from '@/components/layout/SectionPageFrame'
 import type { SubNavItem } from '@/components/layout/SubNav'
-import { ORG_MEMBERS_PATH, ORG_SETTINGS_PATH, ORG_VENDORS_PATH } from './org-paths'
+import { getMe } from '@/api'
+import { queryKeys } from '@/lib/query-keys'
+import { isVendorOrg } from '@/lib/roles'
+import { ORG_MEMBERS_PATH, ORG_SETTINGS_PATH } from './org-paths'
 
-const ADMIN_TABS: SubNavItem[] = [
+const TABS: SubNavItem[] = [
   { to: ORG_MEMBERS_PATH, label: 'Members', end: true },
   { to: ORG_SETTINGS_PATH, label: 'Settings' },
-  { to: ORG_VENDORS_PATH, label: 'Vendors' },
 ]
 
 /**
- * The Organization page: a header and one tab per route. Owners and admins see
- * Members, Settings and Vendors; a project manager reaches only Vendors, so
- * with a single tab there is no tab row. The routes in App.tsx enforce the same
- * split (Members and Settings send everyone else to Vendors).
+ * The Organization page: a header and one tab per route. Owner/admin only:
+ * the routes in App.tsx send everyone else away. A vendor org has only
+ * Members, so it gets no tab row, and the header names its client.
  */
 export function OrgPageFrame({ children }: { children: ReactNode }) {
   const { data: me } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
-  const admin = isAdminRole(me?.role)
+  const vendor = isVendorOrg(me)
   return (
-    <SectionPageFrame title="Organization" tabs={admin ? ADMIN_TABS : undefined} dataGuide="org.tabs">
-      {children}
+    <SectionPageFrame
+      title="Organization"
+      subtitle={vendor && me?.client_org_name ? `Vendor for ${me.client_org_name}` : undefined}
+      tabs={vendor ? undefined : TABS}
+      dataGuide="org.tabs"
+    >
+      {/* The tab's sections, a fixed gap apart. */}
+      <div className="space-y-5">{children}</div>
     </SectionPageFrame>
   )
 }

@@ -20,7 +20,7 @@
 
 import { test, expect } from '@playwright/test'
 import { login, standardWorkflowId } from './helpers'
-import { SEED_OWNER_NAME, SEED_VENDOR_EMAIL, SEED_VENDOR_NAME } from '../seed-identity'
+import { SEED_OWNER_NAME, SEED_LINGUIST_EMAIL, SEED_LINGUIST_NAME } from '../seed-identity'
 
 const TS = Date.now()
 const PROJECT_NAME = `CreatorAttrib ${TS}`
@@ -31,7 +31,7 @@ const TB_NAME = `CreatorAttrib TB ${TS}`
 const OWNER_NAME = SEED_OWNER_NAME
 // Seeded linguist in the same org; creates nothing, so filtering by them must
 // empty every list.
-const OTHER_EMAIL = SEED_VENDOR_EMAIL
+const OTHER_EMAIL = SEED_LINGUIST_EMAIL
 
 test.describe('creator attribution', () => {
   let projectId: number
@@ -167,7 +167,7 @@ test.describe('creator attribution', () => {
     // And the popover reflects that: the non-creator member is absent.
     await page.getByTestId('filter-created-by').click()
     await expect(page.getByRole('button', { name: 'Me', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: SEED_VENDOR_NAME, exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: SEED_LINGUIST_NAME, exact: true })).toHaveCount(0)
   })
 
   test('the "Created by" chip writes the filter into the URL', async ({ page }) => {

@@ -24,6 +24,7 @@ tags:
   - name: Members
   - name: AI
   - name: Segmentation
+  - name: Filter profiles
   - name: Spec
 paths:
   /openapi.json:

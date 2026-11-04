@@ -243,6 +243,7 @@ func TestIntegrationInviteResendRevivesExpired(t *testing.T) {
 		t.Fatalf("token: %v", err)
 	}
 	inv, err := q.CreateInvite(context.Background(), db.CreateInviteParams{
+		Kind:     "member",
 		TenantID: tenant.ID, Email: "late@test.com", Role: "linguist", InvitedBy: owner.ID, Token: token,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
 	})

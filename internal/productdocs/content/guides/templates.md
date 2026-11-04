@@ -30,6 +30,7 @@ related:
   - guides/terminology
   - guides/quality-assurance
   - guides/workflows-and-tasks
+  - guides/filter-profiles
 screenshots:
   - project-create.png
   - project-create-template-picker.png
@@ -43,12 +44,12 @@ A template page has two tabs, **Settings** and **Workflow**. The **Project setti
 | Block | What is saved |
 | --- | --- |
 | **Project name**, **Source language**, **Target languages** and the labels | What a project made from the template starts with. The project name starts as the template's name; leave any other field empty and the new project's field starts empty too. With no languages set, the New project page suggests them from the template's memories |
-| **Project settings** | **Complete the project when every task is done**, [**Strings contain HTML**](/docs/reference/settings) |
+| **Project settings** | **Complete the project when every task is done** |
 | **Translation memory** | **Apply translation memory on start or upload**, then either a **TM profile** to follow, or the template's own list of memories with their read/write modes, order and penalties, plus the match scoring percentages and **TM lookup order** |
 | **Machine translation** | **Fill in machine translation on start or upload** and the **MT router**. A warning beside the router lists the template's target languages it has no engine for; see [Choose the router for a project or template](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template) |
 | **Terminology** | [**Linguists can add terms**](/docs/guides/terminology#add-a-term-while-translating), and the term bases per language pair, with mode and priority |
 | **Quality assurance** | The **QA profile** |
-| **File configurations** | The **Segmentation profile**. A project made from the template takes it when it suits the project's source language, else the profile for that language; see [Segmentation profiles](/docs/guides/segmentation#pick-a-projects-profile) |
+| **File configurations** | The **Segmentation profile**. A project made from the template takes it when it suits the project's source language, else the profile for that language; see [Segmentation profiles](/docs/guides/segmentation#pick-a-projects-profile). Also one filter profile per file format; a format left on its Default uses the built-in one. A project made from the template, and a duplicate of the template, take the same picks. A filter profile a template uses cannot be deleted; see [Filter profiles](/docs/guides/filter-profiles) |
 | **Workflow** | **Workflow** or **Raw MT**: the library workflow that the template follows and the copy of its steps, or the built-in **Pre-translation** step |
 
 A template holds no dates. The project deadline and the steps' deadlines belong to each project, and are set on the **New project** page or the project's **Workflow** tab.

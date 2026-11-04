@@ -985,7 +985,8 @@ export async function createIsolatedCATJob(
     /** Pass `null` to skip auto-assigning a QA profile. Default: assigns the
      *  first profile from `/api/qa-profiles` so `Run QA` works. */
     qaProfile?: null;
-    /** Sets "Strings contain HTML" before the upload. Default: the project's. */
+    /** Picks, before the upload, each string format's Default (true) or
+     *  Plain text strings (false) filter profile. Default: the project's. */
     inlineHTML?: boolean;
     /** Gets the project id right after the create, so an `afterEach` can
      *  delete it even when a later setup step fails. */
@@ -1033,7 +1034,7 @@ export async function createIsolatedCATJob(
     settingsPatch.mt_on_upload = false;
     settingsPatch.tm_on_upload = false;
   }
-  if (opts.inlineHTML !== undefined) settingsPatch.inline_html = opts.inlineHTML;
+  if (opts.inlineHTML !== undefined) settingsPatch.filter_profile_ids = await stringFilterProfiles(page, opts.inlineHTML);
   if (opts.qaProfile !== null) {
     const profilesRes = await page.request.get(`${API_BASE}/api/qa-profiles`, { headers });
     if (profilesRes.ok()) {
@@ -1316,6 +1317,16 @@ export async function deleteStepDefinitionViaAPI(page: Page, id: number) {
 }
 
 /**
+ * Settings' File configurations card: open the "Filter profiles" list, which
+ * starts closed, so the per-format pickers render.
+ */
+export async function openFilterProfiles(page: Page) {
+  const toggle = page.getByTestId("filter-profiles-toggle");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
+/**
  * New project page: click the "From scratch" start button. The form
  * (name, languages, settings…) only renders after this choice.
  */
@@ -1445,4 +1456,55 @@ export async function seedDrafts(
 export async function lockTranslationViaAPI(page: Page, job: { fileId: number }, translationId: number): Promise<void> {
   const res = await page.request.post(`${API_BASE}/api/files/${job.fileId}/translations/${translationId}/lock`);
   expect(res.ok(), `lock: ${res.status()}`).toBe(true);
+}
+
+/**
+ * Opens an invite popup from its button in the Members list's header:
+ * `prefix` is "member-invite" or "vendor-invite". Waits until the popup has
+ * put the cursor in its first field, so typing lands where the test means.
+ */
+export async function openInviteDialog(page: Page, prefix: "member-invite" | "vendor-invite"): Promise<void> {
+  await page.getByTestId(`${prefix}-open`).click();
+  const dialog = page.getByTestId(`${prefix}-dialog`);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("input").first()).toBeFocused();
+}
+
+/** The filter_profile_ids that read JSON, PO, TXT and Excel strings as HTML
+ *  (each format's Default: null) or as plain text (the Plain text strings
+ *  built-ins). */
+export async function stringFilterProfiles(page: Page, inlineHTML: boolean): Promise<Record<string, number | null>> {
+  const formats = ["json_i18n", "po", "txt", "xlsx"];
+  if (inlineHTML) return Object.fromEntries(formats.map(f => [f, null]));
+  const res = await page.request.get(`${API_BASE}/api/filter-profiles`, { headers: await authHeaders(page) });
+  expect(res.ok(), `list filter profiles: ${res.status()}`).toBe(true);
+  const profiles: { id: number; builtin_key?: string }[] = (await res.json()).data;
+  return Object.fromEntries(formats.map(f => {
+    const plain = profiles.find(p => p.builtin_key === `builtin:${f}-plain@1`);
+    expect(plain, `no Plain text strings built-in for ${f}`).toBeTruthy();
+    return [f, plain!.id];
+  }));
+}
+
+/**
+ * Checks a selection bar while the page's <main> scrolls: round corners in
+ * place; scrolled to the bottom, pinned flush at main's top edge with square
+ * top corners; and an opaque layer under its tint, so rows never show
+ * through. The window must be short enough for the page to scroll.
+ */
+export async function expectSelectionBarPins(page: Page, bar: Locator): Promise<void> {
+  const radius = (corner: "borderTopLeftRadius" | "borderBottomLeftRadius") =>
+    bar.evaluate((el, c) => getComputedStyle(el)[c], corner);
+  await expect(bar).toBeVisible();
+  expect(await radius("borderTopLeftRadius")).not.toBe("0px");
+
+  const main = page.locator("main");
+  await main.evaluate(el => el.scrollTo(0, el.scrollHeight));
+  await expect.poll(() => main.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  const mainTop = (await main.boundingBox())!.y;
+  await expect.poll(async () => Math.round((await bar.boundingBox())!.y - mainTop)).toBe(0);
+  await expect.poll(() => radius("borderTopLeftRadius")).toBe("0px");
+  expect(await radius("borderBottomLeftRadius")).not.toBe("0px");
+  const under = await bar.evaluate(el => getComputedStyle(el.parentElement!).backgroundColor);
+  expect(under).not.toMatch(/rgba\(.*,\s*0(\.\d+)?\)$|transparent/);
 }

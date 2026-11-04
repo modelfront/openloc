@@ -1,4 +1,7 @@
-// Job-scoped registry of in-flight auto-propagations, keyed by source text.
+import type { EditorId } from './editor-scope';
+
+// Registry of in-flight auto-propagations per editor (a job, or a multi-file
+// editor whose propagation spans its files), keyed by source text.
 //
 // When a segment is confirmed, its translation is propagated to identical-source
 // siblings server-side, which bumps THEIR optimistic-lock `updated_at`.
@@ -29,8 +32,8 @@ function pruneSettled(now: number) {
   for (const [k, v] of settled) if (v.until <= now) settled.delete(k);
 }
 
-const keyFor = (jobId: number, sourceText: string) => `${jobId}\u0000${sourceText}`;
-const rowKey = (jobId: number, translationId: number) => `${jobId}\u0000#${translationId}`;
+const keyFor = (editorId: EditorId, sourceText: string) => `${editorId}\u0000${sourceText}`;
+const rowKey = (editorId: EditorId, translationId: number) => `${editorId}\u0000#${translationId}`;
 
 /**
  * Register an in-flight propagation. `result` resolves (after the cache patch)
@@ -38,17 +41,17 @@ const rowKey = (jobId: number, translationId: number) => `${jobId}\u0000#${trans
  * resolve to an empty map so a failed propagation never blocks sibling saves.
  */
 export function trackPropagation(
-  jobId: number,
+  editorId: EditorId,
   sourceText: string,
   result: Promise<Map<number, string>>,
 ): void {
-  const k = keyFor(jobId, sourceText);
+  const k = keyFor(editorId, sourceText);
   inFlight.set(k, result);
   void result
     .then(fresh => {
       const now = Date.now();
       pruneSettled(now);
-      for (const [id, at] of fresh) settled.set(rowKey(jobId, id), { at, until: now + SETTLED_TTL_MS });
+      for (const [id, at] of fresh) settled.set(rowKey(editorId, id), { at, until: now + SETTLED_TTL_MS });
     })
     .catch(() => {})
   void result
@@ -64,10 +67,10 @@ export function trackPropagation(
  * immediately when nothing is in flight — so normal saves pay no cost.
  */
 export function awaitPropagation(
-  jobId: number,
+  editorId: EditorId,
   sourceText: string,
 ): Promise<Map<number, string>> {
-  const pending = inFlight.get(keyFor(jobId, sourceText));
+  const pending = inFlight.get(keyFor(editorId, sourceText));
   // Defensive: a rejected propagation must never fail the awaiting save.
   return pending ? pending.catch(() => new Map<number, string>()) : Promise.resolve(new Map());
 }
@@ -81,22 +84,22 @@ export function awaitPropagation(
  * paths.
  */
 export async function reconcilePropagationBaseline(
-  jobId: number,
+  editorId: EditorId,
   sourceText: string,
   translationId: number | undefined,
   baselineRef: { current: string | null },
 ): Promise<void> {
-  const propagated = await awaitPropagation(jobId, sourceText);
+  const propagated = await awaitPropagation(editorId, sourceText);
   if (translationId == null) return;
   const fresh = propagated.get(translationId);
   if (fresh) {
     baselineRef.current = fresh;
-    settled.delete(rowKey(jobId, translationId));
+    settled.delete(rowKey(editorId, translationId));
     return;
   }
   // A propagation that settled before this save: adopt its version only over
   // an older baseline, and only once.
-  const key = rowKey(jobId, translationId);
+  const key = rowKey(editorId, translationId);
   const entry = settled.get(key);
   if (!entry) return;
   settled.delete(key);

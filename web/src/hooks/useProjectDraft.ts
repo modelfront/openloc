@@ -33,6 +33,8 @@ export function useProjectDraft({ initialId, buildPayload }: Options) {
   const [state, setState] = useState<DraftSaveState>('idle')
   const hydratingRef = useRef(initialId != null)
   const chainRef = useRef<Promise<unknown>>(Promise.resolve())
+  // A change not saved yet: waiting for the debounced save, or its save failed.
+  const pendingRef = useRef(false)
   const buildRef = useRef(buildPayload)
   useEffect(() => {
     buildRef.current = buildPayload
@@ -65,6 +67,8 @@ export function useProjectDraft({ initialId, buildPayload }: Options) {
         return idRef.current
       } catch (err) {
         setState('error')
+        // Not saved: the next ensureDraft tries again.
+        pendingRef.current = true
         throw err
       }
     })
@@ -73,12 +77,14 @@ export function useProjectDraft({ initialId, buildPayload }: Options) {
   }, [queryClient])
 
   const debounced = useDebouncedCallback(() => {
+    pendingRef.current = false
     saveNow().catch((err: Error) => toast.error(`Draft not saved: ${err.message}`))
   }, DRAFT_SAVE_DELAY_MS)
 
   /** Call on every user change. Ignored while a resume is applying. */
   const scheduleSave = useCallback(() => {
     if (hydratingRef.current) return
+    pendingRef.current = true
     debounced()
   }, [debounced])
 
@@ -98,10 +104,23 @@ export function useProjectDraft({ initialId, buildPayload }: Options) {
   // Leaving the page must not lose the last edit.
   useEffect(() => () => debounced.flush(), [debounced])
 
-  /** The draft id, creating the draft first when the form was never saved. */
+  /** The draft id, creating the draft first when the form was never saved.
+   *  An upload reads the draft's stored settings, such as its filter
+   *  profiles: a change not saved yet is saved first, and a save already
+   *  running is waited for. */
   const ensureDraft = useCallback((): Promise<number> => {
     debounced.cancel()
-    return idRef.current != null ? Promise.resolve(idRef.current) : saveNow()
+    const pending = pendingRef.current
+    pendingRef.current = false
+    if (idRef.current == null || pending) return saveNow()
+    return chainRef.current.then(() => {
+      // The running save failed: it marked the change as pending again.
+      if (pendingRef.current || idRef.current == null) {
+        pendingRef.current = false
+        return saveNow()
+      }
+      return idRef.current
+    })
   }, [debounced, saveNow])
 
   /** The resume prefill has been applied; user changes count from here. */

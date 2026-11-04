@@ -79,12 +79,19 @@ export default function AcceptInvite() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-normal text-gray-900 dark:text-gray-100">Join organization</h1>
-          {invite && (
+          {invite && (invite.kind === 'vendor_org' ? (
+            // A vendor-org invite creates that vendor org, linked to the
+            // inviting org (org_name), with the invitee as its admin.
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2" data-testid="invite-vendor-copy">
+              Set up <span className="font-medium text-gray-700 dark:text-gray-300">{invite.vendor_org_name}</span> as a vendor for{' '}
+              <span className="font-medium text-gray-700 dark:text-gray-300">{invite.org_name}</span>. You'll be its admin.
+            </p>
+          ) : (
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
               You've been invited to <span className="font-medium text-gray-700 dark:text-gray-300">{invite.org_name}</span> as{' '}
               <span className="font-medium text-gray-700 dark:text-gray-300">{invite.email}</span>.
             </p>
-          )}
+          ))}
         </div>
 
         <div className="bg-card rounded-lg border border-gray-200 dark:border-gray-800 p-6">

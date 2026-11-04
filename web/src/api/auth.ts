@@ -1,12 +1,20 @@
+import type { LanguagePair } from './userpairs'
 import { request, setToken, BASE } from './request';
 
+// tenants.kind. A vendor org belongs to one client org.
+export type TenantKind = 'customer' | 'demo' | 'vendor';
+
 // An org the current identity can enter. Shape mirrors the backend's
-// ListMembershipsWithTenant rows.
+// ListMembershipsWithTenant rows. client_org_name names a vendor org's client.
 export interface Org {
   tenant_id: number;
   tenant_name: string;
   tenant_slug: string;
   role: string;
+  tenant_kind: TenantKind;
+  client_org_name: string | null;
+  /** Set when a vendor org disabled this membership for disuse. */
+  disabled_at: string | null;
 }
 
 // Result of authenticating (dev-login) OR selecting an org — anything that may
@@ -67,6 +75,9 @@ export interface InviteLookup {
   email: string;
   org_name: string;
   role: string;
+  kind: InviteKind;
+  // Present on a vendor-org invite: the org that accepting creates.
+  vendor_org_name?: string;
   user_exists: boolean;
   has_password: boolean;
 }
@@ -102,13 +113,14 @@ export const getAuthConfig = () =>
 // Dev-only login. With no argument, logs in as the default seed identity
 // (the seed owner). Pass an email to log in as any identity (created on
 // the fly if it doesn't exist) — handy for exercising multi-org / signup flows
-// locally. The backend 404s this in production.
-export const devLogin = (email?: string) =>
+// locally. `as: 'vendor'` logs in as the seed vendor org's admin. The backend
+// 404s this in production.
+export const devLogin = (who?: { email?: string; as?: 'vendor' }) =>
   fetch(`${BASE}/auth/dev-login`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(email ? { email } : {}),
+    body: JSON.stringify(who?.as ? { identity: who.as } : who?.email ? { email: who.email } : {}),
   }).then(async res => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
@@ -144,11 +156,18 @@ export interface UserProfile {
   tenant_id?: number;
   tenant_name?: string;
   tenant_slug?: string;
+  tenant_kind?: TenantKind;
+  // Present in a vendor org: its client org's name.
+  client_org_name?: string;
   role?: string;
-  // True when the selected org is not approved. The SPA routes to the
+  // True when the selected org is not approved, or is a vendor org whose
+  // client org is not approved ('client_inactive'). The SPA routes to the
   // blocked screen instead of the app. tenant_status tailors the copy.
   org_pending?: boolean;
-  tenant_status?: OrgStatus;
+  tenant_status?: OrgStatus | 'client_inactive';
+  // True when a vendor org disabled this membership for disuse; the SPA
+  // shows the blocked screen until an admin enables it.
+  membership_disabled?: boolean;
   // True when a platform operator is "logged in as" this org. The SPA
   // hides the operator surface and shows an impersonation banner.
   impersonating?: boolean;
@@ -187,9 +206,12 @@ export interface PlatformOrg {
   slug: string;
   domain: string | null;
   status: OrgStatus;
+  kind: TenantKind;
   created_at: string;
   owner_email: string | null;
   owner_name: string | null;
+  // A vendor org's client; null for any other kind.
+  client_org_name: string | null;
   // True when the current operator is a member of this org — the UI hides the
   // Open/Disable actions for it (you can't disable or impersonate your own org).
   is_self: boolean;
@@ -242,11 +264,79 @@ export interface Member {
 export const listMembers = () =>
   request<{ data: Member[] }>('/members').then(r => r.data);
 
+/** One row of the Members tab: the member and their language pairs. */
+export interface MemberPageItem extends Member {
+  language_pairs: LanguagePair[];
+  /** Set when a vendor org disabled the membership for disuse. */
+  disabled_at: string | null;
+}
+
+export interface MembersPage {
+  data: MemberPageItem[];
+  cursor: number;
+  has_more: boolean;
+  /** Every member that matches the filters; left out on a page past the end. */
+  total?: number;
+}
+
+/** The Members tab's filters, as they sit in the page URL. */
+export interface MemberFilters {
+  q?: string;
+  role?: string;
+  source?: string;
+  target?: string;
+}
+
+/** The values a list's filters offer: only those with a hit, given the other filters. */
+export interface ListFacets {
+  roles?: string[];
+  sources: string[];
+  targets: string[];
+}
+
+function filterQuery(filters: object): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (typeof value === 'string' && value) qs.set(key, value);
+  }
+  return qs.toString();
+}
+
+/** The Members filters' values, given the other filters. Owner/admin. */
+export const getMemberFacets = (filters: MemberFilters) =>
+  request<{ data: ListFacets }>(`/members/facets?${filterQuery(filters)}`).then(r => r.data);
+
+/** The Vendors filters' values, given the search and the other side. Owner/admin. */
+export const getVendorOrgFacets = (filters: VendorOrgFilters) =>
+  request<{ data: ListFacets }>(`/vendor-orgs/facets?${filterQuery(filters)}`).then(r => r.data);
+
+/** One page of the Members tab: the most powerful role first, then name. Owner/admin. */
+export const listMembersPage = (filters: MemberFilters, cursor = 0, limit = 50) => {
+  const qs = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  for (const key of ['q', 'role', 'source', 'target'] as const) {
+    const value = filters[key];
+    if (value) qs.set(key, value);
+  }
+  return request<MembersPage>(`/members/page?${qs.toString()}`);
+};
+
+/** Enables a member this org disabled for disuse. Vendor org admins. */
+export const enableMember = (userId: number) =>
+  request<{ status: string }>(`/members/${userId}/enable`, { method: 'POST' });
+
+/** Enables an admin one of this org's vendor orgs disabled for disuse. Owner/admin. */
+export const enableVendorAdmin = (vendorId: number, userId: number) =>
+  request<{ status: string }>(`/vendor-orgs/${vendorId}/admins/${userId}/enable`, { method: 'POST' });
+
 export const updateMemberRole = (userId: number, role: string) =>
   request<{ status: string; role: string }>(`/members/${userId}/role`, {
     method: 'PUT',
     body: JSON.stringify({ role }),
   });
+
+// invites.kind: a vendor-org invite creates a vendor org whose admin is the
+// invitee.
+export type InviteKind = 'member' | 'vendor_org';
 
 // Invites. The token never reaches the browser: only the invite email carries
 // it, so a lost link is fixed with resendInvite.
@@ -255,6 +345,8 @@ export interface Invite {
   tenant_id: number;
   email: string;
   role: string;
+  kind: InviteKind;
+  vendor_org_name?: string;
   invited_by: number;
   invited_by_name?: string;
   accepted_at: string | null;
@@ -262,13 +354,73 @@ export interface Invite {
   created_at: string;
 }
 
-export const listInvites = () =>
-  request<{ data: Invite[] }>('/invites').then(r => r.data);
+/** The invites the caller may handle; `status: 'pending'` keeps only those not accepted yet. */
+export const listInvites = (opts: { status?: 'pending' } = {}) =>
+  request<{ data: Invite[] }>(opts.status ? `/invites?status=${opts.status}` : '/invites').then(r => r.data);
 
-export const createInvite = (email: string, role: string) =>
+export interface InvitesPage {
+  data: Invite[];
+  cursor: number;
+  has_more: boolean;
+  /** Every match; left out on a page past the end. */
+  total?: number;
+}
+
+/** One page of the accepted invites the caller may handle, newest first; q matches the email or vendor name. */
+export const listAcceptedInvites = (q: string, cursor = 0, limit = 10) => {
+  const qs = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  if (q) qs.set('q', q);
+  return request<InvitesPage>(`/invites/accepted?${qs.toString()}`);
+};
+
+export interface VendorOrgAdmin {
+  user_id: number;
+  email: string;
+  disabled: boolean;
+}
+
+// A vendor org this org invited: the Members tab's Vendors list. Owner/admin.
+export interface VendorOrg {
+  id: number;
+  name: string;
+  created_at: string;
+  /** Its admins, by email; disabled: the vendor disabled them for disuse. */
+  admins: VendorOrgAdmin[];
+  /** The pairs its active people cover, each once. */
+  language_pairs: { source_lang: string; target_lang: string }[];
+}
+
+export interface VendorOrgsPage {
+  data: VendorOrg[];
+  cursor: number;
+  has_more: boolean;
+  /** Every vendor org that matches the filters; left out on a page past the end. */
+  total?: number;
+}
+
+/** The Vendors list's filters: q is the vendor's name or an admin's email. */
+export interface VendorOrgFilters {
+  q?: string;
+  source?: string;
+  target?: string;
+}
+
+/** One page of the vendor orgs this org invited, by name. Owner/admin. */
+export const listVendorOrgs = (filters: VendorOrgFilters, cursor = 0, limit = 10) => {
+  const qs = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  for (const key of ['q', 'source', 'target'] as const) {
+    const value = filters[key];
+    if (value) qs.set(key, value);
+  }
+  return request<VendorOrgsPage>(`/vendor-orgs?${qs.toString()}`);
+};
+
+// A vendorOrgName makes it a vendor-org invite: accepting it creates that
+// vendor org, with the invitee as its admin.
+export const createInvite = (email: string, role: string, vendorOrgName?: string) =>
   request<{ data: Invite }>('/invites', {
     method: 'POST',
-    body: JSON.stringify({ email, role }),
+    body: JSON.stringify(vendorOrgName ? { email, role, vendor_org_name: vendorOrgName } : { email, role }),
   }).then(r => r.data);
 
 export const deleteInvite = (id: number) =>

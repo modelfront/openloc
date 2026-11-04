@@ -3,9 +3,10 @@ title: "Keyboard shortcuts"
 summary: "Every shortcut in the CAT editor."
 order: 30
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - web/src/pages/CATEditor.tsx
+  - web/src/components/editor/**
   - web/src/hooks/usePanelResize.ts
   - web/src/components/SegmentEditor.tsx
   - web/src/components/SegmentRow.tsx
@@ -83,4 +84,5 @@ Ctrl+Enter and Ctrl+Shift+S work even when your focus is on a sidebar button, fo
 
 - Shortcuts do not fire inside text boxes such as the find field or the comment box, so Enter and Tab keep their normal meaning there.
 - Clicking another row, clicking outside the grid, or moving with Tab all save the draft of the segment you leave. See [Segment statuses and origins](/docs/reference/segment-statuses) for what a draft means.
+- With several files open together (**Open in editor** on a project's **Tasks** tab or on **Tasks** in the left menu), **Ctrl+G** does nothing. **Ctrl+H** opens **Find and replace** across all open files. Split and join work within one file. Every other shortcut works as in a single file.
 - There is no shortcut for **Spell check**, **Run QA** or **Complete step**. Use the toolbar buttons. See [The CAT editor](/docs/guides/cat-editor).

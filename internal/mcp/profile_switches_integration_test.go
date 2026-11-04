@@ -1,9 +1,10 @@
 package mcp_test
 
 // Settings profile options through the MCP project settings and template
-// tools: "Strings contain HTML" (inline_html, on or off) and "Linguists can add
-// terms" (linguist_terms, off / pending / approved). Each write is checked in
-// the database and read back by the tool, starting from a non-default value.
+// tools: "Linguists can add terms" (linguist_terms, off / pending / approved).
+// Each write is checked in the database and read back by the tool, starting
+// from a non-default value. The older inline_html switch maps to filter
+// profiles (filter_profile_integration_test.go).
 
 import (
 	"context"
@@ -20,7 +21,6 @@ func TestIntegrationMCPProfileSwitches(t *testing.T) {
 		off, on any
 		stored  func(db.SettingsProfile) any
 	}{
-		{"inline_html", false, true, func(p db.SettingsProfile) any { return p.InlineHtml }},
 		{"linguist_terms", "off", "approved", func(p db.SettingsProfile) any { return p.LinguistTerms }},
 	} {
 		t.Run(sw.key, func(t *testing.T) {

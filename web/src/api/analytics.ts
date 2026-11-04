@@ -47,6 +47,9 @@ export interface Job {
   file_format: string;
   // False when the file's strings are plain text ("Strings contain HTML" off).
   file_inline_html?: boolean;
+  // An Excel file with a column per target language: the Files tab downloads
+  // its languages as one workbook.
+  file_multilingual?: boolean;
   file_created_at: string;
   segment_count: number;
   status: string;

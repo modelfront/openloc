@@ -27,6 +27,8 @@ import { MISSING_MT_ROUTER_WARNING, missingTMWarning, mtRouterCoverageWarning, t
 import { SectionInfo } from '@/components/ui/section-info'
 import { FileConfigurationsSection } from './settings/FileConfigurationsSection'
 import { useSegmentationProfiles } from '../hooks/useSegmentationProfiles'
+import { useFilterProfiles } from '../hooks/useFilterProfiles'
+import { FILTER_FORMAT_LABELS, isFilterFormat, type FilterFormat } from '../lib/filter-formats'
 import { OpenLinkButton } from '@/components/ui/open-link-button'
 import { mtRouterPath, qaProfilePath, termBasePath } from '@/lib/asset-links'
 import { conceptsLabel, tmEntriesLabel } from '@/lib/tm-display'
@@ -41,7 +43,9 @@ export type ScalarUpdate = {
   mt_on_upload?: boolean
   tm_on_upload?: boolean
   auto_complete?: boolean
-  inline_html?: boolean
+  // Per format; null goes back to the format's Default, a format left out
+  // keeps its pick.
+  filter_profile_ids?: Partial<Record<FilterFormat, number | null>>
   linguist_terms?: LinguistTerms
   qa_profile_id?: number | null
   segmentation_profile_id?: number
@@ -57,7 +61,8 @@ export interface SettingsValues {
   mtOnUpload: boolean
   tmOnUpload: boolean
   autoComplete: boolean
-  inlineHTML: boolean
+  // The filter profile per file format; a format left out uses its Default.
+  filterProfileIds: Partial<Record<FilterFormat, number>>
   linguistTerms: LinguistTerms
   qaProfileId: number | null
   // The segmentation profile new uploads are split with. null: on a new
@@ -161,6 +166,8 @@ export function SettingsEditor({
   )
 
   const [localSwitches, setLocalSwitches] = useState(() => pickSwitches(values))
+  const [localFilterProfileIds, setLocalFilterProfileIds] = useState(values.filterProfileIds)
+  const filterProfiles = useFilterProfiles()
   const [localTmLookupOrder, setLocalTmLookupOrder] = useState(values.tmLookupOrder)
   const [localLinguistTerms, setLocalLinguistTerms] = useState(values.linguistTerms)
   // The wizard's own TM rows live in TMAssignmentSection and reach us only
@@ -282,6 +289,7 @@ export function SettingsEditor({
     if (isCreate && values !== prevValuesRef.current) {
       prevValuesRef.current = values
       setLocalSwitches(pickSwitches(values))
+      setLocalFilterProfileIds(values.filterProfileIds)
       setLocalTmLookupOrder(values.tmLookupOrder)
       setLocalLinguistTerms(values.linguistTerms)
       setLocalTMRowCount(values.tmAssignments.length)
@@ -308,6 +316,14 @@ export function SettingsEditor({
     const toggled = describeSwitchSave(data)
     if (toggled) return toggled
     if (data.linguist_terms !== undefined) return `Linguists can add terms set to “${LINGUIST_TERMS_LABELS[data.linguist_terms]}”`
+    if (data.filter_profile_ids !== undefined) {
+      const [format, id] = Object.entries(data.filter_profile_ids)[0] ?? []
+      if (format && isFilterFormat(format)) {
+        const name = id == null ? 'Default' : (filterProfiles.profiles.find(p => p.id === id)?.name ?? String(id))
+        return `${FILTER_FORMAT_LABELS[format]} filter profile set to ${name}`
+      }
+      return 'Filter profiles saved'
+    }
     if ('qa_profile_id' in data) {
       if (data.qa_profile_id === null) return 'QA profile cleared'
       return `QA profile set to ${qaProfiles.find(p => p.id === data.qa_profile_id)!.name}`
@@ -331,10 +347,12 @@ export function SettingsEditor({
       const newLookupOrder = data.tm_lookup_order ?? draftRef.current.tmLookupOrder
       const newLinguistTerms = data.linguist_terms ?? localLinguistTerms
       const newSwitches = mergeSwitches(localSwitches, data)
+      const newFilterProfileIds = data.filter_profile_ids ? applyFilterPicks(localFilterProfileIds, data.filter_profile_ids) : localFilterProfileIds
       const newQa = data.qa_profile_id !== undefined ? data.qa_profile_id : localQaProfileId
       const newSegmentation = data.segmentation_profile_id ?? localSegmentationProfileId
       const newMTRouter = data.mt_router_id !== undefined ? data.mt_router_id : localMTRouterId
       setLocalSwitches(newSwitches)
+      setLocalFilterProfileIds(newFilterProfileIds)
       setLocalTmLookupOrder(newLookupOrder)
       setLocalLinguistTerms(newLinguistTerms)
       setLocalQaProfileId(newQa)
@@ -349,6 +367,7 @@ export function SettingsEditor({
         tmLookupOrder: newLookupOrder,
         linguistTerms: newLinguistTerms,
         ...newSwitches,
+        filterProfileIds: newFilterProfileIds,
         qaProfileId: newQa,
         segmentationProfileId: newSegmentation,
         mtRouterId: newMTRouter,
@@ -373,6 +392,7 @@ export function SettingsEditor({
 
   const displaySwitches = isCreate ? localSwitches : pickSwitches(values)
   const displayLinguistTerms = isCreate ? localLinguistTerms : values.linguistTerms
+  const displayFilterProfileIds = isCreate ? localFilterProfileIds : values.filterProfileIds
   const displayQaProfileId = isCreate ? localQaProfileId : values.qaProfileId
   // A new project shows the suggested profile until one is picked, which is
   // what the form sends. A saved project or template names none after its
@@ -581,16 +601,6 @@ export function SettingsEditor({
           </>}
         />
 
-        <CheckboxField
-          className="mb-4"
-          checked={displaySwitches.inlineHTML}
-          onChange={checked => handleScalarChange({ inline_html: checked })}
-          disabled={saving}
-          data-testid="settings-inline-html"
-          label="Strings contain HTML"
-          description="Tags in JSON, PO, TXT and Excel strings become protected tags. Turn off for plain text. Applies to new uploads."
-        />
-
         {/* The "apply TM / fill in MT on start or upload" switches and the
             match scoring live in the Translation memory and Machine
             translation cards below, next to what they control, and the QA
@@ -779,10 +789,30 @@ export function SettingsEditor({
         error={segmentation.error}
         onRetry={() => { void segmentation.refetch() }}
         onChange={id => handleScalarChange({ segmentation_profile_id: id })}
+        filters={{
+          byFormat: filterProfiles.byFormat,
+          values: displayFilterProfileIds,
+          error: filterProfiles.error,
+          onRetry: () => { void filterProfiles.refetch() },
+          onChange: (format, id) => handleScalarChange({ filter_profile_ids: { [format]: id } }),
+        }}
       />
 
       {inlineCreateDialogs}
     </div>
     </TooltipProvider>
   )
+}
+
+/** picks applied to the stored map: null removes the format (its Default). */
+function applyFilterPicks(
+  stored: Partial<Record<FilterFormat, number>>,
+  picks: Partial<Record<FilterFormat, number | null>>,
+): Partial<Record<FilterFormat, number>> {
+  const out = { ...stored }
+  for (const [format, id] of Object.entries(picks) as [FilterFormat, number | null][]) {
+    if (id == null) delete out[format]
+    else out[format] = id
+  }
+  return out
 }

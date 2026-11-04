@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isAdminRole, isManagerRole, isLinguistRole, roleLabel } from './roles'
+import { isAdminRole, isManagerRole, isLinguistRole, roleLabel, memberRoles } from './roles'
 
 describe('roles', () => {
   it('isAdminRole is true only for owner/admin', () => {
@@ -38,5 +38,12 @@ describe('roles', () => {
     expect(roleLabel('')).toBe('')
     expect(roleLabel(null)).toBe('')
     expect(roleLabel(undefined)).toBe('')
+  })
+})
+
+describe('memberRoles', () => {
+  it('lists the roles most powerful first, without owner in a vendor org', () => {
+    expect(memberRoles(false)).toEqual(['owner', 'admin', 'project_manager', 'linguist'])
+    expect(memberRoles(true)).toEqual(['admin', 'project_manager', 'linguist'])
   })
 })

@@ -28,6 +28,7 @@ func TestIntegrationDeleteTenant_ClosedOrgIsHidden(t *testing.T) {
 	live := testutil.SeedTenant(t, q, "Live Org")
 	testutil.SeedMembership(t, q, ownerID, live.ID, "owner")
 	invite, err := q.CreateInvite(ctx, db.CreateInviteParams{
+		Kind:     "member",
 		TenantID: tenantID, Email: "invitee@test.com", Role: "linguist", InvitedBy: ownerID,
 		Token: "closing-invite-token", ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})

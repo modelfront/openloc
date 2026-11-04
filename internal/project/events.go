@@ -44,7 +44,6 @@ func settingsMap(p db.SettingsProfile) map[string]any {
 		"sublanguage_penalty_pct": p.SublanguagePenaltyPct,
 		"near_exact_penalty_pct":  p.NearExactPenaltyPct,
 		"auto_complete":           p.AutoComplete,
-		"inline_html":             p.InlineHtml,
 		"linguist_terms":          p.LinguistTerms,
 		"tm_lookup_order":         p.TmLookupOrder,
 	}

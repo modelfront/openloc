@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getUnreadCount, listNotifications, markNotificationRead, markAllNotificationsRead, type Notification } from '../api'
 import { queryKeys } from '../lib/query-keys'
+import { ORG_VENDORS_PATH } from '../pages/org/org-paths'
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import { useNotificationStream } from '../hooks/useNotificationStream'
 import { headerControlHover } from './layout/header-styles'
@@ -22,6 +23,7 @@ const EVENT_ICONS: Record<string, string> = {
   job_failed: '⚠️',
   issue_updated: '💬',
   issue_resolved: '✔️',
+  vendor_admin_added: '🤝',
 }
 
 /** The notification's text, cut at two lines; hover shows the rest. */
@@ -98,6 +100,10 @@ export default function NotificationBell() {
     setOpen(false)
     if (n.reference_type === 'issue' && n.reference_id > 0) {
       navigate(`/issues/${n.reference_id}`)
+      return
+    }
+    if (n.reference_type === 'vendor_org') {
+      navigate(ORG_VENDORS_PATH)
       return
     }
     if (n.reference_type === 'job' && n.reference_id > 0) {

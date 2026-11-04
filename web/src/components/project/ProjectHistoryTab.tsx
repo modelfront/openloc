@@ -319,6 +319,7 @@ export function ProjectHistoryTab({ projectId }: Props) {
           label="Type"
           value={typeLabel}
           testId="history-filter-type"
+          searchable={false}
           render={(close) => (
             <>
               <FilterOption selected={!typeFilter} onClick={() => { setParam('evtype', null); close() }}>

@@ -90,7 +90,7 @@ func (s *Service) sentenceBlocks(ctx context.Context, job db.Job, tenantID int64
 	if err != nil {
 		return nil, fmt.Errorf("get file: %w", err)
 	}
-	opts, err := parser.FileOptions(f.InlineHtml, f.XlsxLayout, f.Segmentation)
+	opts, err := parser.FileOptions(f.InlineHtml, f.XlsxLayout, f.Segmentation, f.FilterProfile)
 	if err != nil {
 		return nil, err
 	}

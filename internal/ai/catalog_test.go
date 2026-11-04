@@ -422,3 +422,92 @@ func TestNoCredentialIsNotAFailureReason(t *testing.T) {
 		t.Errorf("FailureReason = %q, want empty for a vendor with no key", got)
 	}
 }
+
+// blockingLister answers each List call only when release is closed, after
+// signalling started, so a test can change the keys while a fetch runs.
+type blockingLister struct {
+	stubLister
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingLister) List(ctx context.Context, provider, apiKey, baseURL string) ([]RemoteModel, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return b.stubLister.List(ctx, provider, apiKey, baseURL)
+}
+
+// A fetch made with the old keys must not store its list after Forget: the
+// next read fetches with the keys stored now.
+func TestCatalogForgetOutlivesAFetchInFlight(t *testing.T) {
+	l := &blockingLister{
+		stubLister: stubLister{models: map[string][]RemoteModel{ProviderClaude: claudeFive}},
+		started:    make(chan struct{}, 2), release: make(chan struct{}),
+	}
+	c := NewCatalog(l, stubKeys{}, DefaultModelLimit)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Models(context.Background(), 1, ProviderClaude)
+	}()
+	<-l.started
+	c.Forget(1, ProviderClaude)
+	close(l.release)
+	<-done
+
+	if c.Len() != 0 {
+		t.Fatal("a fetch started before Forget stored its list")
+	}
+	c.Models(context.Background(), 1, ProviderClaude)
+	if l.calls != 2 {
+		t.Errorf("the read after Forget made %d provider calls in total, want 2", l.calls)
+	}
+}
+
+// A failure seen by a fetch made with the old keys must not start a cooldown
+// after Forget.
+func TestCatalogForgetOutlivesAFailingFetchInFlight(t *testing.T) {
+	l := &blockingLister{
+		stubLister: stubLister{err: errors.New("invalid API key (status 401)")},
+		started:    make(chan struct{}, 2), release: make(chan struct{}),
+	}
+	c := NewCatalog(l, stubKeys{}, DefaultModelLimit)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Models(context.Background(), 1, ProviderClaude)
+	}()
+	<-l.started
+	c.Forget(1, ProviderClaude)
+	close(l.release)
+	<-done
+
+	if reason := c.FailureReason(1, ProviderClaude); reason != "" {
+		t.Errorf("a fetch started before Forget recorded %q", reason)
+	}
+}
+
+// A notice names the pair to forget; a malformed one changes nothing, and a
+// reconnect forgets everything, since notices sent meanwhile were lost.
+func TestCatalogReceiverForgets(t *testing.T) {
+	c := NewCatalog(nil, nil, DefaultModelLimit)
+	c.Set(1, ProviderClaude, []Model{{ID: "claude-opus-5"}})
+	c.Set(2, ProviderClaude, []Model{{ID: "claude-opus-5"}})
+	c.Set(3, ProviderOpenAI, []Model{{ID: "gpt-5"}})
+	r := catalogReceiver{c}
+
+	for _, bad := range []string{"", "1", "x|claude", "1|"} {
+		r.Notify(context.Background(), bad)
+	}
+	if c.Len() != 3 {
+		t.Fatalf("malformed notices forgot %d pairs", 3-c.Len())
+	}
+	r.Notify(context.Background(), "1|claude")
+	if c.Len() != 2 {
+		t.Fatalf("after one notice %d pairs are cached, want 2", c.Len())
+	}
+	r.Up()
+	if c.Len() != 0 {
+		t.Errorf("after a reconnect %d pairs are cached, want 0", c.Len())
+	}
+}

@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"openloc/internal/ai"
 	"openloc/internal/aiengine"
@@ -29,6 +32,7 @@ import (
 	"openloc/internal/editor"
 	"openloc/internal/extension"
 	"openloc/internal/file"
+	"openloc/internal/filterprofile"
 	"openloc/internal/hold"
 	"openloc/internal/httputil"
 	"openloc/internal/invite"
@@ -51,6 +55,7 @@ import (
 	"openloc/internal/projectevents"
 	"openloc/internal/publicapi"
 	"openloc/internal/qa"
+	"openloc/internal/scopecomplete"
 	"openloc/internal/secrets"
 	"openloc/internal/segment"
 	"openloc/internal/segmentationapi"
@@ -268,7 +273,7 @@ func NewRouter(deps Deps) chi.Router {
 
 	// Comments
 	commentHandler := comments.NewHandler(deps.Queries)
-	editorHandler := editor.NewHandler(deps.Queries)
+	editorHandler := editor.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool))
 	segmentEditSvc := segmentedit.NewService(deps.Queries, deps.DB.(*pgxpool.Pool), deps.Storage)
 	segmentEditHandler := segmentedit.NewHandler(deps.Queries, segmentEditSvc)
 
@@ -391,16 +396,31 @@ func NewRouter(deps Deps) chi.Router {
 
 	// tenantActive gates the pending/rejected orgs out of the app.
 	// auth.ErrTenantNotApproved unless the tenant is 'approved'; auth.Middleware
-	// turns that into a 403 org_pending.
-	tenantActive := func(ctx context.Context, tenantID int64) (bool, error) {
-		t, err := deps.Queries.GetTenantStatus(ctx, tenantID)
+	// turns that into a 403 org_pending. A vendor org also needs its client
+	// approved.
+	// In a vendor org it also refuses a membership disabled for disuse and
+	// records the caller's use of the org, at most once a day.
+	tenantActive := func(ctx context.Context, tenantID, userID int64) (auth.TenantGate, error) {
+		t, err := deps.Queries.GetTenantGate(ctx, tenantID)
 		if err != nil {
-			return false, err
+			return auth.TenantGate{}, err
 		}
 		if t.Status != "approved" {
-			return false, auth.ErrTenantNotApproved
+			return auth.TenantGate{}, auth.ErrTenantNotApproved
 		}
-		return t.Kind == auth.TenantKindDemo, nil
+		gate := auth.TenantGate{
+			Kind:         t.Kind,
+			ClientActive: t.ClientStatus != nil && *t.ClientStatus == "approved",
+		}
+		if gate.Kind == auth.TenantKindVendor && gate.ClientActive {
+			disabled, err := deps.Queries.TouchVendorMembership(ctx, db.TouchVendorMembershipParams{TenantID: tenantID, UserID: userID})
+			// No row: not a member (an operator viewing the org).
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return auth.TenantGate{}, fmt.Errorf("vendor membership: %w", err)
+			}
+			gate.MemberDisabled = disabled
+		}
+		return gate, nil
 	}
 
 	// Issues users report to the platform operators. Mounted only when the
@@ -600,18 +620,31 @@ func NewRouter(deps Deps) chi.Router {
 			r.Use(auth.RequireManager())
 			r.Post("/", inviteHandler.HandleCreate)
 			r.Get("/", inviteHandler.HandleList)
+			// The Members tab's Accepted invites: paged and searched.
+			r.Get("/accepted", inviteHandler.HandleListAccepted)
 			r.Delete("/{inviteID}", inviteHandler.HandleDelete)
 			r.Post("/{inviteID}/resend", inviteHandler.HandleResend)
 		})
 		// Managers (owner/admin/PM) may LIST members — the assignee pickers
-		// (Assign job, workflow-step default assignee) and the Vendors tab all
-		// need it. Role changes / (de)activation stay owner/admin.
+		// (Assign job, workflow-step default assignee) need it. Role changes /
+		// (de)activation stay owner/admin.
 		r.With(auth.RequireManager()).Get("/api/members", authHandler.HandleListMembers)
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireRole("owner", "admin"))
-			r.Put("/api/members/{userID}/role", handleUpdateMemberRole(deps.Queries))
+			// The Members tab's Vendors list: the client's own vendor orgs.
+			r.Get("/api/vendor-orgs", authHandler.HandleListVendorOrgs)
+			// The Members tab's list: paged, searched and filtered; the
+			// filters offer only values with a hit.
+			r.Get("/api/members/page", authHandler.HandleListMembersPage)
+			r.Get("/api/members/facets", authHandler.HandleMemberFacets)
+			r.Get("/api/vendor-orgs/facets", authHandler.HandleVendorOrgFacets)
+			r.Put("/api/members/{userID}/role", handleUpdateMemberRole(deps.Queries, deps.NotificationService))
 			// Per-org removal: deletes the membership, not the account.
 			r.Delete("/api/members/{userID}", authHandler.HandleRemoveMember)
+			// A membership a vendor org disabled for disuse: the vendor's
+			// admins enable any member, the client enables the vendor's admins.
+			r.Post("/api/members/{userID}/enable", authHandler.HandleEnableMember)
+			r.Post("/api/vendor-orgs/{vendorID}/admins/{userID}/enable", authHandler.HandleEnableVendorAdmin)
 		})
 
 		// User language pairs. Managers read; replace is owner/admin.
@@ -1214,6 +1247,13 @@ func NewRouter(deps Deps) chi.Router {
 			segmentationHandler.Routes(r, auth.RequireManager())
 		})
 
+		// Filter profiles: every member reads; owners, admins and project
+		// managers write (RequireManager, in Routes).
+		filterProfileHandler := filterprofile.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool))
+		r.Route("/api/filter-profiles", func(r chi.Router) {
+			filterProfileHandler.Routes(r, auth.RequireManager())
+		})
+
 		// QA
 		qaHandler := qa.NewHandler(deps.Queries, deps.DB.(*pgxpool.Pool))
 		r.Route("/api/qa-profiles", func(r chi.Router) {
@@ -1337,6 +1377,44 @@ func NewRouter(deps Deps) chi.Router {
 			Comments:     comments.NewService(deps.Queries),
 			TMMatches:    tmHandler,
 		})
+		// One hold stream handler for both editor routes, so a user's open
+		// streams count against one cap.
+		var holdStream *hold.StreamHandler
+		if deps.HoldFeed != nil {
+			holdStream = hold.NewStreamHandler(deps.HoldFeed, deps.Draining)
+		}
+		// The CAT editor over several jobs of a project opened together
+		// (?jobs=1,2,3): the same handlers as the single-job editor routes.
+		// editor.RequestScope gates every request: the jobs must be in the
+		// caller's organization and this project, share one target language,
+		// and a linguist must be assigned to each. Any member it admits may
+		// use them, like the job group's editor routes; writes keep each
+		// job's task edit gate, and completing keeps each step's own rule.
+		scopeJobs := func(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
+			scope, ok := editor.RequestScope(w, r, deps.Queries)
+			return scope.JobIDs(), ok
+		}
+		scopeCompleteHandler := scopecomplete.NewHandler(deps.Queries, translationHandler.Service,
+			workflowHandler.Service(), jobHandler.Service)
+		r.Route("/api/projects/{projectID}/editor", func(r chi.Router) {
+			r.Get("/index", editorHandler.HandleIndex)
+			r.Get("/rows", editorHandler.HandleRows)
+			r.Get("/search", editorHandler.HandleSearch)
+			r.Get("/refs", editorHandler.HandleRefs)
+			r.Get("/word", editorHandler.HandleWordCandidates)
+			r.Get("/fuzzy", editorHandler.HandleFuzzy)
+			r.Get("/comment-counts", editorHandler.HandleCommentCounts)
+			r.Get("/holds", holdHandler.List(scopeJobs))
+			if holdStream != nil {
+				r.Get("/holds/stream", holdStream.Stream(scopeJobs))
+			}
+			r.Post("/propagate", translationHandler.HandlePropagateScope)
+			r.Post("/complete", scopeCompleteHandler.HandleComplete)
+			// QA over the scope's files: one report, and a run per job.
+			r.Get("/qa-report", qaHandler.HandleScopeQAReport)
+			r.Post("/run-qa", qaHandler.HandleScopeRunQA)
+		})
+
 		// All /api/jobs/{jobID}/* routes are gated by RequireJobOwnership at the
 		// route-group level — pairs with
 		// inline GetJobTenant in the workflow + QA handlers (defense-in-depth,
@@ -1357,6 +1435,8 @@ func NewRouter(deps Deps) chi.Router {
 				r.Get("/search", editorHandler.HandleSearch)
 				r.Get("/refs", editorHandler.HandleRefs)
 				r.Get("/word", editorHandler.HandleWordCandidates)
+				r.Get("/fuzzy", editorHandler.HandleFuzzy)
+				r.Get("/comment-counts", editorHandler.HandleCommentCounts)
 			})
 			// Split and join one job's rows. Any member the group admits (a
 			// linguist assigned to the job, or a manager); the job's current
@@ -1372,8 +1452,8 @@ func NewRouter(deps Deps) chi.Router {
 			r.Get("/holds", holdHandler.HandleList)
 			r.Put("/holds/{translationID}", holdHandler.HandleAcquire)
 			r.Delete("/holds/{translationID}", holdHandler.HandleRelease)
-			if deps.HoldFeed != nil {
-				r.Get("/holds/stream", hold.NewStreamHandler(deps.HoldFeed, deps.Draining).HandleStream)
+			if holdStream != nil {
+				r.Get("/holds/stream", holdStream.HandleStream)
 			}
 			// Each segment's previous workflow step, for the editor.
 			r.Get("/step-statuses", jobHandler.HandleStepStatuses)
@@ -1623,7 +1703,7 @@ func handleUpdateOrgSettings(q db.Querier) http.HandlerFunc {
 	}
 }
 
-func handleUpdateMemberRole(q db.Querier) http.HandlerFunc {
+func handleUpdateMemberRole(q db.Querier, n *notif.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := httputil.ParseID(r, "userID")
 		if err != nil {
@@ -1637,10 +1717,13 @@ func handleUpdateMemberRole(q db.Querier) http.HandlerFunc {
 			httputil.BadRequest(w, "invalid request body")
 			return
 		}
-		if _, err := auth.ChangeMemberRole(r.Context(), q, auth.ActorFromContext(r.Context()), userID, req.Role); err != nil {
+		actor := auth.ActorFromContext(r.Context())
+		prev, err := auth.ChangeMemberRole(r.Context(), q, actor, userID, req.Role)
+		if err != nil {
 			auth.WriteMemberError(w, err)
 			return
 		}
+		notifyVendorAdminAdded(r.Context(), q, n, actor, prev, req.Role)
 		httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok", "role": req.Role})
 	}
 }

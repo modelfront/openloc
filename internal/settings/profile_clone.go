@@ -8,12 +8,13 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 )
 
 // CreateProfileLike creates a new settings profile carrying every scalar of
-// src: the insert-time fields, the penalties, auto_complete, inline_html and linguist_terms
+// src: the insert-time fields, the penalties, auto_complete and linguist_terms
 // (which CreateSettingsProfile deliberately leaves at the column defaults),
-// the segmentation profile and the TM profile link. Shared by save-as-template
+// the segmentation profile, the filter profiles and the TM profile link. Shared by save-as-template
 // and template duplication so a snapshot can't drift from its source one
 // column at a time. Must run inside the caller's transaction.
 func CreateProfileLike(ctx context.Context, q db.Querier, tenantID int64, src db.SettingsProfile) (db.SettingsProfile, error) {
@@ -38,7 +39,6 @@ func CreateProfileLike(ctx context.Context, q db.Querier, tenantID int64, src db
 		SublanguagePenaltyPct: &src.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   &src.NearExactPenaltyPct,
 		AutoComplete:          &src.AutoComplete,
-		InlineHtml:            &src.InlineHtml,
 		LinguistTerms:         &src.LinguistTerms,
 		TmLookupOrder:         &src.TmLookupOrder,
 	})
@@ -58,6 +58,9 @@ func CreateProfileLike(ctx context.Context, q db.Querier, tenantID int64, src db
 		default:
 			created = row
 		}
+	}
+	if err := filterprofile.CopyChoices(ctx, q, src.ID, created.ID); err != nil {
+		return db.SettingsProfile{}, err
 	}
 	if src.TmProfileID != nil {
 		created, err = q.SetSettingsProfileTMProfile(ctx, db.SetSettingsProfileTMProfileParams{

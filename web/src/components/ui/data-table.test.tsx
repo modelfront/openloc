@@ -260,3 +260,19 @@ describe('DataTable virtual rows', () => {
     restore()
   })
 })
+
+describe('DataTable hideHeader', () => {
+  it('keeps the column headers for screen readers and moves their widths to the columns', () => {
+    const { container } = render(<DataTable columns={COLUMNS} data={[{ name: 'a' }]} hideHeader />)
+    expect(screen.getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Fixed', 'Wide', 'Rest'])
+    expect(container.querySelector('thead')).toHaveClass('sr-only')
+    // A sized column keeps its width; the others share what is left.
+    expect([...container.querySelectorAll('col')].map(c => (c as HTMLElement).style.width)).toEqual(['100px', '', ''])
+  })
+
+  it('shows the header, with no column group, by default', () => {
+    const { container } = render(<DataTable columns={COLUMNS} data={[{ name: 'a' }]} />)
+    expect(container.querySelector('thead')).not.toHaveClass('sr-only')
+    expect(container.querySelector('colgroup')).toBeNull()
+  })
+})

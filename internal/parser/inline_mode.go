@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"openloc/internal/segmentation"
@@ -84,6 +85,10 @@ type ParseOptions struct {
 	// XLSXLayout is the uploader's column layout of a workbook; nil reads an
 	// Excel file by its row 1.
 	XLSXLayout *XLSXLayout
+	// HTML and XML are the file's filter options for an HTML or generic XML
+	// file; nil is DefaultHTMLOptions / DefaultXMLOptions.
+	HTML *HTMLOptions
+	XML  *XMLOptions
 }
 
 // GetParserWith is GetParserFor that also applies an Excel column layout and
@@ -91,6 +96,12 @@ type ParseOptions struct {
 func GetParserWith(format string, o ParseOptions) (Parser, error) {
 	if format == "xlsx" && o.XLSXLayout != nil {
 		return XLSX{PlainText: !o.InlineHTML, Layout: o.XLSXLayout}, nil
+	}
+	switch {
+	case format == "html" && o.HTML != nil:
+		return withSegmenter(sentenceSegmenter{inner: HTML{Options: o.HTML}, richExport: true}, o.Segmenter), nil
+	case format == "xml" && o.XML != nil:
+		return withSegmenter(XML{Options: o.XML}, o.Segmenter), nil
 	}
 	p, err := GetParserFor(format, o.InlineHTML)
 	if err != nil {
@@ -128,11 +139,12 @@ func FileXLSXLayout(raw []byte) (*XLSXLayout, error) {
 }
 
 // FileOptions are the ParseOptions a stored file is parsed with again: its
-// strings mode, its Excel layout (FileXLSXLayout) and the segmentation
-// snapshot it was imported with (nil or JSON null: the conservative built-in
-// set). Every re-parse of a stored file goes through here, so it splits
-// exactly as it did on import.
-func FileOptions(inlineHTML bool, xlsxLayout, segmentationSnapshot []byte) (ParseOptions, error) {
+// strings mode, its Excel layout (FileXLSXLayout), the segmentation snapshot
+// it was imported with (nil or JSON null: the conservative built-in set) and
+// the HTML or XML options of its filter profile snapshot (nil: the defaults).
+// Every re-parse of a stored file goes through here, so it reads exactly as
+// it did on import.
+func FileOptions(inlineHTML bool, xlsxLayout, segmentationSnapshot, filterSnapshot []byte) (ParseOptions, error) {
 	layout, err := FileXLSXLayout(xlsxLayout)
 	if err != nil {
 		return ParseOptions{}, fmt.Errorf("read stored xlsx layout: %w", err)
@@ -141,5 +153,19 @@ func FileOptions(inlineHTML bool, xlsxLayout, segmentationSnapshot []byte) (Pars
 	if err != nil {
 		return ParseOptions{}, err
 	}
-	return ParseOptions{InlineHTML: inlineHTML, XLSXLayout: layout, Segmenter: seg}, nil
+	o := ParseOptions{InlineHTML: inlineHTML, XLSXLayout: layout, Segmenter: seg}
+	if len(filterSnapshot) > 0 && string(filterSnapshot) != "null" {
+		// The parse-relevant part of filterprofile.Snapshot.
+		var snap struct {
+			Options struct {
+				HTML *HTMLOptions `json:"html"`
+				XML  *XMLOptions  `json:"xml"`
+			} `json:"options"`
+		}
+		if err := json.Unmarshal(filterSnapshot, &snap); err != nil {
+			return ParseOptions{}, fmt.Errorf("read stored filter profile: %w", err)
+		}
+		o.HTML, o.XML = snap.Options.HTML, snap.Options.XML
+	}
+	return o, nil
 }

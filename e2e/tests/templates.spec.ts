@@ -9,6 +9,8 @@ import {
   getSeedTMId,
   login,
   pickComboboxValue,
+  stringFilterProfiles,
+  openFilterProfiles,
   pickProjectWorkflow,
   selectLanguage,
   sourceLanguageTrigger,
@@ -418,7 +420,7 @@ test.describe("Templates", () => {
     }
   });
 
-  test.describe("Strings contain HTML", () => {
+  test.describe("Filter profiles", () => {
     let templateId: number | undefined;
     test.afterEach(async ({ page }) => {
       if (!templateId) return;
@@ -427,27 +429,30 @@ test.describe("Templates", () => {
       templateId = undefined;
     });
 
-    test("the switch toggles and persists on a template", async ({ page }) => {
+    test("a format's pick saves and persists on a template", async ({ page }) => {
       const token = await page.evaluate(() => localStorage.getItem("token"));
       const headers = { Authorization: `Bearer ${token}` };
-      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E InlineHTML ${Date.now()}`, workflow_id: (await standardWorkflow(page)).id } });
+      const createResp = await page.request.post("/api/templates", { headers, data: { name: `E2E Filter ${Date.now()}`, workflow_id: (await standardWorkflow(page)).id } });
       expect(createResp.ok()).toBe(true);
       templateId = (await createResp.json()).data.id;
+      const plain = (await stringFilterProfiles(page, false)).json_i18n;
 
       await page.goto(`/templates/${templateId}`);
-      const box = page.getByTestId("settings-inline-html");
-      await expect(box).toBeChecked();
+      await openFilterProfiles(page);
+      await expect(page.getByTestId("filter-profile-select-json_i18n")).toContainText("Default");
       const [patchResp] = await Promise.all([
         page.waitForResponse(r => r.url().includes(`/api/templates/${templateId}`) && r.request().method() === "PATCH"),
-        box.click(),
+        pickComboboxValue(page, "filter-profile-select-json_i18n", String(plain)),
       ]);
       expect(patchResp.ok()).toBe(true);
-      expect((await patchResp.json()).data.inline_html, "the PATCH must carry the new value").toBe(false);
+      expect(patchResp.request().postDataJSON().filter_profile_ids, "the PATCH must carry the pick").toEqual({ json_i18n: plain });
 
       await page.reload();
-      await expect(page.getByTestId("settings-inline-html")).not.toBeChecked();
+      await openFilterProfiles(page);
+      await expect(page.getByTestId("filter-profile-select-json_i18n")).toContainText("Plain text strings");
       const detail = await page.request.get(`/api/templates/${templateId}`, { headers });
-      expect((await detail.json()).data.template.inline_html).toBe(false);
+      const picks: { format: string; id: number }[] = (await detail.json()).data.template.filter_profiles;
+      expect(picks).toEqual([expect.objectContaining({ format: "json_i18n", id: plain })]);
     });
   });
 

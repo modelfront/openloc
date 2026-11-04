@@ -10,6 +10,7 @@ import { XliffTag, setTagLabelMode, setChipRefResolver } from '../lib/tiptap-xli
 import { XliffBreakAttrs } from '../lib/tiptap-xliff-break'
 import { SpellCheck, toggleSpellCheck, clearSpellWord, type SpellFixRequest } from '../lib/tiptap-spellcheck'
 import { WhitespaceMarkers, toggleWhitespace } from '../lib/tiptap-whitespace'
+import { TrackChanges, setTrackChangesBaseline } from '../lib/tiptap-track-changes'
 import { labelModeFor, type RefResolver } from '../lib/xliff-tag-label'
 import { richTextToTipTapContent, tipTapToRichText, hasXliffTags } from '../lib/xliff-tiptap'
 import { plainOffsetToPm, pmToPlainOffset } from '../lib/pm-offset'
@@ -63,6 +64,8 @@ interface RichTextCellEditorProps {
   resolveRef?: RefResolver
   /** The text is plain: tags and HTML in it load as typed, never as chips or formatting. */
   plainText?: boolean
+  /** Track changes: the text to mark changes against; null shows none. */
+  trackChangesFrom?: string | null
   // Word-level fix actions for the inline spell menu. Omitted → the menu offers
   // only "replace in this segment", since nothing above it can reach the file.
   spellFixActions?: SpellFixActions
@@ -93,6 +96,7 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
     showWhitespace = false,
     resolveRef,
     plainText = false,
+    trackChangesFrom = null,
     spellFixActions,
     spellSourceText,
     extraExtensions,
@@ -169,6 +173,7 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
         onFixRequest: r => fixRequestRef.current(r),
       }),
       WhitespaceMarkers.configure({ enabled: showWhitespace }),
+      TrackChanges.configure({ baseline: trackChangesFrom }),
       ...(placeholder !== undefined ? [Placeholder.configure({ placeholder })] : []),
       ...extraExtRef.current,
     ],
@@ -274,6 +279,13 @@ const RichTextCellEditor = forwardRef<RichTextCellEditorHandle, RichTextCellEdit
       setChipRefResolver(editor, resolveRef)
     }
   }, [resolveRef, editor])
+
+  // The view can turn on or off, or its baseline change, while the row is open.
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) {
+      setTrackChangesBaseline(editor, trackChangesFrom)
+    }
+  }, [trackChangesFrom, editor])
 
   // Reconcile spell check with the prop reactively — `enabled` is captured
   // when the editor is constructed and never updated on its own.

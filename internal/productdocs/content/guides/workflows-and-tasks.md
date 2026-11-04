@@ -3,7 +3,7 @@ title: "Workflows and tasks"
 summary: "Define steps and workflows in the library, pick a workflow for a project, follow and assign its tasks, and work from the Tasks page."
 order: 60
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-29
+updated_at: 2026-11-03
 sources:
   - internal/autostep/**
   - web/src/pages/TasksPage.tsx
@@ -17,6 +17,7 @@ sources:
   - web/src/lib/rollback.ts
   - internal/workflow/service_reject.go
   - web/src/components/CompleteStepDialog.tsx
+  - web/src/components/editor/ScopeCompleteDialog.tsx
   - web/src/components/project/project-event-render-workflow.tsx
   - web/src/lib/current-task.ts
   - web/src/lib/task-edit.ts
@@ -144,7 +145,9 @@ When a job reaches a Hybrid or AI step, the step's [AI router](/docs/guides/ai-e
 - On a **Hybrid** step, the rest go to the assignee for review. While the AI runs, the task is locked: its card on the **Tasks** page shows a **QE+APE running** badge, and the job's own badge counts the batches, for example **AI step (QE+APE): 30 / 880**. It unlocks by itself when the check is done — no need to reload.
 - On an **AI** step, nobody is assigned. The step's tasks on the project's **Tasks** tab and the step list show **Automated**, and in the CAT editor the current-step chip's tooltip says the step completes itself. When the check is done, the step completes itself and the job moves on to the next step. The next step starts with every segment unconfirmed; the ones the AI approved show a grey check with sparkles in the status column, as the [segment statuses](/docs/reference/segment-statuses) page describes. An AI step can also be the last step; the job is then completed.
 
-Managers can run the check again with **Re-run AI step** in the CAT editor toolbar, or halt a run that is still going with **Stop**. Read more in [Quality estimation](/docs/concepts/quality-estimation).
+An engine that uses a **Comment only** prompt (see [AI engines and prompts](/docs/guides/ai-engines-and-prompts)) can run on either step type, but it works differently. It only adds AI comments and approves nothing, so a Hybrid step still sends everything to the assignee, and an AI step completes itself with nothing approved.
+
+Managers can run the check again with **Re-run AI step** in the CAT editor toolbar, or halt a run that is still going with **Stop**. When the run ends, the toast reads **AI step complete**. Read more in [Quality estimation](/docs/concepts/quality-estimation).
 
 ## Stop a running pipeline run
 
@@ -201,12 +204,14 @@ A name too long for the card is cut short; hover it to read it in full.
 
 Click a card to open the job in [the CAT editor](/docs/guides/cat-editor) in a new browser tab; the task list stays open in the first one. The file name is a link, so middle-click and Cmd/Ctrl+click work too.
 
+To work through several files in one editor grid, tick the checkbox on each card and click **Open in editor** in the bar that appears. The files must be of one project and one target language, and at most 500 can open together; the button is greyed out with the reason in its tooltip otherwise. **Complete step** in that editor [completes each file's step](#complete-a-step) on its own.
+
 The nearest deadline comes first, and tasks with no deadline come last. The page shows 50 tasks at a time; **Load more** shows the next 50.
 
 To narrow the list, use the bar above it:
 
 - The search box finds a file name or a project name.
-- **Step** shows only the tasks on one step.
+- **Step** shows only the tasks on one step. Type in the box at the top of its list to find a step by name.
 - **Deadline** shows **Overdue**, **Due within 24h**, **Due within 7 days** or **No deadline**.
 
 **Clear filters (N)** removes them all; the number counts the search and each active filter. The filters are kept in the page address, so a reload keeps them and you can bookmark a filtered view.
@@ -233,6 +238,8 @@ If the segments cannot be saved to a translation memory the project writes to, t
 The assigned person can complete a step, and so can any owner, admin or project manager. A linguist who is not the assignee cannot complete it, even when nobody is assigned.
 
 You can also complete several jobs at once: on the project's **Tasks** tab, [select their current steps](/docs/guides/projects-and-files#select-tasks-and-act-on-them) and click **Complete step** in the bar.
+
+In an editor grid with several files, **Complete step** lists every open file you can complete, each with how many segments it would leave unapproved. The dialog takes one comment for all the next assignees and, when some file still has drafts, offers **Approve all and complete**. Each file's step is completed on its own. A file that could not be completed stays open, and the dialog lists it with the reason, for example segments that could not be approved.
 
 ## Reopen a completed task
 

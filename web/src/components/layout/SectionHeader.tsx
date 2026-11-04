@@ -9,8 +9,10 @@ export type SectionLayout = 'collapsible' | 'static'
  * A static section title: heading on the left with an optional leading icon
  * and info icon, an optional action (a create button) on the right, nothing
  * underneath. For a tab that holds one list — there is nothing to collapse and
- * no second section to separate from — and the title of a `SettingsCard`.
- * `SlimCollapsibleSection` stays the toggling form.
+ * no second section to separate from: the title of a static `ListSection`
+ * (the AI and MT engine lists, the routers) and of the MT provider engines.
+ * `SlimCollapsibleSection` stays the toggling form; a settings page's section
+ * is a `SettingsCard`, which draws its own header row.
  */
 export function SectionHeader({ title, icon, info, chip, action, className, 'data-testid': testId }: {
   title: string

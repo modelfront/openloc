@@ -2,7 +2,8 @@
 // language codes in row 1. The backend repeats the checks
 // (internal/parser/xlsx_layout.go).
 
-import { ApiError, type XLSXColumnInfo, type XLSXInspection, type XLSXLayout, type XLSXSheetInfo } from '@/api'
+import { ApiError, type XLSXColumnInfo, type XLSXInspection, type XLSXLayout, type XLSXSheetInfo, type XLSXTargetColumn } from '@/api'
+import { targetColumnLabel, targetColumnsProblem } from './filter-options'
 
 /**
  * Whether an inspection failed because the server refused the workbook (a 4xx:
@@ -48,11 +49,15 @@ export function sheetColumns(sheet: XLSXSheetInfo | undefined, chosen: string[] 
   return cols.sort((a, b) => columnNumber(a.letter) - columnNumber(b.letter))
 }
 
-/** One sheet's choices. No columns means every text cell of the sheet. */
+/**
+ * One sheet's choices. No columns means every text cell of the sheet. Target
+ * columns come from the Excel filter profile and are kept as they are.
+ */
 export interface SheetChoice {
   name: string
   header_row: boolean
   columns: string[]
+  target_columns: XLSXTargetColumn[]
   included: boolean
 }
 
@@ -67,7 +72,10 @@ export function sheetChoices(inspection: XLSXInspection, initial: XLSXLayout): S
   for (const { name } of inspection.sheets) {
     const base = chosen.get(name) ?? suggested.get(name)
     if (!base) continue
-    out.push({ name, header_row: base.header_row ?? false, columns: base.columns ?? [], included: chosen.has(name) })
+    out.push({
+      name, header_row: base.header_row ?? false, columns: base.columns ?? [], target_columns: base.target_columns ?? [],
+      included: chosen.has(name),
+    })
   }
   return out
 }
@@ -81,21 +89,33 @@ function sortColumns(columns: string[]): string[] {
 export function sheetSummary(c: SheetChoice, offered: number): string {
   if (!c.included) return 'Not translated'
   if (c.columns.length === 0) return 'Whole sheet'
-  if (offered > 1 && c.columns.length >= offered) return 'All columns'
-  return `${c.columns.length === 1 ? 'Column' : 'Columns'} ${sortColumns(c.columns).join(', ')}`
+  const targets = c.target_columns.length
+    ? ` · translations in ${c.target_columns.map(t => targetColumnLabel(t)).join(', ')}`
+    : ''
+  if (offered > 1 && c.columns.length >= offered) return `All columns${targets}`
+  return `${c.columns.length === 1 ? 'Column' : 'Columns'} ${sortColumns(c.columns).join(', ')}${targets}`
 }
+
+/** layoutProblem's answer when no sheet is included. */
+export const NO_SHEET = 'Choose at least one sheet to translate.'
 
 /** The first problem with the choices, as a sentence; null when there is none. */
 export function layoutProblem(choices: SheetChoice[]): string | null {
-  return choices.some(c => c.included) ? null : 'Choose at least one sheet to translate.'
+  if (!choices.some(c => c.included)) return NO_SHEET
+  for (const c of choices) {
+    const problem = c.included ? targetColumnsProblem(c.columns, c.target_columns) : null
+    if (problem) return `Sheet ${c.name}: ${problem}`
+  }
+  return null
 }
 
 /** The layout the choices make, columns in sheet order. */
 export function choicesToLayout(choices: SheetChoice[]): XLSXLayout {
   return {
-    sheets: choices.filter(c => c.included).map(({ name, header_row, columns }) =>
-      columns.length > 0
-        ? { name, header_row, columns: sortColumns(columns) }
-        : { name, header_row }),
+    sheets: choices.filter(c => c.included).map(({ name, header_row, columns, target_columns }) => ({
+      name, header_row,
+      ...(columns.length > 0 && { columns: sortColumns(columns) }),
+      ...(target_columns.length > 0 && { target_columns }),
+    })),
   }
 }

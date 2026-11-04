@@ -38,6 +38,30 @@ describe('navItemsForRole', () => {
     expect(navItemsForRole('admin', false).map(i => i.label)).not.toContain('Organizations')
     expect(navItemsForRole('admin', true).map(i => i.label)).toContain('Organizations')
   })
+
+  it.each(['admin', 'project_manager'])('gives a vendor org %s Projects and Tasks only', role => {
+    expect(navItemsForRole(role, false, true).map(i => i.label)).toEqual(['Projects', 'Tasks'])
+  })
+
+  it('gives a vendor org linguist Tasks only', () => {
+    expect(navItemsForRole('linguist', false, true).map(i => i.label)).toEqual(['Tasks'])
+  })
+
+  it('keeps the operator console out of a vendor org', () => {
+    expect(navItemsForRole('admin', true, true).map(i => i.label)).toEqual(['Projects', 'Tasks'])
+  })
+})
+
+describe('NavRail in a vendor org', () => {
+  it('links to Projects and Tasks only', () => {
+    render(
+      <MemoryRouter initialEntries={['/projects']}>
+        <NavRail role="admin" isPlatformAdmin={false} vendorOrg />
+      </MemoryRouter>,
+    )
+    const nav = screen.getByRole('navigation')
+    expect([...nav.querySelectorAll('a')].map(a => a.getAttribute('href'))).toEqual(['/projects', '/tasks'])
+  })
 })
 
 describe('NavRail', () => {

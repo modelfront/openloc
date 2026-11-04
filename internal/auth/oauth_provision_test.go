@@ -78,6 +78,7 @@ func TestInviteMaterialize_MatchesExpiredVendorInvite(t *testing.T) {
 	owner := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@acme.test", "pw", "owner")
 
 	if _, err := q.CreateInvite(testutil.Ctx(), db.CreateInviteParams{
+		Kind:      "member",
 		TenantID:  tenant.ID,
 		Email:     "vendor@gmail.com",
 		Role:      auth.RoleLinguist,
@@ -115,6 +116,7 @@ func TestInviteMaterialize_ExistingAccountJoinsSecondOrg(t *testing.T) {
 	orgB := testutil.SeedTenant(t, q, "OrgB")
 	ownerB := testutil.SeedUserWithRole(t, q, orgB.ID, "ownerb@corp.test", "pw", "owner")
 	if _, err := q.CreateInvite(testutil.Ctx(), db.CreateInviteParams{
+		Kind:      "member",
 		TenantID:  orgB.ID,
 		Email:     "person@corp.test",
 		Role:      auth.RoleLinguist,
@@ -153,6 +155,7 @@ func TestInviteMaterialize_RevokedInviteRejected(t *testing.T) {
 	owner := testutil.SeedUserWithRole(t, q, tenant.ID, "owner@acme.test", "pw", "owner")
 
 	inv, err := q.CreateInvite(testutil.Ctx(), db.CreateInviteParams{
+		Kind:      "member",
 		TenantID:  tenant.ID,
 		Email:     "vendor@gmail.com",
 		Role:      auth.RoleLinguist,

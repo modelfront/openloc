@@ -230,6 +230,7 @@ type AIStepRunResult struct {
 	Total        int    `json:"total"`
 	AutoApproved int    `json:"auto_approved"`
 	NeedsReview  int    `json:"needs_review"`
+	Commented    int    `json:"commented"`
 	SkipReason   string `json:"skip_reason,omitempty"`
 }
 

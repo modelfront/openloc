@@ -1,0 +1,458 @@
+paths:
+  /filter-profiles:
+    get:
+      operationId: listFilterProfiles
+      summary: List filter profiles
+      description: >-
+        The built-in profiles and the organization's own, by id. A filter profile holds the import
+        options for one file format; each project and template names one per format, and an upload
+        may pick another.
+      tags:
+      - Filter profiles
+      x-roles: &filterReaders
+      - owner
+      - admin
+      - project_manager
+      - linguist
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: format
+        in: query
+        description: Keep one format's profiles.
+        schema:
+          $ref: '#/components/schemas/FilterFormat'
+      responses:
+        '200':
+          description: One page of profiles.
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  required:
+                  - data
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/FilterProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createFilterProfile
+      summary: Create a filter profile
+      description: >-
+        From options, or as a copy of another profile (`from_id`, a built-in or the organization's),
+        which takes its format. A built-in cannot be changed; copy it to make changes.
+      tags:
+      - Filter profiles
+      x-roles: &filterWriters
+      - owner
+      - admin
+      - project_manager
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterProfileInput'
+      responses:
+        '201':
+          description: The new profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FilterProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /filter-profiles/defaults:
+    put:
+      operationId: setFilterProfileDefault
+      summary: Set the organization's default filter profile for a format
+      description: >-
+        A project or template created without a template starts with the organization's default
+        for every format the request leaves out; a format with no default starts with its built-in
+        Default. Set a built-in or one of the organization's profiles of that format; null goes back
+        to the built-in Default. Changing a default leaves existing projects and templates as they
+        are. `org_default` on a profile shows the current one. The answer lists every format's
+        default.
+      tags:
+      - Filter profiles
+      x-roles: *filterWriters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterProfileDefaultInput'
+      responses:
+        '200':
+          description: The organization's defaults after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FilterProfileDefault'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /filter-profiles/{filterProfileID}:
+    parameters:
+    - $ref: '#/components/parameters/FilterProfileID'
+    get:
+      operationId: getFilterProfile
+      summary: Get a filter profile
+      tags:
+      - Filter profiles
+      x-roles: *filterReaders
+      responses:
+        '200':
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FilterProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      operationId: replaceFilterProfile
+      summary: Replace a filter profile
+      description: >-
+        A full replace of the name and options; the format never changes. Send the `updated_at` you
+        read: if the profile changed since, the answer is 409. Files already uploaded keep the options
+        they were read with; projects and templates that use the profile keep it. A built-in is 409.
+      tags:
+      - Filter profiles
+      x-roles: *filterWriters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FilterProfileInput'
+      responses:
+        '200':
+          description: The profile as saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/FilterProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      operationId: deleteFilterProfile
+      summary: Delete a filter profile
+      description: >-
+        Files already uploaded keep the options they were read with. Projects that use the profile go
+        back to the format's Default. A built-in, a profile a template uses, or the organization's
+        default for its format is 409.
+      tags:
+      - Filter profiles
+      x-roles: *filterWriters
+      responses:
+        '204':
+          description: Deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  parameters:
+    FilterProfileID:
+      name: filterProfileID
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    FilterFormat:
+      type: string
+      enum: [html, xlsx, json_i18n, po, txt, xml]
+      description: '`po` covers `.po` and `.pot` files; `xml` is generic XML, not Android string resources.'
+    FilterXLSXRules:
+      type: object
+      description: >-
+        What an Excel workbook without language codes in row 1 translates. Empty rules ask the
+        uploader for a layout instead.
+      required:
+      - sheets
+      - header_row
+      - columns
+      properties:
+        sheets:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+          description: Sheet names to translate; empty means every visible sheet.
+          example: [Products]
+        header_row:
+          type: boolean
+          description: Row 1 names the columns and is not translated.
+        columns:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+          description: Column letters to translate; empty means every text cell.
+          example: [B]
+        target_columns:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/XLSXTargetColumn'
+          description: >-
+            Each target language written into its own column, next to exactly one source column in
+            `columns`, which keeps its text. Empty writes each translation back into its source
+            cell. The export refuses a language that has no column.
+          example: [{language: fr, column: C}, {language: de, column: D}]
+    FilterHTMLOptions:
+      type: object
+      description: >-
+        HTML files. Left out on create, the defaults: alt and title of images, link and abbreviation
+        titles, form field labels and placeholders, the meta description, and `<pre>` left as is.
+      required:
+      - attributes
+      - meta_description
+      - skip_pre
+      properties:
+        attributes:
+          type: object
+          description: >-
+            Attributes translated per element, by element name. Only text attributes: `alt`,
+            `title`, `placeholder`, `abbr`, `label`, `summary`, the text `aria-*` attributes,
+            and `value` on `input`; none of `meta`, `link`, `base`, `html` or `head`.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example: { img: [alt, title], button: [aria-label] }
+        meta_description:
+          type: boolean
+          description: Translate `<meta name="description">`.
+        skip_pre:
+          type: boolean
+          description: Leave `<pre>` untranslated.
+    FilterXMLAttrValue:
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string, example: translate }
+        value: { type: string, example: "no" }
+    FilterXMLOptions:
+      type: object
+      description: Generic XML files. Left out on create, the defaults.
+      required:
+      - inline_elements
+      - no_translate
+      - ref_elements
+      - ref_attributes
+      - skip_elements
+      properties:
+        inline_elements:
+          type: array
+          items: { type: string }
+          description: Elements that are inline markup wherever they appear (tags inside a segment).
+          example: [b, i, em, strong, span]
+        no_translate:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterXMLAttrValue'
+          description: An element with one of these attribute values is not translated, with everything inside it. Each marker needs a value.
+        ref_elements:
+          type: array
+          items: { type: string }
+          description: Cross-reference elements, kept as one placeholder tag.
+          example: [meta-ref]
+        ref_attributes:
+          type: array
+          items: { type: string }
+          description: An element with one of these attributes set is a cross-reference.
+          example: [linkid]
+        skip_elements:
+          type: array
+          items: { type: string }
+          description: Elements left out of translation and kept as they are on export.
+          example: [code]
+    FilterOptions:
+      type: object
+      description: Only the fields of the profile's format are set.
+      properties:
+        inline_html:
+          type: boolean
+          description: >-
+            JSON, PO, TXT and Excel: tags in strings, such as `<b>`, become protected tags. Tags only:
+            attribute text is not translated, and HTML profile options do not apply. False reads
+            strings as plain text, exported as written. Defaults to true.
+        xlsx:
+          $ref: '#/components/schemas/FilterXLSXRules'
+        html:
+          $ref: '#/components/schemas/FilterHTMLOptions'
+        xml:
+          $ref: '#/components/schemas/FilterXMLOptions'
+    FilterProfile:
+      type: object
+      required:
+      - id
+      - name
+      - builtin_key
+      - format
+      - builtin
+      - org_default
+      - description
+      - based_on_id
+      - options
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Product sheet
+        builtin_key:
+          type: string
+          nullable: true
+          description: The built-in and its version, such as `builtin:xlsx-default@1`; null on the organization's profiles.
+        format:
+          $ref: '#/components/schemas/FilterFormat'
+        builtin:
+          type: boolean
+          description: Built-ins are read-only.
+        org_default:
+          type: boolean
+          description: The organization's default for the format.
+        description:
+          type: string
+        based_on_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The profile this one was copied from.
+        options:
+          $ref: '#/components/schemas/FilterOptions'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    FilterProfileInput:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          example: Product sheet
+        format:
+          $ref: '#/components/schemas/FilterFormat'
+        options:
+          $ref: '#/components/schemas/FilterOptions'
+        from_id:
+          type: integer
+          format: int64
+          description: On create, copy this profile's format and, when `options` is left out, its options.
+        updated_at:
+          type: string
+          format: date-time
+          description: Required on replace; the `updated_at` you read.
+    FilterProfileDefault:
+      type: object
+      required:
+      - format
+      - filter_profile_id
+      - name
+      properties:
+        format:
+          $ref: '#/components/schemas/FilterFormat'
+        filter_profile_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Plain text strings
+    FilterProfileDefaultInput:
+      type: object
+      required:
+      - format
+      - filter_profile_id
+      properties:
+        format:
+          $ref: '#/components/schemas/FilterFormat'
+        filter_profile_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: The profile; null goes back to the built-in Default.

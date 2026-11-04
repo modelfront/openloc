@@ -252,6 +252,28 @@ func TestIntegrationAIEngines(t *testing.T) {
 		t.Fatalf("want a 'QE+APE prompt' message, got %s", body)
 	}
 
+	// A comment-only prompt (comments, no status, no text) reviews: an MT
+	// engine refuses it by name, a QE+APE engine runs it.
+	commentPrompt, err := q.CreateAIPrompt(context.Background(), db.CreateAIPromptParams{
+		TenantID: tenantA.ID, Name: "comment-prompt", PromptText: "advise", OutComments: true,
+	})
+	if err != nil {
+		t.Fatalf("seed comment prompt: %v", err)
+	}
+	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/ai/engines",
+		map[string]any{"name": "mt-comment-prompt", "purpose": "mt", "rows": []map[string]any{
+			llmRow(map[string]any{"system_prompt_id": commentPrompt.ID}),
+		}}, ownerA.ID, tenantA.ID, "owner")
+	testutil.AssertStatus(t, rec, http.StatusBadRequest)
+	if body := rec.Body.String(); !strings.Contains(body, "Comment only prompt") {
+		t.Fatalf("want a 'Comment only prompt' message, got %s", body)
+	}
+	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/ai/engines",
+		map[string]any{"name": "comment-engine", "purpose": "qe_ape", "rows": []map[string]any{
+			llmRow(map[string]any{"system_prompt_id": commentPrompt.ID}),
+		}}, ownerA.ID, tenantA.ID, "owner")
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+
 	// …nor an extension (an extension reviews, it can't machine-translate).
 	rec = testutil.DoRequestWithRole(t, router, "POST", "/api/ai/engines",
 		map[string]any{"name": "mt-ext", "purpose": "mt", "rows": []map[string]any{

@@ -44,7 +44,8 @@ import { FormField } from '@/components/ui/form-field'
 import { DeadlinePicker } from '@/components/ui/deadline-picker'
 import { useScrollToError } from '../hooks/useScrollToError'
 import { langPickerProps, toLangOptions } from '../components/lang-options'
-import { SettingsEditor } from '../components/SettingsEditor'
+import { SettingsEditor, type SettingsValues } from '../components/SettingsEditor'
+import type { FilterProfileChoice } from '../api'
 import { useFormSegmentation } from '../hooks/useSegmentationProfiles'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Chip } from '@/components/ui/chip'
@@ -644,6 +645,7 @@ export default function ProjectCreate() {
           ensureDraft={draft.ensureDraft}
           analyze={analyzeUploaded}
           onAnalyzeChange={setAnalyzeUploaded}
+          filterChoices={choicesOf(settings.filterProfileIds)}
         />
 
         {/* Actions. Save as template keeps the page; Create project leaves it. */}
@@ -679,4 +681,9 @@ export default function ProjectCreate() {
       />
     </PageContainer>
   )
+}
+
+/** The form's filter picks as the upload dialog takes them; names unused. */
+function choicesOf(ids: SettingsValues['filterProfileIds']): FilterProfileChoice[] {
+  return Object.entries(ids).flatMap(([format, id]) => (id == null ? [] : [{ format, id, name: '' }]))
 }

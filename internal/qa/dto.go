@@ -46,6 +46,24 @@ type ReportDTO struct {
 	ProfileAssigned bool `json:"profile_assigned"`
 }
 
+// Outcomes of a scope QA run on one job.
+const (
+	// ScopeRunDone: the job's rows were checked.
+	ScopeRunDone = "done"
+	// ScopeRunNoProfile: the project has no QA profile, so nothing ran.
+	ScopeRunNoProfile = "no_profile"
+	// ScopeRunFailed: the run failed; the other jobs still ran.
+	ScopeRunFailed = "failed"
+)
+
+// ScopeRunJob is what a scope QA run did on one job.
+type ScopeRunJob struct {
+	JobID   int64  `json:"job_id"`
+	Outcome string `json:"outcome"`
+	// Issues is the number of findings written, ignored ones included.
+	Issues int `json:"issues"`
+}
+
 func tsPtr(ts pgtype.Timestamptz) *string {
 	if !ts.Valid {
 		return nil

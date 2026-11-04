@@ -54,15 +54,16 @@ describe('buildProjectCreatePayload', () => {
   })
 })
 
-// "Strings contain HTML" off in the wizard must reach the server, or the new
-// project parses its files as HTML.
-describe('buildProjectSetupPayload: inline_html', () => {
-  it('sends false when the draft turned it off', () => {
-    expect(buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, inlineHTML: false }).settings.inline_html).toBe(false)
+// The wizard sends every format: its pick, or null for the Default, so a
+// template's pick the user set back to Default is not kept by the server.
+describe('buildProjectSetupPayload: filter_profile_ids', () => {
+  it('sends the picks and null for every other format', () => {
+    expect(buildProjectSetupPayload('', { ...DEFAULT_SETTINGS, filterProfileIds: { xlsx: 7 } }).settings.filter_profile_ids)
+      .toEqual({ html: null, xlsx: 7, json_i18n: null, po: null, txt: null, xml: null })
   })
 
-  it('sends true by default', () => {
-    expect(buildProjectSetupPayload('', DEFAULT_SETTINGS).settings.inline_html).toBe(true)
+  it('sends null everywhere by default', () => {
+    expect(Object.values(buildProjectSetupPayload('', DEFAULT_SETTINGS).settings.filter_profile_ids)).toEqual([null, null, null, null, null, null])
   })
 })
 

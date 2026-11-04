@@ -19,7 +19,7 @@ func TestIntegrationSeedBuildsScenariosAndIsIdempotent(t *testing.T) {
 
 	tenant := testutil.SeedTenant(t, q, seedid.OrgName)
 	testutil.SeedUserWithRole(t, q, tenant.ID, seedid.OwnerEmail, "pw", "owner")
-	testutil.SeedUserWithRole(t, q, tenant.ID, seedid.VendorEmail, "pw", "linguist")
+	testutil.SeedUserWithRole(t, q, tenant.ID, seedid.LinguistEmail, "pw", "linguist")
 
 	spec := devseed.Spec{
 		ProjectName: "Seed test", TargetLangs: []string{"de", "fr"}, Steps: devseed.FourSteps, Translations: true,

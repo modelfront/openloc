@@ -36,7 +36,8 @@ type XLSX struct {
 	PlainText bool
 	// Layout, when set, reads the sheets and columns the uploader chose instead
 	// of either mode above (see xlsx_layout.go); the export writes each
-	// translation back into its own cell, as in the cell mode.
+	// translation back into its own cell, as in the cell mode, or into the
+	// language's column of a sheet with target columns (xlsx_targets.go).
 	Layout *XLSXLayout
 	// AllCells reads every text cell of every visible sheet even when row 1
 	// holds language codes, for a reader that wants the whole workbook.
@@ -145,7 +146,11 @@ func (p XLSX) reconstruct(ctx context.Context, original []byte, translations map
 	defer f.Close()
 
 	if p.Layout != nil {
-		if err := writeXLSXCells(f, translations, p.PlainText); err != nil {
+		dest, err := layoutTargetColumns(*p.Layout, targetLang)
+		if err != nil {
+			return nil, fmt.Errorf("xlsx reconstruct: %w", err)
+		}
+		if err := writeXLSXCells(f, translations, p.PlainText, dest); err != nil {
 			return nil, fmt.Errorf("xlsx reconstruct: %w", err)
 		}
 		return writeXLSX(f)
@@ -166,7 +171,7 @@ func (p XLSX) reconstruct(ctx context.Context, original []byte, translations map
 		return nil, fmt.Errorf("xlsx reconstruct: %w", &ExportError{Msg: "Row 1 has only one language code, so the export cannot tell which column is the job's language. Head each language column with its code, such as fr or pt-BR, or export as bilingual XLIFF."})
 	}
 	if monolingual && !xlsxRowKeyed(translations) {
-		if err := writeXLSXCells(f, translations, p.PlainText); err != nil {
+		if err := writeXLSXCells(f, translations, p.PlainText, nil); err != nil {
 			return nil, fmt.Errorf("xlsx reconstruct: %w", err)
 		}
 		return writeXLSX(f)
@@ -232,14 +237,7 @@ func xlsxTargetColumn(targetCols map[string]int, targetLang string) (int, error)
 	if col, ok := targetCols[lang]; ok {
 		return col, nil
 	}
-	// A bare base code and its regions match each other (fr ↔ fr-CA); two
-	// regions of one base (zh-Hans ↔ zh-Hant) are different languages.
-	var related []string
-	for l := range targetCols {
-		if langcode.BaseLang(l) == lang || langcode.BaseLang(lang) == l {
-			related = append(related, l)
-		}
-	}
+	related := relatedLangs(targetCols, lang)
 	switch len(related) {
 	case 1:
 		return targetCols[related[0]], nil
@@ -249,6 +247,20 @@ func xlsxTargetColumn(targetCols map[string]int, targetLang string) (int, error)
 		slices.Sort(related)
 		return 0, &ExportError{Msg: fmt.Sprintf("Language %q matches several target columns (%s). Give the job's language its own column, or export as bilingual XLIFF.", targetLang, strings.Join(related, ", "))}
 	}
+}
+
+// relatedLangs lists the languages of targetCols that lang, normalized,
+// matches by base code: a bare base code and its regions match each other
+// (fr ↔ fr-CA); two regions of one base (zh-Hans ↔ zh-Hant) are different
+// languages.
+func relatedLangs(targetCols map[string]int, lang string) []string {
+	var related []string
+	for l := range targetCols {
+		if langcode.BaseLang(l) == lang || langcode.BaseLang(lang) == l {
+			related = append(related, l)
+		}
+	}
+	return related
 }
 
 // XLSXTarget is one target cell: its plain text, and its inline tags in the
@@ -271,12 +283,16 @@ func ExtractXLSXTargets(content []byte, targetLangs []string) (map[string]map[st
 // ExtractTargets is ExtractXLSXTargets for a workbook whose cells are plain
 // text when p.PlainText is set.
 func (p XLSX) ExtractTargets(content []byte, targetLangs []string) (_ map[string]map[string]XLSXTarget, err error) {
-	// A layout's translations go back into their source cells: there is no
-	// target column to read, so the workbook is not opened.
-	if p.Layout != nil {
+	// A layout without target columns writes its translations back into
+	// their source cells: there is no target column to read, so the workbook
+	// is not opened.
+	if p.Layout != nil && !p.Layout.Multilingual() {
 		return nil, nil
 	}
 	defer recoverXLSX(context.Background(), "xlsx extract", &err)
+	if p.Layout != nil {
+		return p.extractLayoutTargets(content, targetLangs)
+	}
 	f, err := openXLSX(content)
 	if err != nil {
 		return nil, fmt.Errorf("xlsx extract: open failed: %w", err)

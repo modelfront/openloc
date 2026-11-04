@@ -80,6 +80,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 		httputil.ServerError(w, "list", "chat models")
 		return
 	}
+	def := h.defaultModel(r.Context(), claims.TenantID)
 	out := make([]ChatModel, 0, 8)
 	for _, p := range chatProviders {
 		for _, m := range h.catalog.Models(r.Context(), claims.TenantID, p) {
@@ -89,11 +90,21 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 				Label:      m.Label,
 				Connected:  connected[p],
 				Selectable: connected[p] && adapterFor(p),
-				Default:    m.ID == DefaultModel,
+				Default:    m.ID == def,
 			})
 		}
 	}
 	httputil.Data(w, out)
+}
+
+// defaultModel is the model a chat without a choice runs on: the newest Sonnet
+// the tenant's Claude key lists, else FallbackModel (no key yet, or a list
+// without a Sonnet).
+func (h *Handler) defaultModel(ctx context.Context, tenantID int64) string {
+	if m := ai.NewestSonnet(h.catalog.Models(ctx, tenantID, ai.ProviderClaude)); m != "" {
+		return m
+	}
+	return FallbackModel
 }
 
 func (h *Handler) connectedProviders(ctx context.Context, tenantID int64) (map[string]bool, error) {
@@ -115,7 +126,7 @@ func (h *Handler) connectedProviders(ctx context.Context, tenantID int64) (map[s
 // mistake worth a clear 400, not something to silently coerce to the default.
 func (h *Handler) validateModel(ctx context.Context, tenantID int64, requested string) (model string, ok bool) {
 	if requested == "" {
-		return DefaultModel, true
+		return h.defaultModel(ctx, tenantID), true
 	}
 	p := ai.ProviderForModelID(requested)
 	if p == "" || !adapterFor(p) {

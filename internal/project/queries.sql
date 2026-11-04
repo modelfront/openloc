@@ -38,6 +38,20 @@ WHERE p.tenant_id = @tenant_id AND p.deleted_at IS NULL
   AND (sqlc.narg('target_lang')::text IS NULL OR p.target_languages @> ARRAY[sqlc.narg('target_lang')::text])
   AND (sqlc.narg('created_by')::bigint IS NULL OR p.created_by = sqlc.narg('created_by')::bigint)
   AND (sqlc.narg('q')::text IS NULL OR p.name ILIKE '%' || sqlc.narg('q')::text || '%')
+  -- deadline_bands keeps the projects in any of the named bands. Bands and
+  -- their edges are the deadline chip's (web/src/lib/deadline.ts): overdue,
+  -- approaching (due within 24h), soon (1-7 days), far (later), none (no
+  -- deadline). A completed project is never overdue or due, so it lands only
+  -- in none, and only when it has no deadline.
+  AND (sqlc.narg('deadline_bands')::text[] IS NULL
+       OR ('none' = ANY(sqlc.narg('deadline_bands')::text[]) AND p.deadline IS NULL)
+       OR (p.status <> 'completed' AND (
+            ('overdue' = ANY(sqlc.narg('deadline_bands')::text[]) AND p.deadline < now())
+         OR ('approaching' = ANY(sqlc.narg('deadline_bands')::text[])
+             AND p.deadline >= now() AND p.deadline <= now() + interval '24 hours')
+         OR ('soon' = ANY(sqlc.narg('deadline_bands')::text[])
+             AND p.deadline > now() + interval '24 hours' AND p.deadline <= now() + interval '7 days')
+         OR ('far' = ANY(sqlc.narg('deadline_bands')::text[]) AND p.deadline > now() + interval '7 days'))))
 ORDER BY p.id DESC
 LIMIT @lim;
 

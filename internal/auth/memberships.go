@@ -2,10 +2,14 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
-	db "openloc/internal/database/sqlcgen"
+	"github.com/jackc/pgx/v5"
 
+	"openloc/internal/database"
+	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
 )
 
@@ -100,9 +104,17 @@ func (h *Handler) materializeMemberships(ctx context.Context, userID int64, emai
 	h.ensureDomainMembership(ctx, userID, email)
 }
 
-// acceptInviteAsMembership creates the membership the invite grants and marks
-// the invite accepted. ON CONFLICT keeps an existing role, so re-running is safe.
+// acceptInviteAsMembership grants what the invite grants and marks it
+// accepted. A member invite adds a membership in the inviting org; ON CONFLICT
+// keeps an existing role, so re-running is safe. A vendor-org invite creates a
+// vendor org instead and never a membership in the inviting (client) org.
 func (h *Handler) acceptInviteAsMembership(ctx context.Context, userID int64, inv db.Invite) {
+	if inv.Kind == InviteKindVendorOrg {
+		if err := h.acceptVendorOrgInvite(ctx, userID, inv.ID); err != nil {
+			logging.Error(ctx, err, "vendor org not created from invite", "auth-vendor-org-invite-accept-failed", logging.InviteID(inv.ID))
+		}
+		return
+	}
 	if err := h.queries.CreateMembership(ctx, db.CreateMembershipParams{
 		UserID:   userID,
 		TenantID: inv.TenantID,
@@ -114,6 +126,43 @@ func (h *Handler) acceptInviteAsMembership(ctx context.Context, userID int64, in
 	if _, err := h.queries.AcceptInvite(ctx, inv.ID); err != nil {
 		logging.Error(ctx, err, "invite not marked accepted", "auth-invite-accept-failed", logging.InviteID(inv.ID))
 	}
+}
+
+// acceptVendorOrgInvite creates the vendor org a vendor-org invite asks for,
+// linked to the inviting client org, with userID as its admin, and marks the
+// invite accepted, all in one transaction. The invite row is locked first, so
+// of two concurrent accepts one creates the org and the other finds the
+// invite accepted and does nothing. A vendor org gets no MT, dashboard or
+// workflow defaults: it creates no projects.
+func (h *Handler) acceptVendorOrgInvite(ctx context.Context, userID, inviteID int64) error {
+	return database.InTx(ctx, h.pool, func(_ pgx.Tx, q db.Querier) error {
+		inv, err := q.LockPendingInviteForAccept(ctx, inviteID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("lock invite: %w", err)
+		}
+		if inv.Kind != InviteKindVendorOrg || inv.VendorOrgName == nil {
+			return fmt.Errorf("invite %d is not a vendor-org invite", inv.ID)
+		}
+		name := *inv.VendorOrgName
+		vendor, err := createTenantWithSlugRetry(ctx, name, func(slug string) (db.Tenant, error) {
+			return q.CreateVendorTenant(ctx, db.CreateVendorTenantParams{Name: name, Slug: slug, ClientTenantID: inv.TenantID})
+		})
+		if err != nil {
+			return fmt.Errorf("create vendor org: %w", err)
+		}
+		if err := q.CreateMembership(ctx, db.CreateMembershipParams{UserID: userID, TenantID: vendor.ID, Role: RoleAdmin}); err != nil {
+			return fmt.Errorf("create vendor admin membership: %w", err)
+		}
+		if _, err := q.AcceptInvite(ctx, inv.ID); err != nil {
+			return fmt.Errorf("mark invite accepted: %w", err)
+		}
+		logging.Info(ctx, "vendor org created from invite", "auth-vendor-org-created",
+			logging.TenantID(vendor.ID), logging.InviteID(inv.ID), logging.UserID(userID))
+		return nil
+	})
 }
 
 // ensureDomainMembership grants a project_manager membership if the email domain

@@ -9,6 +9,7 @@ import (
 
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/logging"
+	"openloc/internal/parser"
 	"openloc/internal/pipeline"
 )
 
@@ -29,13 +30,16 @@ type JobView struct {
 	FileName       string `json:"file_name"`
 	FileFormat     string `json:"file_format"`
 	// FileInlineHTML: the file's strings are HTML (chips); false = plain text.
-	FileInlineHTML bool    `json:"file_inline_html"`
-	FileCreatedAt  string  `json:"file_created_at"`
-	SegmentCount   int32   `json:"segment_count"`
-	Status         string  `json:"status"`
-	PipelineStatus string  `json:"pipeline_status"`
-	CurrentStep    string  `json:"current_step,omitempty"`
-	ErrorMessage   *string `json:"error_message,omitempty"`
+	FileInlineHTML bool `json:"file_inline_html"`
+	// FileMultilingual: an Excel file with a column per target language; the
+	// Files tab downloads its languages as one workbook.
+	FileMultilingual bool    `json:"file_multilingual"`
+	FileCreatedAt    string  `json:"file_created_at"`
+	SegmentCount     int32   `json:"segment_count"`
+	Status           string  `json:"status"`
+	PipelineStatus   string  `json:"pipeline_status"`
+	CurrentStep      string  `json:"current_step,omitempty"`
+	ErrorMessage     *string `json:"error_message,omitempty"`
 	// FailedPhase names the automation a failed job stopped in; the editor and
 	// the task matrix offer Re-run from it. Empty unless the job failed.
 	FailedPhase pipeline.FailedPhase `json:"failed_phase,omitempty"`
@@ -233,31 +237,32 @@ func (s *Service) views(ctx context.Context, tenantID int64, project db.Project,
 	for i, j := range jobs {
 		c := tcMap[countsKey{FileID: j.FileID, TargetLanguage: j.TargetLanguage}]
 		result[i] = JobView{
-			ID:              j.ID,
-			FileID:          j.FileID,
-			TargetLanguage:  j.TargetLanguage,
-			WordCount:       j.WordCount,
-			ProjectID:       project.ID,
-			ProjectName:     project.Name,
-			SourceLanguage:  project.SourceLanguage,
-			FileName:        j.FileName,
-			FileFormat:      string(j.FileFormat),
-			FileInlineHTML:  j.FileInlineHtml,
-			FileCreatedAt:   formatTS(j.FileCreatedAt),
-			SegmentCount:    j.SegmentCount,
-			Status:          deriveStatus(c),
-			PipelineStatus:  j.Status,
-			CurrentStep:     j.CurrentStep,
-			ErrorMessage:    j.ErrorMessage,
-			FailedPhase:     pipeline.FailedPhaseOf(j.Status, j.CurrentStep),
-			MTSkipReason:    j.MtSkipReason,
-			StopRequestedAt: formatOptionalTS(j.StopRequestedAt),
-			TranslatedCount: j.TranslatedCount,
-			TotalCount:      j.TotalCount,
-			Counts:          c,
-			CreatedAt:       formatTS(j.CreatedAt),
-			UpdatedAt:       formatTS(j.UpdatedAt),
-			WorkflowStep:    wfMap[j.ID],
+			ID:               j.ID,
+			FileID:           j.FileID,
+			TargetLanguage:   j.TargetLanguage,
+			WordCount:        j.WordCount,
+			ProjectID:        project.ID,
+			ProjectName:      project.Name,
+			SourceLanguage:   project.SourceLanguage,
+			FileName:         j.FileName,
+			FileFormat:       string(j.FileFormat),
+			FileInlineHTML:   j.FileInlineHtml,
+			FileMultilingual: parser.MultilingualXLSX(j.FileXlsxLayout),
+			FileCreatedAt:    formatTS(j.FileCreatedAt),
+			SegmentCount:     j.SegmentCount,
+			Status:           deriveStatus(c),
+			PipelineStatus:   j.Status,
+			CurrentStep:      j.CurrentStep,
+			ErrorMessage:     j.ErrorMessage,
+			FailedPhase:      pipeline.FailedPhaseOf(j.Status, j.CurrentStep),
+			MTSkipReason:     j.MtSkipReason,
+			StopRequestedAt:  formatOptionalTS(j.StopRequestedAt),
+			TranslatedCount:  j.TranslatedCount,
+			TotalCount:       j.TotalCount,
+			Counts:           c,
+			CreatedAt:        formatTS(j.CreatedAt),
+			UpdatedAt:        formatTS(j.UpdatedAt),
+			WorkflowStep:     wfMap[j.ID],
 
 			LastClearStepOrder: lastClear[j.ID],
 		}
@@ -302,30 +307,31 @@ func (s *Service) Detail(ctx context.Context, tenantID, jobID int64) (JobView, e
 		ClearableAll:          tc.ClearableAll,
 	}
 	view := JobView{
-		ID:              job.ID,
-		FileID:          job.FileID,
-		TargetLanguage:  job.TargetLanguage,
-		WordCount:       job.WordCount,
-		ProjectID:       project.ID,
-		ProjectName:     project.Name,
-		SourceLanguage:  project.SourceLanguage,
-		FileName:        file.Name,
-		FileFormat:      string(file.Format),
-		FileInlineHTML:  file.InlineHtml,
-		FileCreatedAt:   formatTS(file.CreatedAt),
-		SegmentCount:    c.Total,
-		Status:          deriveStatus(c),
-		PipelineStatus:  job.Status,
-		CurrentStep:     job.CurrentStep,
-		ErrorMessage:    job.ErrorMessage,
-		FailedPhase:     pipeline.FailedPhaseOf(job.Status, job.CurrentStep),
-		MTSkipReason:    job.MtSkipReason,
-		StopRequestedAt: formatOptionalTS(job.StopRequestedAt),
-		TranslatedCount: job.TranslatedCount,
-		TotalCount:      job.TotalCount,
-		Counts:          c,
-		CreatedAt:       formatTS(job.CreatedAt),
-		UpdatedAt:       formatTS(job.UpdatedAt),
+		ID:               job.ID,
+		FileID:           job.FileID,
+		TargetLanguage:   job.TargetLanguage,
+		WordCount:        job.WordCount,
+		ProjectID:        project.ID,
+		ProjectName:      project.Name,
+		SourceLanguage:   project.SourceLanguage,
+		FileName:         file.Name,
+		FileFormat:       string(file.Format),
+		FileInlineHTML:   file.InlineHtml,
+		FileMultilingual: parser.MultilingualXLSX(file.XlsxLayout),
+		FileCreatedAt:    formatTS(file.CreatedAt),
+		SegmentCount:     c.Total,
+		Status:           deriveStatus(c),
+		PipelineStatus:   job.Status,
+		CurrentStep:      job.CurrentStep,
+		ErrorMessage:     job.ErrorMessage,
+		FailedPhase:      pipeline.FailedPhaseOf(job.Status, job.CurrentStep),
+		MTSkipReason:     job.MtSkipReason,
+		StopRequestedAt:  formatOptionalTS(job.StopRequestedAt),
+		TranslatedCount:  job.TranslatedCount,
+		TotalCount:       job.TotalCount,
+		Counts:           c,
+		CreatedAt:        formatTS(job.CreatedAt),
+		UpdatedAt:        formatTS(job.UpdatedAt),
 	}
 
 	lastClear, err := s.queries.GetJobLastClearStepOrder(ctx, job.ID)

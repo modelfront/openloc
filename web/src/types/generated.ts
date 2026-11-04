@@ -341,6 +341,47 @@ export interface File {
   inline_html: boolean;
   xlsx_layout: unknown;
 }
+export interface FilterBuiltinProfile {
+  id: number /* int64 */;
+  builtin_key: string;
+  name: string;
+  format: string;
+  description: string;
+  options: string /* []byte */;
+  created_at: string;
+}
+export interface FilterProfile {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  name: string;
+  format: string;
+  options: string /* []byte */;
+  based_on?: number /* int64 */;
+  created_by?: number /* int64 */;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string;
+}
+export interface FilterProfileCatalog {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
+  builtin_key?: string;
+  name: string;
+  format: string;
+  description: string;
+  options: string /* []byte */;
+  based_on?: number /* int64 */;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string;
+}
+export interface FilterProfileDefault {
+  tenant_id: number /* int64 */;
+  format: string;
+  filter_profile_id: number /* int64 */;
+  updated_by?: number /* int64 */;
+  updated_at: string;
+}
 export interface Invite {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
@@ -351,6 +392,8 @@ export interface Invite {
   accepted_at: string;
   expires_at: string;
   created_at: string;
+  kind: string;
+  vendor_org_name?: string;
 }
 export interface Issue {
   id: number /* int64 */;
@@ -581,6 +624,10 @@ export interface Membership {
   tenant_id: number /* int64 */;
   role: string;
   created_at: string;
+  last_active_at: string;
+  inactivity_warned_at: string;
+  disabled_at: string;
+  inactivity_warning_claimed_at: string;
 }
 export interface MfEngine {
   engine_id: number /* int64 */;
@@ -853,10 +900,14 @@ export interface SettingsProfile {
   workflow_id?: number /* int64 */;
   mt_router_id?: number /* int64 */;
   tm_lookup_order: string;
-  inline_html: boolean;
   workflow_edited: boolean;
   segmentation_profile_id?: number /* int64 */;
   linguist_terms: string;
+}
+export interface SettingsProfileFilterProfile {
+  settings_profile_id: number /* int64 */;
+  format: string;
+  filter_profile_id: number /* int64 */;
 }
 export interface SettingsTerminologyAssignment {
   id: number /* int64 */;
@@ -927,6 +978,7 @@ export interface Tenant {
   kind: string;
   demo_version?: number /* int32 */;
   demo_built_at: string;
+  client_tenant_id?: number /* int64 */;
 }
 export interface Term {
   id: number /* int64 */;
@@ -1122,6 +1174,7 @@ export interface UserLanguagePair {
   target_lang: string;
   created_at: string;
   row_group: number /* int32 */;
+  tenant_id: number /* int64 */;
 }
 export interface Workflow {
   id: number /* int64 */;
@@ -1372,6 +1425,20 @@ export interface ClaimFailedJobForRerunParams {
   current_step: string;
   id: number /* int64 */;
 }
+export interface ClaimInactivityWarningsParams {
+  claims_expire_before: string;
+  unused_since: string;
+  lim: number /* int32 */;
+}
+export interface ClaimInactivityWarningsRow {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  user_id: number /* int64 */;
+  last_active_at: string;
+  email: string;
+  name: string;
+  tenant_name: string;
+}
 export interface ClaimJobPipelineParams {
   current_step: string;
   id: number /* int64 */;
@@ -1385,9 +1452,21 @@ export interface ClaimJobPipelineRow {
   total_count?: number /* int32 */;
   updated_at: string;
 }
+export interface ClearFilterProfileDefaultParams {
+  tenant_id: number /* int64 */;
+  format: string;
+}
+export interface ClearFilterProfileFromProjectsParams {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
 export interface ClearSegmentationProfileFromProjectsParams {
   tenant_id: number /* int64 */;
   id: number /* int64 */;
+}
+export interface ClearSettingsFilterProfileParams {
+  settings_profile_id: number /* int64 */;
+  format: string;
 }
 export interface ClearTranslationParams {
   id: number /* int64 */;
@@ -1434,6 +1513,10 @@ export interface ConsumeOAuthCodeRow {
   resource: string;
   expires_at: string;
 }
+export interface CopySettingsFilterProfilesParams {
+  dst: number /* int64 */;
+  src: number /* int64 */;
+}
 export interface CountAIRouterRefsForAIEngineParams {
   tenant_id: number /* int64 */;
   engine_id?: number /* int64 */;
@@ -1454,6 +1537,23 @@ export interface CountConceptsParams {
   term_base_id: number /* int64 */;
   search: string;
   langs: string[];
+}
+export interface CountEditorCommentsParams {
+  file_ids: number /* int64 */[];
+  target_language: string;
+  tenant_id: number /* int64 */;
+}
+export interface CountEditorCommentsRow {
+  translation_id: number /* int64 */;
+  comment_count: number /* int32 */;
+}
+export interface CountFilterProfileUsesParams {
+  tenant_id: number /* int64 */;
+  id: number /* int64 */;
+}
+export interface CountFilterProfileUsesRow {
+  projects: number /* int64 */;
+  templates: number /* int64 */;
 }
 export interface CountHeldClearableByJobParams {
   job_id: number /* int64 */;
@@ -1482,6 +1582,10 @@ export interface CountJobSegmentsPageParams {
   status: string;
   origin: string;
   query: string;
+}
+export interface CountJobsAssignedToUserParams {
+  job_ids: number /* int64 */[];
+  user_id?: number /* int64 */;
 }
 export interface CountJobsByFilesRow {
   file_id: number /* int64 */;
@@ -1525,7 +1629,7 @@ export interface CountProjectsFromTemplateParams {
 }
 export interface CountPropagationTargetsParams {
   actor_id?: number /* int64 */;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   source_text: string;
   target_language: string;
   exclude_id: number /* int64 */;
@@ -1611,6 +1715,10 @@ export interface CountUnreadNotificationsParams {
   tenant_id: number /* int64 */;
 }
 export interface CreateAICommentParams {
+  translation_id: number /* int64 */;
+  content: string;
+}
+export interface CreateAICommentUnlessDuplicateParams {
   translation_id: number /* int64 */;
   content: string;
 }
@@ -1746,6 +1854,15 @@ export interface CreateFileParams {
   inline_html?: boolean;
   xlsx_layout: string /* []byte */;
   segmentation: string /* []byte */;
+  filter_profile: string /* []byte */;
+}
+export interface CreateFilterProfileParams {
+  tenant_id: number /* int64 */;
+  name: string;
+  format: string;
+  options: string /* []byte */;
+  based_on?: number /* int64 */;
+  created_by?: number /* int64 */;
 }
 export interface CreateInviteParams {
   tenant_id: number /* int64 */;
@@ -1754,6 +1871,8 @@ export interface CreateInviteParams {
   invited_by: number /* int64 */;
   token: string;
   expires_at: string;
+  kind: string;
+  vendor_org_name?: string;
 }
 export interface CreateIssueParams {
   tenant_id: number /* int64 */;
@@ -2062,6 +2181,11 @@ export interface CreateUserParams {
   password_hash?: string;
   name: string;
 }
+export interface CreateVendorTenantParams {
+  name: string;
+  slug: string;
+  client_tenant_id: number /* int64 */;
+}
 export interface CreateVendorTokenParams {
   vendor_id: number /* int64 */;
   name: string;
@@ -2182,9 +2306,23 @@ export interface DemoWorkspacePresentParams {
   tenant_id: number /* int64 */;
   marker_project_name: string;
 }
+export interface DisableInactiveVendorMembershipsParams {
+  unused_since: string;
+  warned_before: string;
+  lim: number /* int32 */;
+}
 export interface DismissJobFailureParams {
   current_step: string;
   id: number /* int64 */;
+}
+export interface EnableMembershipParams {
+  tenant_id: number /* int64 */;
+  user_id: number /* int64 */;
+}
+export interface EnableVendorAdminParams {
+  client_tenant_id?: number /* int64 */;
+  vendor_tenant_id: number /* int64 */;
+  user_id: number /* int64 */;
 }
 export interface EnsureDeploymentMTEngineParams {
   name: string;
@@ -2550,6 +2688,14 @@ export interface GetExtensionIconParams {
 export interface GetFileTenantParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface GetFilterProfileParams {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
+}
+export interface GetFilterProfileForImportParams {
+  id: number /* int64 */;
+  tenant_id?: number /* int64 */;
 }
 export interface GetFirstVendorTokenParams {
   tenant_id: number /* int64 */;
@@ -3044,6 +3190,10 @@ export interface GetSegmentationProfileForImportParams {
   id: number /* int64 */;
   tenant_id?: number /* int64 */;
 }
+export interface GetSettingsFilterProfileParams {
+  settings_profile_id: number /* int64 */;
+  format: string;
+}
 export interface GetSharedSegmentByKeyParams {
   file_id: number /* int64 */;
   segment_key?: string;
@@ -3148,29 +3298,6 @@ export interface GetTMProfileWithStatsRow {
   usage_count: number /* int32 */;
   created_by_name: string;
 }
-export interface GetTaskEditStateParams {
-  job_id: number /* int64 */;
-  tenant_id: number /* int64 */;
-}
-export interface GetTaskEditStateRow {
-  job_id: number /* int64 */;
-  job_status: string;
-  job_current_step: string;
-  target_language: string;
-  file_id: number /* int64 */;
-  file_name: string;
-  project_id: number /* int64 */;
-  has_workflow: boolean;
-  active_id: number /* int64 */;
-  active_is_ai_step: boolean;
-  active_step_type: string;
-  active_step_order: number /* int32 */;
-  last_completed_id: number /* int64 */;
-  last_completed_order: number /* int32 */;
-  last_completed_name: string;
-  last_completed_type: string;
-  last_clear_step_order: number /* int32 */;
-}
 export interface GetTaskEditStateForTranslationParams {
   translation_id: number /* int64 */;
   tenant_id: number /* int64 */;
@@ -3198,10 +3325,24 @@ export interface GetTemplateParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
+export interface GetTenantGateRow {
+  status: string;
+  kind: string;
+  client_status?: string;
+}
 export interface GetTenantOwnerRow {
   id: number /* int64 */;
   email: string;
   name: string;
+}
+export interface GetTenantProfileRow {
+  id: number /* int64 */;
+  name: string;
+  slug: string;
+  status: string;
+  tenant_kind: string;
+  client_org_name?: string;
+  client_status?: string;
 }
 export interface GetTenantStatusRow {
   status: string;
@@ -3464,6 +3605,13 @@ export interface InsertProjectEventParams {
   job_id?: number /* int64 */;
   details: string /* []byte */;
 }
+export interface InsertPropagationHistoryBatchParams {
+  translation_ids: number /* int64 */[];
+  text?: string;
+  rich_text?: string;
+  created_by?: number /* int64 */;
+  details: string /* []byte */;
+}
 export interface InsertTMParams {
   tm_id: number /* int64 */;
   source_language: string;
@@ -3507,11 +3655,15 @@ export interface InsertTranslationHistoryParams {
   details: string /* []byte */;
 }
 export interface InsertUserLanguagePairParams {
-  user_id: number /* int64 */;
   source_lang: string;
   target_lang: string;
   row_group: number /* int32 */;
+  user_id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface IsFilterProfileDefaultParams {
+  tenant_id: number /* int64 */;
+  filter_profile_id: number /* int64 */;
 }
 export interface IsUserAssignedToFileParams {
   file_id: number /* int64 */;
@@ -3578,6 +3730,26 @@ export interface ListAPITokensByUserRow {
   expires_at: string;
   revoked_at: string;
   created_at: string;
+}
+export interface ListAcceptedInvitesPageParams {
+  tenant_id: number /* int64 */;
+  roles: string[];
+  q?: string;
+  off: number /* int32 */;
+  lim: number /* int32 */;
+}
+export interface ListAcceptedInvitesPageRow {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  email: string;
+  role: string;
+  kind: string;
+  vendor_org_name?: string;
+  invited_by: number /* int64 */;
+  accepted_at: string;
+  expires_at: string;
+  created_at: string;
+  total: number /* int64 */;
 }
 export interface ListActiveStepsForProjectParams {
   project_id: number /* int64 */;
@@ -3770,13 +3942,32 @@ export interface ListDemoWorkspaceItemsRow {
   entity_id: number /* int64 */;
   created_at: string;
 }
+export interface ListEditorFuzzyCandidatesParams {
+  target_language: string;
+  file_ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+  segment_id: number /* int64 */;
+  query: string;
+  candidate_limit: number /* int32 */;
+}
+export interface ListEditorFuzzyCandidatesRow {
+  segment_id: number /* int64 */;
+  file_id: number /* int64 */;
+  source_text: string;
+  source_rich_text?: string;
+  translation_id: number /* int64 */;
+  target_text: string;
+  target_rich_text?: string;
+  updated_at: string;
+}
 export interface ListEditorIndexParams {
   target_language: string;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   tenant_id: number /* int64 */;
 }
 export interface ListEditorIndexRow {
   segment_id: number /* int64 */;
+  file_id: number /* int64 */;
   position: number /* int32 */;
   sub_position: number /* int32 */;
   word_count: number /* int32 */;
@@ -3805,30 +3996,51 @@ export interface ListEditorPreviousStepTextsRow {
 }
 export interface ListEditorRefSourcesParams {
   target_language: string;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   tenant_id: number /* int64 */;
 }
-export interface ListEditorSegmentsByIDsParams {
+export interface ListEditorRefSourcesRow {
   file_id: number /* int64 */;
+  source_rich_text: string;
+}
+export interface ListEditorScopeJobsParams {
+  job_ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+}
+export interface ListEditorScopeJobsRow {
+  job_id: number /* int64 */;
+  file_id: number /* int64 */;
+  target_language: string;
+  project_id: number /* int64 */;
+  file_name: string;
+  file_format: FileFormat;
+  inline_html: boolean;
+  step_name: string;
+  step_assignee?: number /* int64 */;
+  step_id: number /* int64 */;
+}
+export interface ListEditorSegmentsByIDsParams {
+  file_ids: number /* int64 */[];
   target_language: string;
   tenant_id: number /* int64 */;
   ids: number /* int64 */[];
 }
 export interface ListEditorSegmentsByKeysParams {
   target_language: string;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   tenant_id: number /* int64 */;
   keys: string[];
 }
 export interface ListEditorSegmentsByKeysRow {
   segment_id: number /* int64 */;
+  file_id: number /* int64 */;
   segment_key: string;
   source_text: string;
   target_text: string;
 }
 export interface ListEditorTextsParams {
   target_language: string;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   tenant_id: number /* int64 */;
 }
 export interface ListEditorTextsRow {
@@ -3841,7 +4053,7 @@ export interface ListEditorTranslationsBySegmentsParams {
   target_language: string;
 }
 export interface ListEditorWordCandidatesParams {
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   target_language: string;
   tenant_id: number /* int64 */;
   word: string;
@@ -3877,6 +4089,21 @@ export interface ListFilesWithoutJobsParams {
   project_id: number /* int64 */;
   tenant_id: number /* int64 */;
 }
+export interface ListFilterProfileDefaultsRow {
+  format: string;
+  filter_profile_id: number /* int64 */;
+  name: string;
+}
+export interface ListFilterProfilesParams {
+  tenant_id?: number /* int64 */;
+  format: string;
+}
+export interface ListFilterProfilesPageParams {
+  tenant_id?: number /* int64 */;
+  cursor: number /* int64 */;
+  format: string;
+  lim: number /* int32 */;
+}
 export interface ListIgnoredQAResultsForTranslationsRow {
   translation_id: number /* int64 */;
   check_type: string;
@@ -3885,12 +4112,15 @@ export interface ListIgnoredQAResultsForTranslationsRow {
 export interface ListInvitesByTenantParams {
   tenant_id: number /* int64 */;
   roles: string[];
+  pending_only: boolean;
 }
 export interface ListInvitesByTenantRow {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
   email: string;
   role: string;
+  kind: string;
+  vendor_org_name?: string;
   invited_by: number /* int64 */;
   accepted_at: string;
   expires_at: string;
@@ -3986,7 +4216,7 @@ export interface ListJobEditRowsByTranslationsRow {
   updated_at: string;
 }
 export interface ListJobHoldsParams {
-  job_id: number /* int64 */;
+  job_ids: number /* int64 */[];
   tenant_id: number /* int64 */;
 }
 export interface ListJobHoldsRow {
@@ -4133,6 +4363,7 @@ export interface ListJobsByProjectRow {
   file_inline_html: boolean;
   segment_count: number /* int32 */;
   file_created_at: string;
+  file_xlsx_layout: unknown;
 }
 export interface ListJobsByProjectIDsParams {
   project_id: number /* int64 */;
@@ -4157,6 +4388,7 @@ export interface ListJobsByProjectIDsRow {
   file_inline_html: boolean;
   segment_count: number /* int32 */;
   file_created_at: string;
+  file_xlsx_layout: unknown;
 }
 export interface ListJobsByProjectPageParams {
   project_id: number /* int64 */;
@@ -4182,6 +4414,7 @@ export interface ListJobsByProjectPageRow {
   file_inline_html: boolean;
   segment_count: number /* int32 */;
   file_created_at: string;
+  file_xlsx_layout: unknown;
 }
 export interface ListJobsForSettingsProfileRow {
   id: number /* int64 */;
@@ -4208,6 +4441,10 @@ export interface ListJobsForUserStepRow {
   step_assignment_id: number /* int64 */;
   step_name: string;
 }
+export interface ListJobsWithPreviousStepParams {
+  job_ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+}
 export interface ListKeylessAIEngineRowsParams {
   tenant_id: number /* int64 */;
   provider?: string;
@@ -4231,6 +4468,16 @@ export interface ListKeylessMTEnginesRow {
 export interface ListLabelValueUsageRow {
   label_value_id: number /* int64 */;
   project_count: number /* int64 */;
+}
+export interface ListLanguagePairsForMembersParams {
+  tenant_id: number /* int64 */;
+  user_ids: number /* int64 */[];
+}
+export interface ListLanguagePairsForMembersRow {
+  user_id: number /* int64 */;
+  source_lang: string;
+  target_lang: string;
+  row_group: number /* int32 */;
 }
 export interface ListLatestHistoryTextsRow {
   translation_id: number /* int64 */;
@@ -4365,6 +4612,21 @@ export interface ListMTEnginesUsingTokenRow {
   id: number /* int64 */;
   name: string;
 }
+export interface ListMemberFacetPairsParams {
+  tenant_id: number /* int64 */;
+  q?: string;
+  role?: string;
+}
+export interface ListMemberFacetPairsRow {
+  source_lang: string;
+  target_lang: string;
+}
+export interface ListMemberFacetRolesParams {
+  tenant_id: number /* int64 */;
+  q?: string;
+  source_lang?: string;
+  target_lang?: string;
+}
 export interface ListMemberIssueCommentsParams {
   issue_id: number /* int64 */;
   tenant_id: number /* int64 */;
@@ -4399,11 +4661,32 @@ export interface ListMembersByTenantRow {
   is_active: boolean;
   deactivated_at: string;
 }
+export interface ListMembersPageParams {
+  tenant_id: number /* int64 */;
+  q?: string;
+  role?: string;
+  source_lang?: string;
+  target_lang?: string;
+  off: number /* int32 */;
+  lim: number /* int32 */;
+}
+export interface ListMembersPageRow {
+  id: number /* int64 */;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+  disabled_at: string;
+  total: number /* int64 */;
+}
 export interface ListMembershipsWithTenantRow {
   tenant_id: number /* int64 */;
   tenant_name: string;
   tenant_slug: string;
   role: string;
+  tenant_kind: string;
+  client_org_name?: string;
+  disabled_at: string;
 }
 export interface ListNotificationsParams {
   user_id: number /* int64 */;
@@ -4434,6 +4717,7 @@ export interface ListOtherTargetsForSourceParams {
 export interface ListPreTranslatedByFileParams {
   file_id: number /* int64 */;
   target_language: string;
+  every_translation: boolean;
   review_all: boolean;
 }
 export interface ListPreTranslatedByFileRow {
@@ -4537,6 +4821,7 @@ export interface ListProjectsFilteredParams {
   target_lang?: string;
   created_by?: number /* int64 */;
   q?: string;
+  deadline_bands: string[];
   lim: number /* int32 */;
 }
 export interface ListProjectsFilteredRow {
@@ -4572,6 +4857,25 @@ export interface ListQAErrorHotspotsRow {
   file_name: string;
   target_language: string;
   error_count: number /* int64 */;
+}
+export interface ListQAResultsForFilesParams {
+  file_ids: number /* int64 */[];
+  target_language: string;
+  tenant_id: number /* int64 */;
+}
+export interface ListQAResultsForFilesRow {
+  id: number /* int64 */;
+  translation_id: number /* int64 */;
+  check_type: string;
+  severity: string;
+  message: string;
+  created_at: string;
+  ignored: boolean;
+  ignored_by?: number /* int64 */;
+  ignored_at: string;
+  segment_id: number /* int64 */;
+  segment_position: number /* int32 */;
+  ignored_by_name?: string;
 }
 export interface ListQAResultsForJobParams {
   file_id: number /* int64 */;
@@ -4645,6 +4949,11 @@ export interface ListSegmentsByFileTenantParams {
   file_id: number /* int64 */;
   tenant_id: number /* int64 */;
   row_limit: number /* int32 */;
+}
+export interface ListSettingsFilterProfilesRow {
+  format: string;
+  filter_profile_id: number /* int64 */;
+  name: string;
 }
 export interface ListSettingsTermsForQAParams {
   settings_profile_id: number /* int64 */;
@@ -4803,6 +5112,29 @@ export interface ListTargetsForSourcesRow {
   translation_id: number /* int64 */;
   target_text: string;
 }
+export interface ListTaskEditStatesParams {
+  job_ids: number /* int64 */[];
+  tenant_id: number /* int64 */;
+}
+export interface ListTaskEditStatesRow {
+  job_id: number /* int64 */;
+  job_status: string;
+  job_current_step: string;
+  target_language: string;
+  file_id: number /* int64 */;
+  file_name: string;
+  project_id: number /* int64 */;
+  has_workflow: boolean;
+  active_id: number /* int64 */;
+  active_is_ai_step: boolean;
+  active_step_type: string;
+  active_step_order: number /* int32 */;
+  last_completed_id: number /* int64 */;
+  last_completed_order: number /* int32 */;
+  last_completed_name: string;
+  last_completed_type: string;
+  last_clear_step_order: number /* int32 */;
+}
 export interface ListTaskStepNamesParams {
   tenant_id: number /* int64 */;
   assigned_to?: number /* int64 */;
@@ -4867,9 +5199,11 @@ export interface ListTenantsForPlatformRow {
   slug: string;
   domain?: string;
   status: string;
+  kind: string;
   created_at: string;
   owner_email?: string;
   owner_name?: string;
+  client_org_name?: string;
 }
 export interface ListTermBasesRow {
   id: number /* int64 */;
@@ -4896,6 +5230,16 @@ export interface ListTermsForConceptsRow {
   updated_at: string;
   created_by_name: string;
   updated_by_name: string;
+}
+export interface ListTranslationFilesForQAParams {
+  ids: number /* int64 */[];
+  file_ids: number /* int64 */[];
+  target_language: string;
+  tenant_id: number /* int64 */;
+}
+export interface ListTranslationFilesForQARow {
+  translation_id: number /* int64 */;
+  file_id: number /* int64 */;
 }
 export interface ListTranslationHistoryRow {
   id: number /* int64 */;
@@ -5038,6 +5382,38 @@ export interface ListUsersForLanguagePairRow {
   email: string;
   name: string;
   role: string;
+}
+export interface ListVendorOrgFacetPairsParams {
+  client_tenant_id?: number /* int64 */;
+  q?: string;
+}
+export interface ListVendorOrgFacetPairsRow {
+  source_lang: string;
+  target_lang: string;
+}
+export interface ListVendorOrgLanguagePairsParams {
+  client_tenant_id?: number /* int64 */;
+  vendor_ids: number /* int64 */[];
+}
+export interface ListVendorOrgLanguagePairsRow {
+  tenant_id: number /* int64 */;
+  source_lang: string;
+  target_lang: string;
+}
+export interface ListVendorOrgsForClientParams {
+  client_tenant_id?: number /* int64 */;
+  q?: string;
+  source_lang?: string;
+  target_lang?: string;
+  off: number /* int32 */;
+  lim: number /* int32 */;
+}
+export interface ListVendorOrgsForClientRow {
+  id: number /* int64 */;
+  name: string;
+  created_at: string;
+  admins: string /* []byte */;
+  total: number /* int64 */;
 }
 export interface ListVendorTokenKeysParams {
   tenant_id: number /* int64 */;
@@ -5331,7 +5707,7 @@ export interface PropagateTranslationParams {
   human_text?: string;
   human_rich_text?: string;
   actor_id?: number /* int64 */;
-  file_id: number /* int64 */;
+  file_ids: number /* int64 */[];
   source_text: string;
   target_language: string;
   exclude_id: number /* int64 */;
@@ -5564,6 +5940,13 @@ export interface SearchTMEntriesCursorRow {
   updated_by: string;
   score: unknown;
 }
+export interface SeedMembershipIdleParams {
+  last_active_at: string;
+  warned_at: string;
+  disabled_at: string;
+  tenant_id: number /* int64 */;
+  user_id: number /* int64 */;
+}
 export interface SetAnalysisJobIDsParams {
   job_ids: number /* int64 */[];
   id: number /* int64 */;
@@ -5583,6 +5966,12 @@ export interface SetDashboardOwnerParams {
   owner_id?: number /* int64 */;
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface SetFilterProfileDefaultParams {
+  tenant_id: number /* int64 */;
+  format: string;
+  filter_profile_id: number /* int64 */;
+  updated_by?: number /* int64 */;
 }
 export interface SetIssueAssigneeParams {
   assignee_id?: number /* int64 */;
@@ -5636,6 +6025,11 @@ export interface SetQAResultIgnoredParams {
   translation_id: number /* int64 */;
   check_type: string;
   tenant_id: number /* int64 */;
+}
+export interface SetSettingsFilterProfileParams {
+  settings_profile_id: number /* int64 */;
+  format: string;
+  filter_profile_id: number /* int64 */;
 }
 export interface SetSettingsProfileMTRouterParams {
   id: number /* int64 */;
@@ -5734,6 +6128,10 @@ export interface SoftDeleteDashboardChartParams {
   tenant_id: number /* int64 */;
   user_id?: number /* int64 */;
 }
+export interface SoftDeleteFilterProfileParams {
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+}
 export interface SoftDeleteLabelDefinitionParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
@@ -5822,6 +6220,10 @@ export interface TouchAPITokenParams {
 export interface TouchChatConversationParams {
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface TouchVendorMembershipParams {
+  tenant_id: number /* int64 */;
+  user_id: number /* int64 */;
 }
 export interface TouchWorkflowParams {
   id: number /* int64 */;
@@ -5916,6 +6318,13 @@ export interface UpdateFileXLSXLayoutParams {
   xlsx_layout: string /* []byte */;
   id: number /* int64 */;
   tenant_id: number /* int64 */;
+}
+export interface UpdateFilterProfileParams {
+  name: string;
+  options: string /* []byte */;
+  id: number /* int64 */;
+  tenant_id: number /* int64 */;
+  expected_updated_at: string;
 }
 export interface UpdateIssueActivityParams {
   status?: string;
@@ -6023,7 +6432,6 @@ export interface UpdateSettingsProfileParams {
   near_exact_penalty_pct?: number /* int32 */;
   auto_complete?: boolean;
   tm_lookup_order?: string;
-  inline_html?: boolean;
   linguist_terms?: string;
 }
 export interface UpdateSettingsWorkflowStepParams {

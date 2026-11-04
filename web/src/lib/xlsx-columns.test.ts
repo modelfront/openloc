@@ -27,7 +27,7 @@ const inspection: XLSXInspection = {
 }
 
 const choice = (patch: Partial<SheetChoice>): SheetChoice => ({
-  name: 'Products', header_row: true, columns: ['B'], included: true, ...patch,
+  name: 'Products', header_row: true, columns: ['B'], target_columns: [], included: true, ...patch,
 })
 
 describe('columnNumber', () => {
@@ -62,8 +62,8 @@ describe('sheetChoices', () => {
   it('offers every suggested sheet in workbook order, the chosen ones included', () => {
     const stored = { sheets: [{ name: 'Notes', header_row: true }] }
     expect(sheetChoices(inspection, stored)).toEqual([
-      { name: 'Products', header_row: true, columns: ['B'], included: false },
-      { name: 'Notes', header_row: true, columns: [], included: true },
+      { name: 'Products', header_row: true, columns: ['B'], target_columns: [], included: false },
+      { name: 'Notes', header_row: true, columns: [], target_columns: [], included: true },
     ])
   })
 
@@ -103,6 +103,28 @@ describe('choicesToLayout', () => {
         { name: 'Notes', header_row: false },
       ],
     })
+  })
+})
+
+describe('target columns from the filter profile', () => {
+  const targets = [{ language: 'fr', column: 'C' }, { language: 'de', column: 'D' }]
+
+  it('survive the dialog: suggested, chosen and sent back', () => {
+    const layout = { sheets: [{ name: 'Products', header_row: true, columns: ['B'], target_columns: targets }] }
+    const choices = sheetChoices(inspection, layout)
+    expect(choices[0].target_columns).toEqual(targets)
+    expect(choicesToLayout(choices)).toEqual(layout)
+  })
+
+  it('show in the summary', () => {
+    expect(sheetSummary(choice({ target_columns: targets }), 4)).toBe('Column B · translations in FR C, DE D')
+  })
+
+  it('need exactly one source column, named per sheet', () => {
+    expect(layoutProblem([choice({ target_columns: targets })])).toBeNull()
+    expect(layoutProblem([choice({ columns: ['B', 'C'], target_columns: targets })]))
+      .toBe('Sheet Products: Choose exactly one source column for the translations to go next to.')
+    expect(layoutProblem([choice({ columns: ['B', 'C'], target_columns: targets, included: false }), choice({ name: 'Notes' })])).toBeNull()
   })
 })
 

@@ -3,10 +3,11 @@ title: "Projects and files"
 summary: "Create projects, upload files, assign and track tasks, read the analysis and download translations."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - web/src/pages/ProjectList.tsx
   - web/src/pages/CATEditor.tsx
+  - web/src/components/editor/**
   - web/src/lib/editor-link.ts
   - web/src/pages/ProjectCreate.tsx
   - web/src/pages/ProjectDetail.tsx
@@ -76,9 +77,9 @@ A project holds everything for one translation order: the languages, the files, 
    - Steps that came in with a template or a duplicated project that followed no workflow are listed under an empty field. They are kept as they are and cannot be edited here; pick a workflow to replace them.
    - Each step's deadline sits at the right of its row; files uploaded to the project inherit them. See [Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines).
    - Who picks a step up and when it is due is then set per task, on the **Tasks** tab — see [Select tasks and act on them](#select-tasks-and-act-on-them).
-5. Under the basics sits **Complete the project when every task is done** — on by default. See [Project status](#project-status) below. **Strings contain HTML**, just under it, is on by default and decides how JSON, PO, TXT and Excel strings are read; see [Where each project option lives](/docs/reference/settings#where-each-project-option-lives).
-6. Set up **Translation memory**, **Machine translation**, **Terminology**, **Quality assurance** and **File configurations**, each its own block. **Translation memory** opens with an empty **TM profile** field: pick a profile to follow, or **From scratch** for a list that belongs to this project alone. The memories and the match scoring appear once you have chosen — see [Assign translation memories to a project or template](/docs/guides/translation-memory#assign-translation-memories-to-a-project-or-template). **Machine translation** asks for an **MT router**. Each of the two blocks starts with a ticked checkbox — **Apply translation memory on start or upload** and **Fill in machine translation on start or upload** — that decides what runs automatically on new files; it is greyed out until that block has its source. With **Raw MT**, the machine translation one stays ticked and locked, and **Create project** asks for an MT router first and takes you to that field. **Terminology** opens with **Linguists can add terms**, above the term bases: it decides whether linguists add terms from the editor and the status their terms get — **No**, **Yes, saved as pending** (the default) or **Yes, saved as approved**. Terms go only into term bases with **Write** ticked, so the field is greyed out until one has it; see [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating). **Quality assurance** holds the **QA profile** — the checks that run on this project; see [Quality assurance](/docs/guides/quality-assurance). **File configurations** holds the required **Segmentation profile**, which decides where uploaded files are split into segments; it starts with the one for the source language. See [Segmentation profiles](/docs/guides/segmentation).
-7. Optional: drop files into **Files (optional)**. Each file uploads right away and is listed with its segment count; use the bin icon to remove one. Once there are files, the card is titled **Files (N)** with the total, and a long list scrolls inside the card, loading more as you reach the end. An Excel file without language codes in row 1 first asks which columns to translate; see [Choose the columns of an Excel file](#choose-the-columns-of-an-excel-file). Keep **Run analysis on upload** ticked if you want a word-count analysis as soon as the project is created.
+5. Under the basics sits **Complete the project when every task is done** — on by default. See [Project status](#project-status) below.
+6. Set up **Translation memory**, **Machine translation**, **Terminology**, **Quality assurance** and **File configurations**, each its own block. **Translation memory** opens with an empty **TM profile** field: pick a profile to follow, or **From scratch** for a list that belongs to this project alone. The memories and the match scoring appear once you have chosen — see [Assign translation memories to a project or template](/docs/guides/translation-memory#assign-translation-memories-to-a-project-or-template). **Machine translation** asks for an **MT router**. Each of the two blocks starts with a ticked checkbox — **Apply translation memory on start or upload** and **Fill in machine translation on start or upload** — that decides what runs automatically on new files; it is greyed out until that block has its source. With **Raw MT**, the machine translation one stays ticked and locked, and **Create project** asks for an MT router first and takes you to that field. **Terminology** opens with **Linguists can add terms**, above the term bases: it decides whether linguists add terms from the editor and the status their terms get — **No**, **Yes, saved as pending** (the default) or **Yes, saved as approved**. Terms go only into term bases with **Write** ticked, so the field is greyed out until one has it; see [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating). **Quality assurance** holds the **QA profile** — the checks that run on this project; see [Quality assurance](/docs/guides/quality-assurance). **File configurations** holds the required **Segmentation profile**, which decides where uploaded files are split into segments; it starts with the one for the source language. See [Segmentation profiles](/docs/guides/segmentation). It also holds **Filter profiles**: one pick per file format, deciding how files of that format are read. Each starts at your organization's default for the format; with none picked, the format's built-in Default applies. See [Filter profiles](/docs/guides/filter-profiles). Each block links to the assets it uses; see [Where each project option lives](/docs/reference/settings#where-each-project-option-lives).
+7. Optional: drop files into **Files (optional)**. Each file uploads right away and is listed with its segment count; use the bin icon to remove one. A file whose format has a filter profile of your organization first asks which **Filter profile** to read it with; a format with only built-in profiles uploads straight away. Once there are files, the card is titled **Files (N)** with the total, and a long list scrolls inside the card, loading more as you reach the end. An Excel file without language codes in row 1 first asks which columns to translate; see [Choose the columns of an Excel file](#choose-the-columns-of-an-excel-file). Keep **Run analysis on upload** ticked if you want a word-count analysis as soon as the project is created.
 8. Click **Create project**. The required fields are checked — the first one that fails is scrolled to and ringed — the project becomes **In progress**, and its files get their jobs — translation memory and machine translation run on them now, according to the settings above. **History** already shows the creation, from the first time the form saved, in the name of whoever started it, followed by the uploads; if someone else clicks **Create project**, a **published the project** entry names them. **Save as template**, next to it, saves the form as a template instead — see [Templates](/docs/guides/templates#save-a-new-projects-setup-as-a-template).
 
 The form saves itself as a **Draft** project from your first edit: a grey **Draft** badge appears next to the title — the same one the project list shows — with **Saving…** and then **Saved** beside it as each change goes out, or a red **Draft not saved** if one fails. Leaving a field saves at once, so leaving the page loses nothing. The title, the badge, the save state and **Discard** stay in view while you scroll the form. The draft waits in the **Projects** list and reopens in this form where you left it. It stays in the list until you create it or delete it.
@@ -90,10 +91,15 @@ The form saves itself as a **Draft** project from your first edit: a grey **Draf
 The **Projects** page lists projects newest first, 50 at a time. Click **Load more** to see older ones.
 
 - Type in **Search projects...** to search by name.
-- Use the filter chips: **Status**, **Customer**, **Source**, **Target** and **Created by**. **Created by** only lists people who created at least one project.
+- The bar always shows the filter chips **Status**, **Deadline** and **Created by**. **Created by** only lists people who created at least one project.
+- **Customer**, **Source** and **Target** sit behind the filter icon at the end of the bar. Click it, pick one, and its options open in the same popup. A filter you set shows as a chip before the icon; click its **×** to remove it, or pick **All** in its options.
+- A filter whose options come from your data — people, customers, languages, files, steps — has a **Search…** box at the top of its options, here and on every other filter bar. Short fixed lists such as **Status** and **Deadline** have none.
+- **Deadline** offers **Overdue**, **Due within 24h**, **Due in 1–7 days**, **Due later** and **No due date**, each as the [colored pill](/docs/guides/workflows-and-tasks#read-deadlines) the rows show. Pick several: the list stays open and a check marks each pick. **All** clears them. A **Completed** project is never overdue or due; it appears only under **No due date**, and only if it has no deadline.
 - **Clear filters (N)** empties the search box and resets the chips. The number counts the search and each active chip, and the button only appears once at least one is set. Filters are part of the page address, so you can bookmark or share a filtered view.
 
 Each row shows the status, deadline, customer and creator. A row with the **Draft** badge is a New project form still being filled in — an unnamed one reads **Untitled draft** — and clicking it opens that form. Two icons sit at the right end of each row: **Duplicate** (owners, admins and project managers; a new project with the same name, details and settings, no files, and not offered on a draft — see [Use as template](#the-project-page)) and **Delete** (owner and admin only).
+
+In a [vendor organization](/docs/guides/customers-and-vendors#run-a-vendor-organization), **Projects** has no **New project** button, no search or filter chips, and no **Duplicate** or **Delete** icon. An empty list reads **Projects that *client* sends to *vendor* appear here.**, with the client's and the vendor organization's names.
 
 ## The project page
 
@@ -128,7 +134,7 @@ A project always gets a copy of the workflow's steps. Editing or deleting the li
 ## Upload files
 
 1. On the **Files** tab click **Upload files**, or drag files anywhere onto the page. You can pick several files at once.
-2. A dialog opens: **Upload N files**, listing what you picked. Deadlines are not asked for here — the new jobs take them from the project's workflow, see [Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines).
+2. A dialog opens: **Upload N files**, listing what you picked. Under **Filter profile**, each file whose format has profiles gets a pick, set to the project's choice; choose another to read that file with it. Deadlines are not asked for here — the new jobs take them from the project's workflow, see [Set deadlines](/docs/guides/workflows-and-tasks#set-deadlines).
 3. Keep **Auto-analyze project files** ticked to get one analysis of the whole project after the upload settles.
 4. Click **Upload**.
 
@@ -143,7 +149,7 @@ Each file is one row, with the segment count it was imported with; a job's own c
 | **Ready** | Every target language has finished its workflow. |
 | **Failed** | A target language failed to process. |
 
-Depending on the project settings, translation memory and machine translation run right after the upload. A JSON, PO, TXT or Excel file is read with **Strings contain HTML** as it is at upload and keeps that mode; changing the setting later affects new uploads only. Click a row to open the **Tasks** tab filtered to that file.
+Depending on the project settings, translation memory and machine translation run right after the upload. A file keeps the filter profile it was read with; editing the profile or changing the project's pick later affects new uploads only. Click a row to open the **Tasks** tab filtered to that file.
 
 Translations already in an XLIFF or PO file are imported only into the project target language the file names; see [Formats](/docs/reference/file-formats#formats).
 
@@ -157,13 +163,15 @@ Use **Search files…** or the **Status** filter chip to narrow the list. Tick f
 
 ### Choose the columns of an Excel file
 
-For an Excel file whose row 1 has no language codes, the upload dialog also asks what to translate; the ⓘ next to the file's name explains the choices. Each sheet that holds text is a row showing its choice, such as **Column B**, **Columns B, D**, **All columns**, **Whole sheet** or **Not translated**; click it to change:
+For an Excel file whose row 1 has no language codes, the upload dialog also asks what to translate; the ⓘ next to the file's name explains the choices. The dialog starts from the rules of the file's Excel filter profile (sheets, header row, column letters) when they fit the workbook, so a matching workbook needs no choices. Each sheet that holds text is a row showing its choice, such as **Column B**, **Columns B, D**, **All columns**, **Whole sheet** or **Not translated**; click it to change:
 
 - **Columns to translate** — one or more columns whose cells become segments, each shown with its text in row 1, such as **B (English)**. Only columns that hold text are listed. On a sheet with more than one column, **Select all** at the right end of the label picks every column at once; it then turns into **Clear**, which empties the field. With no column chosen, every text cell of the sheet is translated. The dialog starts with the column that has the most text.
 - **Row 1 is a header** — its cells are column titles, not text to translate.
 - With several sheets, untick a sheet to leave it out.
 
-The translated file has each translation in the cell its source came from. If a workbook could not be read, **Retry** in its block reads it again; **Upload** waits until it has been read.
+When the filter profile has [target columns](/docs/guides/filter-profiles#excel-sheets-and-columns), the field is **Source column**, the sheet's row adds the languages, such as **Column B · translations in FR C, DE D**, and the open sheet lists them; keep exactly one source column, or **Upload** waits.
+
+The translated file has each translation in the cell its source came from, or, with target columns, in its language's column. If a workbook could not be read, **Retry** in its block reads it again; **Upload** waits until it has been read.
 
 In a project that is not created yet, files upload as soon as you add them, so the same choices open in an **Excel columns** dialog, with the ⓘ next to its title; **Cancel** skips the file. The columns icon on the file's row in the **Files** card opens it again, and the file is read again with the new choice. Once the project is created the choice is fixed: to translate other columns, upload the file again.
 
@@ -179,7 +187,7 @@ Every file row on the **Files** tab has a **Download** icon, beside the row's ot
 
 Segments split or joined in the editor do not change the structure of the downloaded file. In a **Translated file** the pieces of a split go back into their original segment, and joined sentences are written over the sentences they replaced; in a pre-segmented XLIFF a join merges the sentences of the unit. A **Bilingual XLIFF** writes each piece of a split as its own unit.
 
-If several jobs are in scope the labels count them — **Translated files (3)** — and you get one `.zip` file. An option that is not available tells you why: **No approved segments yet**, **No segments to export**, or **No file selected**.
+If several jobs are in scope the labels count them — **Translated files (3)** — and you get one `.zip` file. An Excel workbook with [target columns](/docs/guides/filter-profiles#excel-sheets-and-columns) is the exception: its languages come back in one workbook, each in its own column, and count as one translated file. An option that is not available tells you why: **No approved segments yet**, **No segments to export**, or **No file selected**.
 
 When a file cannot be rebuilt — a PDF, or an Excel workbook whose columns do not fit the job's language — **Translated file** stops with a message that says why. With several jobs the message names the file and nothing downloads. Which column fits a job is set out in [What you download](/docs/reference/file-formats#what-you-download).
 
@@ -201,8 +209,9 @@ A task shows who has the task (**Automated** on an AI or Pre-translation step, w
 
 On the tab, click a row to open the job in [the CAT editor](/docs/guides/cat-editor), in a new browser tab, on its current task (not while its QE+APE step runs). Tick a row's box to select its current task, or untick it to drop it; the box in a step's header selects every task in that step. Use **Expand** to select tasks further along the workflow: there, click a task to select it, and Ctrl+click (Cmd+click on a Mac) adds or removes one. Click a row number or row header to select the whole row, or a step header to select that step in every row. Clicking a language selects every row in that language. Esc clears the selection.
 
-A bar appears. It starts with the number of tasks selected and an **✕** that clears the selection, then **Download**, **Import XLIFF**, **Pre-translate** (Apply TM or Apply MT), **Complete step**, **Assign**, **Set deadline**, **Clear** and **Delete**. **Stop** joins the bar whenever at least one selected job is running — see [Stop a running job](#stop-a-running-job) — and **Re-run** whenever a selected task is in error. For owners, admins and project managers, **Skip AI step** follows **Re-run** whenever a selected Hybrid step task is in error because its AI run failed.
+A bar appears. It starts with the number of tasks selected and an **✕** that clears the selection, then **Open in editor**, **Download**, **Import XLIFF**, **Pre-translate** (Apply TM or Apply MT), **Complete step**, **Assign**, **Set deadline**, **Clear** and **Delete**. **Stop** joins the bar whenever at least one selected job is running — see [Stop a running job](#stop-a-running-job) — and **Re-run** whenever a selected task is in error. For owners, admins and project managers, **Skip AI step** follows **Re-run** whenever a selected Hybrid step task is in error because its AI run failed.
 
+- **Open in editor** opens the selected tasks' jobs in a new browser tab. One task opens [the CAT editor](/docs/guides/cat-editor) as usual; several open together in one grid, file after file. They must share a target language, and at most 500 can open together. Otherwise the button is greyed out; point at it to read why. It ignores which step each task is at.
 - **Assign** and **Set deadline** act on exactly the steps you selected, including steps that have not started. **Assign** skips completed steps. Both skip AI and Pre-translation steps, which run by themselves.
 - **Complete step** acts only on tasks that are their job's current step.
 - **Download**, **Pre-translate**, **Stop**, **Clear** and **Delete** act on the jobs the selected tasks belong to. **Import XLIFF** needs exactly one selected task. **Delete** removes those whole jobs, with every step.

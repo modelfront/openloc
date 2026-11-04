@@ -75,9 +75,16 @@ func (h *Handler) startRun(ctx context.Context, p PipelinePayload, step, phase s
 // resumable label, a pipeline_stopped event, and the auto-analysis promotion a
 // finished run performs. Callers return nil afterwards (no asynq retry).
 func (h *Handler) finishStopped(ctx context.Context, p PipelinePayload, fileID int64, phase string, st pipeline.RunState) {
+	h.finishStoppedAs(ctx, p, fileID, phase, phase, st)
+}
+
+// finishStoppedAs is finishStopped with the run named eventPhase in the history,
+// while the job label keeps phase: the label is what the editor lock and Re-run
+// read, the event is what a person reads.
+func (h *Handler) finishStoppedAs(ctx context.Context, p PipelinePayload, fileID int64, phase, eventPhase string, st pipeline.RunState) {
 	h.markStopped(p.JobID, pipeline.StoppedStepLabel(phase, st))
 	h.forgetRunSoFar(p)
-	details := map[string]any{"phase": phase}
+	details := map[string]any{"phase": eventPhase}
 	if st.Translated != nil && st.Total != nil {
 		details["translated_count"] = *st.Translated
 		details["total_count"] = *st.Total
@@ -93,6 +100,12 @@ func (h *Handler) finishStopped(ctx context.Context, p PipelinePayload, fileID i
 // event, and the auto-analysis promotion a permanently failed run must not
 // strand.
 func (h *Handler) failRun(ctx context.Context, p PipelinePayload, fileID int64, phase string, err error) error {
+	return h.failRunAs(ctx, p, fileID, phase, phase, err)
+}
+
+// failRunAs is failRun with the run named eventPhase in the history; see
+// finishStoppedAs.
+func (h *Handler) failRunAs(ctx context.Context, p PipelinePayload, fileID int64, phase, eventPhase string, err error) error {
 	// asynq tries again: the job reads as running until the last attempt, so
 	// nobody re-runs or completes its task in between.
 	if willRetry(ctx, err) {
@@ -101,7 +114,7 @@ func (h *Handler) failRun(ctx context.Context, p PipelinePayload, fileID int64, 
 	}
 	h.failJob(ctx, p.JobID, err)
 	h.emitJobPipelineEvent(ctx, p.TenantID, p.JobID, projectevents.TypeJobPipelineFailed, p.TriggeredBy,
-		map[string]any{"phase": phase, "error": projectevents.ShortMessage(err.Error())})
+		map[string]any{"phase": eventPhase, "error": projectevents.ShortMessage(err.Error())})
 	h.promoteAfterFailure(fileID, p.TenantID)
 	h.notifyFailure(ctx, p, err)
 	if pipeline.IsPermanent(err) {

@@ -31,8 +31,8 @@ interface Props {
   /**
    * `plain` puts the body under the header's hairline, with a gap. `grouped`
    * sections, rendered as siblings, read as cards: closed rows touch with a
-   * line between each, and an open one keeps its body inside and ends its card
-   * under it, the rows after it starting the next — for a list of sections
+   * line between each, and an open one is a card of its own, its body inside,
+   * with a gap above and below — for a list of sections
    * whose bodies are tables. The card's edges are the column's: no bleed.
    */
   variant?: 'plain' | 'grouped'
@@ -42,6 +42,13 @@ interface Props {
   disabled?: boolean
   /** Auto-open the section once when this turns true. */
   openWhen?: boolean
+  /**
+   * Controlled open state, for a page that opens or closes its sections
+   * together (Expand all). Without it the section keeps its own state;
+   * with it, `defaultOpen` and `openWhen` are ignored.
+   */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   /**
    * Marks the SECTION, open or closed. Put it here rather than on something
    * inside the body: a testid in the body disappears when the section is
@@ -58,7 +65,7 @@ const FRAME_BORDER = 'border-gray-200 dark:border-gray-800'
  * A titled, collapsible section: the header toggles the body, `chip`/`info`/
  * `action` sit OUTSIDE the toggle so their own tooltips and clicks don't fire
  * it, and open state comes from `useCollapsibleOpen` (not persisted; `openWhen`
- * auto-opens once).
+ * auto-opens once), or from `open` / `onOpenChange` when the page controls it.
  *
  * The `plain` variant is chrome-less — no border, no `bg-card`, no rounded
  * corners. Sections sit directly on the page background, so a page of them
@@ -69,8 +76,11 @@ const FRAME_BORDER = 'border-gray-200 dark:border-gray-800'
 export function SlimCollapsibleSection({
   title, action, chip, info, description, defaultOpen = false, openWhen, size = 'default',
   toggleLabel, variant = 'plain', tone, disabled = false, children, 'data-testid': testId,
+  open: openProp, onOpenChange,
 }: Props) {
-  const { open: openState, toggle } = useCollapsibleOpen(defaultOpen, openWhen)
+  const own = useCollapsibleOpen(defaultOpen, openWhen)
+  const openState = openProp ?? own.open
+  const toggle = openProp === undefined ? own.toggle : () => onOpenChange?.(!openProp)
   const open = openState && !disabled
   const compact = size === 'compact'
   const grouped = variant === 'grouped'
@@ -83,10 +93,11 @@ export function SlimCollapsibleSection({
           // a card. `overflow-hidden` clips a coloured header to the corners.
           'overflow-hidden border-x border-t bg-card', FRAME_BORDER,
           'first:rounded-t-lg last:rounded-b-lg last:border-b',
-          // Open, the section ends its card under the body, and the row after
-          // it starts a new one.
-          open && 'mb-3 rounded-b-lg border-b last:mb-0',
-          '[[data-open]+&]:rounded-t-lg',
+          // Open, the section is a card of its own: the row before it ends its
+          // card, a gap, then the section with its body, a gap, and the row
+          // after it starts a new one.
+          open && 'my-3 rounded-lg border-b first:mt-0 last:mb-0',
+          '[[data-open]+&]:rounded-t-lg [&:has(+[data-open])]:rounded-b-lg [&:has(+[data-open])]:border-b',
         )
         : compact ? 'mb-1' : 'mb-3'}
       data-open={grouped && open ? '' : undefined}

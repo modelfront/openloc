@@ -1,4 +1,4 @@
-import { Languages, FileCheck2, Wand2, Pencil } from 'lucide-react'
+import { Languages, FileCheck2, Wand2, Pencil, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { OUTPUT_MODES, MODE_DESCRIPTIONS, type OutputMode } from './output-mode'
 
@@ -12,6 +12,7 @@ const MODE_ICONS: Record<OutputMode, typeof Languages> = {
   qe: FileCheck2,
   qe_ape: Wand2,
   ape: Pencil,
+  comment: MessageSquare,
 }
 
 export function ModeCards({

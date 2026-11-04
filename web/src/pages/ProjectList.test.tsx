@@ -17,7 +17,7 @@ vi.mock('../api', async () => {
   }
 })
 
-import { listProjectsFilteredPage, type Project } from '../api'
+import { getMe, listLabels, listProjectCreators, listProjectsFilteredPage, type Project, type UserProfile } from '../api'
 import ProjectList from './ProjectList'
 
 const listMock = vi.mocked(listProjectsFilteredPage)
@@ -84,5 +84,24 @@ describe('ProjectList row actions', () => {
     expect(draftActions.children).toHaveLength(actions.children.length)
     expect(draftActions.children[0]).toHaveAttribute('aria-hidden')
     expect(draftActions.children[0].querySelector('button')).toBeNull()
+  })
+})
+
+describe('ProjectList in a vendor org', () => {
+  it('names the client and the vendor, and offers nothing to create, filter or delete', async () => {
+    vi.mocked(getMe).mockResolvedValueOnce({
+      id: 1, role: 'admin', tenant_kind: 'vendor', tenant_name: 'Acme Vendors', client_org_name: 'Example Org',
+    } as UserProfile)
+    vi.mocked(listLabels).mockClear()
+    vi.mocked(listProjectCreators).mockClear()
+    listMock.mockResolvedValueOnce({ data: [], cursor: 0, has_more: false })
+    renderPage()
+
+    expect(await screen.findByText('Projects that Example Org sends to Acme Vendors appear here.')).toBeInTheDocument()
+    expect(screen.queryByText('New project')).toBeNull()
+    expect(screen.queryByText(/No projects yet/)).toBeNull()
+    // The filter bar would ask for labels and creators, which a vendor org has no access to.
+    expect(listLabels).not.toHaveBeenCalled()
+    expect(listProjectCreators).not.toHaveBeenCalled()
   })
 })

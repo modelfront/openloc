@@ -67,6 +67,9 @@ test.describe("Project files", () => {
     projectIds.push(draftId);
     await page.goto(`/projects/new?draft=${draftId}`);
     await page.locator('[data-testid="create-file-dropzone"] input[type="file"]').setInputFiles(catalog());
+    // The seed has an org Excel filter profile, so the wizard first asks
+    // which one reads the file; the project's pick is preselected.
+    await page.getByTestId("upload-filter-confirm").click();
 
     const dialog = page.getByTestId("xlsx-layout-dialog");
     await dialog.getByTestId("xlsx-sheet-Products-toggle").click();

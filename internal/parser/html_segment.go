@@ -35,7 +35,7 @@ var htmlBlockElements = atomSet(
 	atom.Td, atom.Tfoot, atom.Th, atom.Thead, atom.Tr, atom.Ul,
 )
 
-// htmlSkipBlocks end a segment and are never translated.
+// htmlSkipBlocks end a segment. They are translated only when SkipPre is off.
 var htmlSkipBlocks = atomSet(atom.Pre)
 
 // htmlOpaqueElements are never translated. Inside a segment each one is a
@@ -86,16 +86,6 @@ func htmlCtype(name string) string {
 	return "x-html-" + name
 }
 
-// htmlAttrSegments names the attributes translated per element.
-var htmlAttrSegments = map[atom.Atom][]string{
-	atom.Img:   {"alt", "title"},
-	atom.A:     {"title"},
-	atom.Abbr:  {"title"},
-	atom.Input: {"alt", "value", "title", "placeholder"},
-	atom.Td:    {"abbr"},
-	atom.Th:    {"abbr"},
-}
-
 // htmlInputNoText are input types whose attributes are never translated.
 var htmlInputNoText = map[string]bool{"file": true, "hidden": true, "image": true, "password": true}
 
@@ -121,6 +111,8 @@ type htmlUnit struct {
 }
 
 type htmlCollector struct {
+	cfg       htmlConfig
+	pre       int // translated <pre> elements around the walk
 	legacy    map[*html.Node]int
 	hasBlock  map[*html.Node]bool
 	units     []htmlUnit
@@ -130,9 +122,11 @@ type htmlCollector struct {
 }
 
 // collectHTMLUnits finds every segment of doc in document order. firstSeq is
-// the number of segments already taken (the meta description).
-func collectHTMLUnits(doc *html.Node, firstSeq int) []htmlUnit {
+// the number of segments already taken (the meta description). cfg says which
+// attributes and blocks are translated.
+func collectHTMLUnits(doc *html.Node, firstSeq int, cfg htmlConfig) []htmlUnit {
 	c := &htmlCollector{
+		cfg:      cfg,
 		legacy:   map[*html.Node]int{},
 		hasBlock: map[*html.Node]bool{},
 		anchor:   firstSeq,
@@ -227,8 +221,13 @@ func (c *htmlCollector) container(n *html.Node) {
 
 // block handles an element that ends a segment.
 func (c *htmlCollector) block(n *html.Node) {
-	if hasAttr(n, "translate", "no") || htmlSkipBlocks[n.DataAtom] {
+	skip := htmlSkipBlocks[n.DataAtom]
+	if hasAttr(n, "translate", "no") || skip && c.cfg.skipPre {
 		return
+	}
+	if skip {
+		c.pre++
+		defer func() { c.pre-- }()
 	}
 	prevOwner, prevNode := c.owner, c.ownerNode
 	if num, ok := c.legacy[n]; ok {
@@ -240,8 +239,8 @@ func (c *htmlCollector) block(n *html.Node) {
 }
 
 func (c *htmlCollector) addAttrUnits(n *html.Node) {
-	names := htmlAttrSegments[n.DataAtom]
-	if len(names) == 0 || n.DataAtom == atom.Input && htmlInputNoText[strings.ToLower(getAttr(n, "type"))] {
+	names := c.cfg.attrs[n.Data]
+	if len(names) == 0 || n.Data == "input" && htmlInputNoText[strings.ToLower(getAttr(n, "type"))] {
 		return
 	}
 	for _, a := range n.Attr {
@@ -271,7 +270,7 @@ func (c *htmlCollector) flushRun(parent *html.Node, nodes []*html.Node) {
 	if len(nodes) == 0 {
 		return
 	}
-	r := htmlRun{collector: c}
+	r := htmlRun{collector: c, preserve: c.pre > 0}
 	attrsFrom := len(c.units)
 	for _, n := range nodes {
 		r.node(n, false)
@@ -279,12 +278,16 @@ func (c *htmlCollector) flushRun(parent *html.Node, nodes []*html.Node) {
 	if !r.prose {
 		return
 	}
-	rich := ""
+	plain, rich := r.plain.String(), ""
 	if len(r.inlines) > 0 {
-		rich = trimTrailingSpace(r.rich.String())
+		rich = r.rich.String()
+	}
+	if !r.preserve {
+		plain = strings.TrimRight(plain, " ")
+		rich = trimTrailingSpace(rich)
 	}
 	unit := htmlUnit{
-		plain: strings.TrimRight(r.plain.String(), " "), rich: rich,
+		plain: plain, rich: rich,
 		parent: parent, nodes: nodes, inlines: r.inlines,
 		isRun: true, owner: c.owner, anchor: c.anchor, block: c.ownerNode,
 	}
@@ -300,12 +303,14 @@ func (c *htmlCollector) flushRun(parent *html.Node, nodes []*html.Node) {
 // becomes one space, and none is kept at the run's edges or after a line
 // break. A space stays on its side of every tag: the browser would collapse
 // some of them, but an empty element may be filled by a script, and sentence
-// boundaries depend on whether a space sits inside a chip.
+// boundaries depend on whether a space sits inside a chip. Inside a translated
+// <pre> (preserve) whitespace is written as the source has it.
 type htmlRun struct {
 	collector   *htmlCollector
 	plain, rich strings.Builder
 	inlines     []*html.Node
 	prose       bool // text outside <code>
+	preserve    bool
 
 	started   bool // something visible is written: text, a void chip, a closed element
 	lineStart bool // just after a line break
@@ -314,6 +319,12 @@ type htmlRun struct {
 
 // text writes a text node's content with its whitespace collapsed.
 func (r *htmlRun) text(s string) {
+	if r.preserve {
+		r.plain.WriteString(s)
+		r.rich.WriteString(s)
+		r.started, r.lineStart = true, false
+		return
+	}
 	for _, c := range s {
 		if isHTMLSpace(c) {
 			r.pending = r.started && !r.lineStart

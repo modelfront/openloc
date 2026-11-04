@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { enterDemo, getMe, listPlaybooks, type PlaybookInfo } from '../api'
 import { announcePlaygroundTourEnd, goToDemo, tourPath } from './demo'
 import { queryKeys } from './query-keys'
+import { isVendorOrg } from './roles'
 import { runGuide } from './guide'
 
 // The list is cached; starting a tour refetches it, because picked
@@ -21,8 +22,8 @@ const playbooksQuery = {
   retry: false,
 } as const
 
-export function usePlaybooks() {
-  return useQuery(playbooksQuery)
+export function usePlaybooks(enabled = true) {
+  return useQuery({ ...playbooksQuery, enabled })
 }
 
 /**
@@ -96,8 +97,10 @@ const hasDemoTour = (pb: PlaybookInfo) => pb.has_tour
 export function useStartSavedTour() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { data: me } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
-  const playbooks = usePlaybooks().data ?? []
+  const { data: me, isPending: mePending } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
+  // A vendor org has no tours (and no access to the list), so it gets no
+  // Learn item and no Take the tour button.
+  const playbooks = usePlaybooks(!mePending && !isVendorOrg(me)).data ?? []
   const inDemo = !!me?.demo
   const tours = playbooks.filter(inDemo ? hasSavedTour : hasDemoTour)
   const start = (name: string) => {

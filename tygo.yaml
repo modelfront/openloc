@@ -98,6 +98,15 @@ packages:
     output_path: "web/src/types/editor.ts"
     type_mappings:
       "pgtype.Timestamptz": "string"
+      "time.Time": "string"
+    include_files:
+      - "types.go"
+  # Completing the step on every file of a multi-file editor. Only the wire
+  # shapes in types.go.
+  - path: "openloc/internal/scopecomplete"
+    output_path: "web/src/types/scopecomplete.ts"
+    type_mappings:
+      "segmentbulk.Skip": "{ id: number; reason: string }"
     include_files:
       - "types.go"
   # Split and join in the CAT editor. Only the wire shapes in types.go.
@@ -122,4 +131,39 @@ packages:
     frontmatter: |
       import type * as segmentation from './segmentation'
     include_files:
+      - "dto.go"
+  # Filter profiles (/api/filter-profiles): the options and the API's DTOs.
+  - path: "openloc/internal/filterprofile"
+    output_path: "web/src/types/filterprofile.ts"
+    type_mappings:
+      "time.Time": "string"
+      "parser.HTMLOptions": "HTMLOptions"
+      "parser.XMLOptions": "XMLOptions"
+      "parser.XLSXTargetColumn": "XLSXTargetColumn"
+    # The HTML and XML filter options and the Excel target column
+    # (internal/parser/html_options.go, xml_options.go, xlsx_targets.go),
+    # written here: the parser package is not exported.
+    frontmatter: |
+      export interface HTMLOptions {
+        attributes: Record<string, string[]>;
+        meta_description: boolean;
+        skip_pre: boolean;
+      }
+      export interface XMLAttrValue {
+        name: string;
+        value: string;
+      }
+      export interface XMLOptions {
+        inline_elements: string[];
+        no_translate: XMLAttrValue[];
+        ref_elements: string[];
+        ref_attributes: string[];
+        skip_elements: string[];
+      }
+      export interface XLSXTargetColumn {
+        language: string;
+        column: string;
+      }
+    include_files:
+      - "options.go"
       - "dto.go"

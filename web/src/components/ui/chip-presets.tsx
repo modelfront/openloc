@@ -1,4 +1,4 @@
-import { KeyRound, Languages, PowerOff, Sparkles, User, UserCog } from 'lucide-react'
+import { Handshake, KeyRound, Languages, PowerOff, Sparkles, User, UserCog } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
@@ -38,6 +38,8 @@ interface ChipPreset {
   Icon?: typeof User
   /** Tooltip. Carries the meaning the short label cannot. */
   title: string
+  /** Chip size, when the preset is not the default one. */
+  size?: ChipProps['size']
 }
 
 /** Props a preset call site may still vary — never the color or the label. */
@@ -58,6 +60,7 @@ function presetChip(preset: ChipPreset, defaultTestId: string) {
     return (
       <Chip
         color={preset.color}
+        size={preset.size}
         icon={Icon ? <Icon /> : undefined}
         title={preset.title}
         // font-normal because a preset is a marker beside content, not a
@@ -140,6 +143,34 @@ export const ENGINE_UNUSABLE_PRESETS = {
 
 export const EngineDisabledChip = presetChip(ENGINE_UNUSABLE_PRESETS.disabled, 'engine-unusable-disabled')
 export const EngineNoKeyChip = presetChip(ENGINE_UNUSABLE_PRESETS.no_key, 'engine-unusable-no_key')
+
+// A vendor organization: its own org, working for one client org. Neutral
+// grey with self-describing text, so the hue carries no meaning of its own.
+export const ORG_KIND_PRESETS = {
+  vendor: {
+    label: 'Vendor',
+    color: 'grey',
+    Icon: Handshake,
+    title: 'A vendor organization: it works for one client organization',
+  },
+} as const satisfies Record<string, ChipPreset>
+
+export const VendorOrgChip = presetChip(ORG_KIND_PRESETS.vendor, 'org-kind-vendor')
+
+// A member whose vendor org disabled their access after months without use.
+// Yellow like an engine switched off: an admin undoes it with Enable.
+export const MEMBER_STATE_PRESETS = {
+  disabled: {
+    label: 'Disabled',
+    color: 'yellow',
+    Icon: PowerOff,
+    title: 'Disabled after 90 days without use — an admin can enable it again',
+    // A note beside a name or a role chip, never the row's main label.
+    size: 'small',
+  },
+} as const satisfies Record<string, ChipPreset>
+
+export const MemberDisabledChip = presetChip(MEMBER_STATE_PRESETS.disabled, 'member-disabled')
 
 // The same two states seen from a ROUTER, which needs its own wording: "No key"
 // on a router row reads as the router lacking one, when the problem is an engine

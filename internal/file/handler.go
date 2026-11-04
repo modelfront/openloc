@@ -1,6 +1,7 @@
 package file
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -93,9 +94,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) (IngestResult, 
 		}
 		layout = l
 	}
+	filterID, err := formID(r, "filter_profile_id")
+	if err != nil {
+		httputil.BadRequest(w, "invalid filter_profile_id")
+		return IngestResult{}, false
+	}
 	res, err := h.Ingest(r.Context(), up.project, up.filename, up.content, IngestOptions{
-		Analyze:    r.FormValue("analyze") == "true",
-		XLSXLayout: layout,
+		Analyze:         r.FormValue("analyze") == "true",
+		XLSXLayout:      layout,
+		FilterProfileID: filterID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "upload", "file")
@@ -295,4 +302,17 @@ func (h *Handler) readUpload(w http.ResponseWriter, r *http.Request) (upload, bo
 		return upload{}, false
 	}
 	return upload{project: project, filename: header.Filename, content: content}, true
+}
+
+// formID reads an optional positive id form field; nil when absent.
+func formID(r *http.Request, field string) (*int64, error) {
+	raw := r.FormValue(field)
+	if raw == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return nil, fmt.Errorf("invalid %s", field)
+	}
+	return &n, nil
 }

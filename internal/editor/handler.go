@@ -1,7 +1,8 @@
-// Package editor serves the CAT editor's view of a job: a light index of every
-// segment, the text of the rows on screen, and the lookups that need the whole
-// file's text (search, cross-references, a word's occurrences), so the browser
-// never has to load all of it.
+// Package editor serves the CAT editor's view of a scope (one job, or several
+// jobs of a project opened together): a light index of every segment, the
+// text of the rows on screen, and the lookups that need every file's text
+// (search, cross-references, a word's occurrences, internal fuzzy matches), so
+// the browser never has to load all of it.
 package editor
 
 import (
@@ -10,10 +11,13 @@ import (
 	"strconv"
 	"strings"
 
-	"openloc/internal/auth"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
 	"openloc/internal/httputil"
 	"openloc/internal/placeable"
+	"openloc/internal/taskedit"
 )
 
 // MaxRows caps the rows one request may ask for.
@@ -22,45 +26,59 @@ const MaxRows = 500
 // maxWordLength caps the word a candidate lookup searches for.
 const maxWordLength = 200
 
-// Handler serves the /api/jobs/{jobID}/editor/* routes. The route group's
-// job ownership and linguist assignment gates apply; each handler resolves
-// the job tenant-scoped again.
+// Handler serves the /api/jobs/{jobID}/editor/* routes (a scope of one job,
+// behind the job group's ownership and linguist assignment gates) and the
+// /api/projects/{projectID}/editor/* routes (the jobs of ?jobs=, which
+// RequestScope checks). Each handler resolves its scope tenant-scoped.
 type Handler struct {
 	queries db.Querier
+	guard   *taskedit.Guard
+	pool    database.TxBeginner
 }
 
-func NewHandler(q db.Querier) *Handler {
-	return &Handler{queries: q}
-}
-
-func (h *Handler) job(w http.ResponseWriter, r *http.Request) (db.Job, int64, bool) {
-	jobID, err := httputil.ParseID(r, "jobID")
-	if err != nil {
-		httputil.BadRequest(w, "invalid job ID")
-		return db.Job{}, 0, false
+// NewHandler returns a Handler. pool may be nil in unit tests that never
+// reach the internal fuzzy lookup.
+func NewHandler(q db.Querier, pool *pgxpool.Pool) *Handler {
+	h := &Handler{queries: q, guard: taskedit.New(q, pool)}
+	if pool != nil {
+		h.pool = pool
 	}
-	tenantID := auth.TenantIDFromContext(r.Context())
-	job, err := h.queries.GetJobTenant(r.Context(), db.GetJobTenantParams{ID: jobID, TenantID: tenantID})
-	if httputil.DBError(w, err, "job") {
-		return db.Job{}, 0, false
-	}
-	return job, tenantID, true
+	return h
 }
 
-// HandleIndex answers GET /api/jobs/{jobID}/editor/index.
+func (h *Handler) scope(w http.ResponseWriter, r *http.Request) (Scope, bool) {
+	return RequestScope(w, r, h.queries)
+}
+
+// HandleIndex answers GET …/editor/index: every row of the scope, and a header
+// per file saying where its rows are and whether the caller may edit them.
 func (h *Handler) HandleIndex(w http.ResponseWriter, r *http.Request) {
-	job, tenantID, ok := h.job(w, r)
+	scope, ok := h.scope(w, r)
 	if !ok {
 		return
 	}
 	rows, err := h.queries.ListEditorIndex(r.Context(), db.ListEditorIndexParams{
-		TargetLanguage: job.TargetLanguage, FileID: job.FileID, TenantID: tenantID,
+		TargetLanguage: scope.TargetLanguage, FileIds: scope.FileIDs(), TenantID: scope.TenantID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "editor index")
 		return
 	}
-	httputil.Data(w, buildIndex(rows))
+	blocks, err := h.guard.CheckJobs(r.Context(), scope.TenantID, scope.JobIDs(), taskedit.Opts{})
+	if err != nil {
+		httputil.ServiceError(w, err, "check", "task edit state")
+		return
+	}
+	withPrevious, err := h.queries.ListJobsWithPreviousStep(r.Context(), db.ListJobsWithPreviousStepParams{
+		JobIds: scope.JobIDs(), TenantID: scope.TenantID,
+	})
+	if err != nil {
+		httputil.ServiceError(w, err, "list", "previous steps")
+		return
+	}
+	idx := buildIndex(rows)
+	idx.Files = scopeFiles(scope, rows, blocks, withPrevious)
+	httputil.Data(w, idx)
 }
 
 // Row is one segment with its translation in the job's language, if any.
@@ -76,11 +94,11 @@ type Row struct {
 	Placeables       []placeable.Placeable `json:"placeables"`
 }
 
-// HandleRows answers GET /api/jobs/{jobID}/editor/rows?segment_ids=1,2,3: the
-// segments of the job's file among those ids, in document order. Ids outside
-// the file are not returned.
+// HandleRows answers GET …/editor/rows?segment_ids=1,2,3: the segments of the
+// scope's files among those ids, in scope order. Ids outside the scope are
+// not returned.
 func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
-	job, tenantID, ok := h.job(w, r)
+	scope, ok := h.scope(w, r)
 	if !ok {
 		return
 	}
@@ -90,7 +108,7 @@ func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	segments, err := h.queries.ListEditorSegmentsByIDs(r.Context(), db.ListEditorSegmentsByIDsParams{
-		FileID: job.FileID, TargetLanguage: job.TargetLanguage, TenantID: tenantID, Ids: ids,
+		FileIds: scope.FileIDs(), TargetLanguage: scope.TargetLanguage, TenantID: scope.TenantID, Ids: ids,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "segments")
@@ -101,7 +119,7 @@ func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
 		found[i] = s.ID
 	}
 	translations, err := h.queries.ListEditorTranslationsBySegments(r.Context(), db.ListEditorTranslationsBySegmentsParams{
-		SegmentIds: found, TargetLanguage: job.TargetLanguage,
+		SegmentIds: found, TargetLanguage: scope.TargetLanguage,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "translations")
@@ -116,7 +134,7 @@ func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
 		translationIDs[i] = t.ID
 	}
 	previous, err := h.queries.ListEditorPreviousStepTexts(r.Context(), db.ListEditorPreviousStepTextsParams{
-		TranslationIds: translationIDs, TenantID: tenantID,
+		TranslationIds: translationIDs, TenantID: scope.TenantID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "previous step texts")
@@ -126,8 +144,9 @@ func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
 	for i := range previous {
 		baseline[previous[i].TranslationID] = &previous[i].Text
 	}
+	// One project, so one source language for every file.
 	sourceLanguage, err := h.queries.GetEditorSourceLanguage(r.Context(), db.GetEditorSourceLanguageParams{
-		FileID: job.FileID, TenantID: tenantID,
+		FileID: scope.Jobs[0].FileID, TenantID: scope.TenantID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "load", "source language")
@@ -144,10 +163,10 @@ func (h *Handler) HandleRows(w http.ResponseWriter, r *http.Request) {
 	httputil.Data(w, out)
 }
 
-// HandleSearch answers GET /api/jobs/{jobID}/editor/search?q=&source=&target=&case=&regex=.
+// HandleSearch answers GET …/editor/search?q=&source=&target=&case=&regex=.
 // Without regex the text is trimmed; source and target default to on.
 func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
-	job, tenantID, ok := h.job(w, r)
+	scope, ok := h.scope(w, r)
 	if !ok {
 		return
 	}
@@ -169,7 +188,7 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.queries.ListEditorTexts(r.Context(), db.ListEditorTextsParams{
-		TargetLanguage: job.TargetLanguage, FileID: job.FileID, TenantID: tenantID,
+		TargetLanguage: scope.TargetLanguage, FileIds: scope.FileIDs(), TenantID: scope.TenantID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "search", "segments")
@@ -184,48 +203,65 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	httputil.Data(w, res)
 }
 
-// HandleRefs answers GET /api/jobs/{jobID}/editor/refs: every segment a
-// cross-reference chip in the file points at, with its source and target.
+// HandleRefs answers GET …/editor/refs: every segment a cross-reference chip
+// points at, with its source and target. A chip points at a key in its own
+// file.
 func (h *Handler) HandleRefs(w http.ResponseWriter, r *http.Request) {
-	job, tenantID, ok := h.job(w, r)
+	scope, ok := h.scope(w, r)
 	if !ok {
 		return
 	}
 	sources, err := h.queries.ListEditorRefSources(r.Context(), db.ListEditorRefSourcesParams{
-		TargetLanguage: job.TargetLanguage, FileID: job.FileID, TenantID: tenantID,
+		TargetLanguage: scope.TargetLanguage, FileIds: scope.FileIDs(), TenantID: scope.TenantID,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "references")
 		return
 	}
-	keys := refKeys(sources)
+	richByFile := map[int64][]string{}
+	for _, s := range sources {
+		richByFile[s.FileID] = append(richByFile[s.FileID], s.SourceRichText)
+	}
+	type fileKey struct {
+		file int64
+		key  string
+	}
+	wanted := map[fileKey]bool{}
+	var keys []string
+	for file, rich := range richByFile {
+		for _, k := range refKeys(rich) {
+			wanted[fileKey{file, k}] = true
+			keys = append(keys, k)
+		}
+	}
 	out := []Ref{}
 	if len(keys) > 0 {
 		rows, err := h.queries.ListEditorSegmentsByKeys(r.Context(), db.ListEditorSegmentsByKeysParams{
-			TargetLanguage: job.TargetLanguage, FileID: job.FileID, TenantID: tenantID, Keys: keys,
+			TargetLanguage: scope.TargetLanguage, FileIds: scope.FileIDs(), TenantID: scope.TenantID, Keys: keys,
 		})
 		if err != nil {
 			httputil.ServiceError(w, err, "list", "references")
 			return
 		}
 		// A key split in this language points at its first piece.
-		seen := make(map[string]bool, len(rows))
+		seen := make(map[fileKey]bool, len(rows))
 		for _, row := range rows {
-			if seen[row.SegmentKey] {
+			k := fileKey{row.FileID, row.SegmentKey}
+			if !wanted[k] || seen[k] {
 				continue
 			}
-			seen[row.SegmentKey] = true
-			out = append(out, Ref{Key: row.SegmentKey, SegmentID: row.SegmentID, Source: row.SourceText, Target: row.TargetText})
+			seen[k] = true
+			out = append(out, Ref{FileID: row.FileID, Key: row.SegmentKey, SegmentID: row.SegmentID, Source: row.SourceText, Target: row.TargetText})
 		}
 	}
 	httputil.Data(w, out)
 }
 
-// HandleWordCandidates answers GET /api/jobs/{jobID}/editor/word?word=: the
-// translations whose target contains the word anywhere. The caller narrows
-// them to whole-word matches.
+// HandleWordCandidates answers GET …/editor/word?word=: the translations
+// whose target contains the word anywhere. The caller narrows them to
+// whole-word matches.
 func (h *Handler) HandleWordCandidates(w http.ResponseWriter, r *http.Request) {
-	job, tenantID, ok := h.job(w, r)
+	scope, ok := h.scope(w, r)
 	if !ok {
 		return
 	}
@@ -235,7 +271,7 @@ func (h *Handler) HandleWordCandidates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.queries.ListEditorWordCandidates(r.Context(), db.ListEditorWordCandidatesParams{
-		FileID: job.FileID, TargetLanguage: job.TargetLanguage, TenantID: tenantID, Word: word,
+		FileIds: scope.FileIDs(), TargetLanguage: scope.TargetLanguage, TenantID: scope.TenantID, Word: word,
 	})
 	if err != nil {
 		httputil.ServiceError(w, err, "list", "translations")
@@ -250,6 +286,23 @@ func (h *Handler) HandleWordCandidates(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httputil.Data(w, out)
+}
+
+// HandleCommentCounts answers GET …/editor/comment-counts: the open comments
+// per translation of the scope, translations without one left out.
+func (h *Handler) HandleCommentCounts(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.scope(w, r)
+	if !ok {
+		return
+	}
+	counts, err := h.queries.CountEditorComments(r.Context(), db.CountEditorCommentsParams{
+		FileIds: scope.FileIDs(), TargetLanguage: scope.TargetLanguage, TenantID: scope.TenantID,
+	})
+	if err != nil {
+		httputil.ServiceError(w, err, "count", "comments")
+		return
+	}
+	httputil.Data(w, counts)
 }
 
 func parseIDs(raw string) ([]int64, error) {

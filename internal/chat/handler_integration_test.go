@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"openloc/internal/ai"
 	"openloc/internal/auth"
 	"openloc/internal/chat"
 	db "openloc/internal/database/sqlcgen"
@@ -80,6 +81,9 @@ type chatFixture struct {
 	q       db.Querier
 	pool    *pgxpool.Pool
 	handler *chat.Handler
+	// catalog is the handler's model catalog, for a test that sets what a
+	// tenant's key lists.
+	catalog *ai.Catalog
 	router  chi.Router
 	llm     *scriptedLLM
 	store   *file.MemoryStore
@@ -134,7 +138,8 @@ func newChatFixtureWith(t *testing.T, script []*chat.Turn, issueReports bool) *c
 		t.Fatalf("mcp server: %v", err)
 	}
 
-	f.handler = chat.NewHandler(q, enc, mcpSrv, nil, testutil.TestAICatalog(pool))
+	f.catalog = testutil.TestAICatalog(pool)
+	f.handler = chat.NewHandler(q, enc, mcpSrv, nil, f.catalog)
 	f.handler.SetPlayground(true)
 	f.handler.SetIssueReports(issueReports)
 	f.store = file.NewMemoryStore()
@@ -143,8 +148,8 @@ func newChatFixtureWith(t *testing.T, script []*chat.Turn, issueReports bool) *c
 		if apiKey != "sk-ant-test-not-real" {
 			t.Errorf("decrypted key mismatch: %q", apiKey)
 		}
-		if model != chat.DefaultModel {
-			t.Errorf("model = %q, want %q", model, chat.DefaultModel)
+		if model != chat.FallbackModel {
+			t.Errorf("model = %q, want %q", model, chat.FallbackModel)
 		}
 		return f.llm
 	})
@@ -176,18 +181,22 @@ func (f *chatFixture) wireIssues() *issues.Service {
 
 func (f *chatFixture) do(t *testing.T, method, path, body string, user db.User, tenantID int64) *httptest.ResponseRecorder {
 	t.Helper()
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, ownerRequest(method, path, body, user, tenantID))
+	return rec
+}
+
+// ownerRequest is a request signed in as user, an owner of tenantID.
+func ownerRequest(method, path, body string, user db.User, tenantID int64) *http.Request {
 	var req *http.Request
 	if body != "" {
 		req = httptest.NewRequest(method, path, strings.NewReader(body))
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
-	req = req.WithContext(auth.WithClaims(req.Context(), &auth.Claims{
+	return req.WithContext(auth.WithClaims(req.Context(), &auth.Claims{
 		TenantID: tenantID, UserID: user.ID, Role: "owner",
 	}))
-	rec := httptest.NewRecorder()
-	f.router.ServeHTTP(rec, req)
-	return rec
 }
 
 // turnOutcome is what a streamed turn ended with: its conversation and the
@@ -585,7 +594,7 @@ func TestIntegrationChatModelsEndpoint(t *testing.T) {
 			if !m.Connected || !m.Selectable {
 				t.Fatalf("claude model %s should be connected+selectable: %+v", m.ID, m)
 			}
-			if m.ID == chat.DefaultModel {
+			if m.ID == chat.FallbackModel {
 				if !m.Default {
 					t.Fatalf("%s not marked default", m.ID)
 				}
@@ -675,8 +684,8 @@ func TestIntegrationChatModelValidation(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("default-model send failed: %d", rec.Code)
 	}
-	if gotModel != chat.DefaultModel {
-		t.Fatalf("factory got %q, want default %q", gotModel, chat.DefaultModel)
+	if gotModel != chat.FallbackModel {
+		t.Fatalf("factory got %q, want default %q", gotModel, chat.FallbackModel)
 	}
 }
 

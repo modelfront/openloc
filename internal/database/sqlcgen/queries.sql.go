@@ -7,12 +7,13 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const acceptInvite = `-- name: AcceptInvite :one
-UPDATE invites SET accepted_at = now() WHERE id = $1 RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at
+UPDATE invites SET accepted_at = now() WHERE id = $1 RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name
 `
 
 func (q *Queries) AcceptInvite(ctx context.Context, id int64) (Invite, error) {
@@ -28,6 +29,8 @@ func (q *Queries) AcceptInvite(ctx context.Context, id int64) (Invite, error) {
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -383,6 +386,75 @@ func (q *Queries) ClaimFailedJobForRerun(ctx context.Context, arg ClaimFailedJob
 	return result.RowsAffected(), nil
 }
 
+const claimInactivityWarnings = `-- name: ClaimInactivityWarnings :many
+WITH due AS (
+  SELECT m.id FROM memberships m
+  JOIN tenants t ON t.id = m.tenant_id AND t.kind = 'vendor' AND t.status = 'approved'
+  JOIN tenants c ON c.id = t.client_tenant_id AND c.status = 'approved'
+  JOIN users u ON u.id = m.user_id AND u.is_active
+  WHERE m.disabled_at IS NULL AND m.inactivity_warned_at IS NULL
+    AND (m.inactivity_warning_claimed_at IS NULL OR m.inactivity_warning_claimed_at < $1::timestamptz)
+    AND m.last_active_at < $2::timestamptz
+  ORDER BY m.last_active_at, m.id
+  LIMIT $3
+  FOR UPDATE OF m SKIP LOCKED
+)
+UPDATE memberships m SET inactivity_warning_claimed_at = now()
+FROM due, tenants t, users u
+WHERE m.id = due.id AND t.id = m.tenant_id AND u.id = m.user_id
+RETURNING m.id, m.tenant_id, m.user_id, m.last_active_at, u.email, u.name, t.name AS tenant_name
+`
+
+type ClaimInactivityWarningsParams struct {
+	ClaimsExpireBefore pgtype.Timestamptz `json:"claims_expire_before"`
+	UnusedSince        pgtype.Timestamptz `json:"unused_since"`
+	Lim                int32              `json:"lim"`
+}
+
+type ClaimInactivityWarningsRow struct {
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	UserID       int64              `json:"user_id"`
+	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
+	Email        string             `json:"email"`
+	Name         string             `json:"name"`
+	TenantName   string             `json:"tenant_name"`
+}
+
+// Internal: the inactivity sweep. Claims, and returns, the enabled vendor org
+// memberships unused since @unused_since that have no warning yet and no live
+// claim (one made after @claims_expire_before). A vendor org, or one whose
+// client, is not approved is left alone: its people cannot use it, so signing
+// in would not help them. The warning itself is set only once the email went
+// out (MarkInactivityWarned); a claim whose email never did simply expires.
+func (q *Queries) ClaimInactivityWarnings(ctx context.Context, arg ClaimInactivityWarningsParams) ([]ClaimInactivityWarningsRow, error) {
+	rows, err := q.db.Query(ctx, claimInactivityWarnings, arg.ClaimsExpireBefore, arg.UnusedSince, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimInactivityWarningsRow{}
+	for rows.Next() {
+		var i ClaimInactivityWarningsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.UserID,
+			&i.LastActiveAt,
+			&i.Email,
+			&i.Name,
+			&i.TenantName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimJobPipeline = `-- name: ClaimJobPipeline :one
 WITH prev AS (
     SELECT j.id, j.status, j.current_step, j.error_message, j.translated_count, j.total_count, j.updated_at FROM jobs j
@@ -447,6 +519,43 @@ func (q *Queries) ClaimJobPipeline(ctx context.Context, arg ClaimJobPipelinePara
 	return i, err
 }
 
+const clearFilterProfileDefault = `-- name: ClearFilterProfileDefault :exec
+DELETE FROM filter_profile_defaults WHERE tenant_id = $1 AND format = $2
+`
+
+type ClearFilterProfileDefaultParams struct {
+	TenantID int64  `json:"tenant_id"`
+	Format   string `json:"format"`
+}
+
+// Back to the format's built-in Default.
+func (q *Queries) ClearFilterProfileDefault(ctx context.Context, arg ClearFilterProfileDefaultParams) error {
+	_, err := q.db.Exec(ctx, clearFilterProfileDefault, arg.TenantID, arg.Format)
+	return err
+}
+
+const clearFilterProfileFromProjects = `-- name: ClearFilterProfileFromProjects :execrows
+DELETE FROM settings_profile_filter_profiles l
+USING projects p
+WHERE l.filter_profile_id = $1 AND p.settings_profile_id = l.settings_profile_id
+  AND p.tenant_id = $2
+`
+
+type ClearFilterProfileFromProjectsParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+// Takes a deleted profile off the tenant's projects: their uploads go back
+// to the format's Default.
+func (q *Queries) ClearFilterProfileFromProjects(ctx context.Context, arg ClearFilterProfileFromProjectsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearFilterProfileFromProjects, arg.ID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearSegmentationProfileFromProjects = `-- name: ClearSegmentationProfileFromProjects :execrows
 UPDATE settings_profiles sp SET segmentation_profile_id = NULL
 WHERE sp.tenant_id = $1 AND sp.segmentation_profile_id = $2::bigint
@@ -466,6 +575,21 @@ func (q *Queries) ClearSegmentationProfileFromProjects(ctx context.Context, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearSettingsFilterProfile = `-- name: ClearSettingsFilterProfile :exec
+DELETE FROM settings_profile_filter_profiles WHERE settings_profile_id = $1 AND format = $2
+`
+
+type ClearSettingsFilterProfileParams struct {
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	Format            string `json:"format"`
+}
+
+// Internal: as ListSettingsFilterProfiles. Back to the format's Default.
+func (q *Queries) ClearSettingsFilterProfile(ctx context.Context, arg ClearSettingsFilterProfileParams) error {
+	_, err := q.db.Exec(ctx, clearSettingsFilterProfile, arg.SettingsProfileID, arg.Format)
+	return err
 }
 
 const clearStepEdited = `-- name: ClearStepEdited :exec
@@ -931,6 +1055,23 @@ func (q *Queries) ConsumeOAuthCode(ctx context.Context, codeHash string) (Consum
 	return i, err
 }
 
+const copySettingsFilterProfiles = `-- name: CopySettingsFilterProfiles :exec
+INSERT INTO settings_profile_filter_profiles (settings_profile_id, format, filter_profile_id)
+SELECT $1::bigint, format, filter_profile_id FROM settings_profile_filter_profiles WHERE settings_profile_id = $2::bigint
+ON CONFLICT (settings_profile_id, format) DO UPDATE SET filter_profile_id = EXCLUDED.filter_profile_id
+`
+
+type CopySettingsFilterProfilesParams struct {
+	Dst int64 `json:"dst"`
+	Src int64 `json:"src"`
+}
+
+// Internal: copies a template's choices onto a new project's settings row.
+func (q *Queries) CopySettingsFilterProfiles(ctx context.Context, arg CopySettingsFilterProfilesParams) error {
+	_, err := q.db.Exec(ctx, copySettingsFilterProfiles, arg.Dst, arg.Src)
+	return err
+}
+
 const countAIEnginesForPrompt = `-- name: CountAIEnginesForPrompt :one
 SELECT count(*)::int AS count
 FROM ai_engine_rows
@@ -1102,6 +1243,52 @@ func (q *Queries) CountConcepts(ctx context.Context, arg CountConceptsParams) (i
 	return count, err
 }
 
+const countEditorComments = `-- name: CountEditorComments :many
+SELECT t.id AS translation_id, COUNT(sc.id)::int AS comment_count
+FROM translations t
+JOIN segment_comments sc ON sc.translation_id = t.id AND sc.deleted_at IS NULL
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE s.file_id = ANY($1::bigint[])
+  AND t.target_language = $2::text
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+GROUP BY t.id
+`
+
+type CountEditorCommentsParams struct {
+	FileIds        []int64 `json:"file_ids"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+}
+
+type CountEditorCommentsRow struct {
+	TranslationID int64 `json:"translation_id"`
+	CommentCount  int32 `json:"comment_count"`
+}
+
+// Open comments per translation of the scope, for the grid's comment marks.
+// Translations without a comment are left out.
+func (q *Queries) CountEditorComments(ctx context.Context, arg CountEditorCommentsParams) ([]CountEditorCommentsRow, error) {
+	rows, err := q.db.Query(ctx, countEditorComments, arg.FileIds, arg.TargetLanguage, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountEditorCommentsRow{}
+	for rows.Next() {
+		var i CountEditorCommentsRow
+		if err := rows.Scan(&i.TranslationID, &i.CommentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countFilesByProject = `-- name: CountFilesByProject :one
 SELECT count(*) FROM files WHERE project_id = $1
 `
@@ -1111,6 +1298,34 @@ func (q *Queries) CountFilesByProject(ctx context.Context, projectID int64) (int
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countFilterProfileUses = `-- name: CountFilterProfileUses :one
+SELECT
+    (SELECT count(*) FROM projects p
+     JOIN settings_profile_filter_profiles l ON l.settings_profile_id = p.settings_profile_id
+     WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND l.filter_profile_id = $2)::bigint AS projects,
+    (SELECT count(*) FROM templates t
+     JOIN settings_profile_filter_profiles l ON l.settings_profile_id = t.settings_profile_id
+     WHERE t.tenant_id = $1 AND l.filter_profile_id = $2)::bigint AS templates
+`
+
+type CountFilterProfileUsesParams struct {
+	TenantID int64 `json:"tenant_id"`
+	ID       int64 `json:"id"`
+}
+
+type CountFilterProfileUsesRow struct {
+	Projects  int64 `json:"projects"`
+	Templates int64 `json:"templates"`
+}
+
+// How many live projects and templates of the tenant name a profile.
+func (q *Queries) CountFilterProfileUses(ctx context.Context, arg CountFilterProfileUsesParams) (CountFilterProfileUsesRow, error) {
+	row := q.db.QueryRow(ctx, countFilterProfileUses, arg.TenantID, arg.ID)
+	var i CountFilterProfileUsesRow
+	err := row.Scan(&i.Projects, &i.Templates)
+	return i, err
 }
 
 const countHeldClearableByJob = `-- name: CountHeldClearableByJob :one
@@ -1261,6 +1476,26 @@ func (q *Queries) CountJobSegmentsPage(ctx context.Context, arg CountJobSegments
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countJobsAssignedToUser = `-- name: CountJobsAssignedToUser :one
+SELECT COUNT(DISTINCT job_id)::int FROM job_step_assignments
+WHERE job_id = ANY($1::bigint[]) AND assigned_to = $2
+`
+
+type CountJobsAssignedToUserParams struct {
+	JobIds []int64 `json:"job_ids"`
+	UserID *int64  `json:"user_id"`
+}
+
+// Vendor access gate for a set of jobs: how many of @job_ids have a step
+// assigned to the user. Every job is assigned when it equals their number.
+// Internal: the caller resolved @job_ids tenant-scoped (editor.ResolveScope).
+func (q *Queries) CountJobsAssignedToUser(ctx context.Context, arg CountJobsAssignedToUserParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countJobsAssignedToUser, arg.JobIds, arg.UserID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countJobsByFiles = `-- name: CountJobsByFiles :many
@@ -1489,19 +1724,20 @@ SELECT count(*) FILTER (WHERE NOT translation_held_by_other(t.id, $1::bigint))::
        count(*) FILTER (WHERE translation_held_by_other(t.id, $1::bigint))::int     AS held
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
-WHERE s.file_id = $2
-  AND s.source_text = $3
+WHERE s.file_id = ANY($2::bigint[])
+  AND md5(s.source_text) = md5($3::text)
+  AND s.source_text = $3::text
   AND t.target_language = $4
   AND t.id != $5
   AND t.locked = false
 `
 
 type CountPropagationTargetsParams struct {
-	ActorID        *int64 `json:"actor_id"`
-	FileID         int64  `json:"file_id"`
-	SourceText     string `json:"source_text"`
-	TargetLanguage string `json:"target_language"`
-	ExcludeID      int64  `json:"exclude_id"`
+	ActorID        *int64  `json:"actor_id"`
+	FileIds        []int64 `json:"file_ids"`
+	SourceText     string  `json:"source_text"`
+	TargetLanguage string  `json:"target_language"`
+	ExcludeID      int64   `json:"exclude_id"`
 }
 
 type CountPropagationTargetsRow struct {
@@ -1515,7 +1751,7 @@ type CountPropagationTargetsRow struct {
 func (q *Queries) CountPropagationTargets(ctx context.Context, arg CountPropagationTargetsParams) (CountPropagationTargetsRow, error) {
 	row := q.db.QueryRow(ctx, countPropagationTargets,
 		arg.ActorID,
-		arg.FileID,
+		arg.FileIds,
 		arg.SourceText,
 		arg.TargetLanguage,
 		arg.ExcludeID,
@@ -1960,6 +2196,38 @@ func (q *Queries) CreateAIComment(ctx context.Context, arg CreateAICommentParams
 	return i, err
 }
 
+const createAICommentUnlessDuplicate = `-- name: CreateAICommentUnlessDuplicate :execrows
+INSERT INTO segment_comments (translation_id, user_id, content)
+SELECT $1, NULL, $2::text
+WHERE NOT EXISTS (
+  SELECT 1 FROM segment_comments c
+  WHERE c.translation_id = $1
+    AND c.user_id IS NULL
+    AND c.deleted_at IS NULL
+    AND c.content = $2::text
+)
+`
+
+type CreateAICommentUnlessDuplicateParams struct {
+	TranslationID int64  `json:"translation_id"`
+	Content       string `json:"content"`
+}
+
+// Internal: NOT tenant-scoped. The translation id must come from a
+// tenant-resolved AI step run (rows listed from a file loaded with
+// GetFileTenant); never call it with an id straight off a request.
+// The AI step's comment write: an AI comment, unless the translation already
+// carries a live AI comment with exactly this wording. A comment-only review
+// runs over the same segments on every re-run, so without the check each run
+// would repeat the remarks of the last. Returns 0 when it was a duplicate.
+func (q *Queries) CreateAICommentUnlessDuplicate(ctx context.Context, arg CreateAICommentUnlessDuplicateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createAICommentUnlessDuplicate, arg.TranslationID, arg.Content)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createAIConnection = `-- name: CreateAIConnection :one
 INSERT INTO ai_connections (vendor_id, name, base_url)
 VALUES ($1, $2, $3)
@@ -2252,7 +2520,7 @@ const createApprovedTenant = `-- name: CreateApprovedTenant :one
 INSERT INTO tenants (name, slug, domain, status)
 VALUES ($1, $2, $3, 'approved')
 ON CONFLICT (slug) DO NOTHING
-RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type CreateApprovedTenantParams struct {
@@ -2279,6 +2547,7 @@ func (q *Queries) CreateApprovedTenant(ctx context.Context, arg CreateApprovedTe
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -2497,7 +2766,7 @@ func (q *Queries) CreateDashboardChart(ctx context.Context, arg CreateDashboardC
 const createDemoTenant = `-- name: CreateDemoTenant :one
 INSERT INTO tenants (name, slug, domain, open_registration, status, kind, demo_version, demo_built_at)
 VALUES ($1, $2, NULL, false, 'approved', 'demo', $3, $4)
-RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type CreateDemoTenantParams struct {
@@ -2528,32 +2797,36 @@ func (q *Queries) CreateDemoTenant(ctx context.Context, arg CreateDemoTenantPara
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
 
 const createFile = `-- name: CreateFile :one
-INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation)
-VALUES ($1, $2, $3, $4, $5, COALESCE($6::bool, true), $7::jsonb, $8::jsonb)
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
+INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation, filter_profile)
+VALUES ($1, $2, $3, $4, $5, COALESCE($6::bool, true), $7::jsonb, $8::jsonb, $9::jsonb)
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile
 `
 
 type CreateFileParams struct {
-	ProjectID    int64      `json:"project_id"`
-	Name         string     `json:"name"`
-	Format       FileFormat `json:"format"`
-	StoragePath  string     `json:"storage_path"`
-	SegmentCount int32      `json:"segment_count"`
-	InlineHtml   *bool      `json:"inline_html"`
-	XlsxLayout   []byte     `json:"xlsx_layout"`
-	Segmentation []byte     `json:"segmentation"`
+	ProjectID     int64      `json:"project_id"`
+	Name          string     `json:"name"`
+	Format        FileFormat `json:"format"`
+	StoragePath   string     `json:"storage_path"`
+	SegmentCount  int32      `json:"segment_count"`
+	InlineHtml    *bool      `json:"inline_html"`
+	XlsxLayout    []byte     `json:"xlsx_layout"`
+	Segmentation  []byte     `json:"segmentation"`
+	FilterProfile []byte     `json:"filter_profile"`
 }
 
 // inline_html is nil-keeps-default (on): a struct literal that omits it must
 // not parse a file as plain text. xlsx_layout is NULL for every file but an
 // Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
 // the rule set the file was split with (segmentation.Snapshot); NULL means
-// the conservative built-in set.
+// the conservative built-in set. filter_profile is the filter profile the
+// file was imported with (filterprofile.Snapshot); NULL for a format without
+// filter profiles.
 func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, error) {
 	row := q.db.QueryRow(ctx, createFile,
 		arg.ProjectID,
@@ -2564,6 +2837,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		arg.InlineHtml,
 		arg.XlsxLayout,
 		arg.Segmentation,
+		arg.FilterProfile,
 	)
 	var i File
 	err := row.Scan(
@@ -2579,23 +2853,55 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
 
-const createInvite = `-- name: CreateInvite :one
-INSERT INTO invites (tenant_id, email, role, invited_by, token, expires_at)
+const createFilterProfile = `-- name: CreateFilterProfile :one
+INSERT INTO filter_profiles (tenant_id, name, format, options, based_on, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at
+RETURNING id
+`
+
+type CreateFilterProfileParams struct {
+	TenantID  int64  `json:"tenant_id"`
+	Name      string `json:"name"`
+	Format    string `json:"format"`
+	Options   []byte `json:"options"`
+	BasedOn   *int64 `json:"based_on"`
+	CreatedBy *int64 `json:"created_by"`
+}
+
+func (q *Queries) CreateFilterProfile(ctx context.Context, arg CreateFilterProfileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createFilterProfile,
+		arg.TenantID,
+		arg.Name,
+		arg.Format,
+		arg.Options,
+		arg.BasedOn,
+		arg.CreatedBy,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createInvite = `-- name: CreateInvite :one
+INSERT INTO invites (tenant_id, email, role, invited_by, token, expires_at, kind, vendor_org_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name
 `
 
 type CreateInviteParams struct {
-	TenantID  int64              `json:"tenant_id"`
-	Email     string             `json:"email"`
-	Role      string             `json:"role"`
-	InvitedBy int64              `json:"invited_by"`
-	Token     string             `json:"token"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	TenantID      int64              `json:"tenant_id"`
+	Email         string             `json:"email"`
+	Role          string             `json:"role"`
+	InvitedBy     int64              `json:"invited_by"`
+	Token         string             `json:"token"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	Kind          string             `json:"kind"`
+	VendorOrgName *string            `json:"vendor_org_name"`
 }
 
 func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error) {
@@ -2606,6 +2912,8 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		arg.InvitedBy,
 		arg.Token,
 		arg.ExpiresAt,
+		arg.Kind,
+		arg.VendorOrgName,
 	)
 	var i Invite
 	err := row.Scan(
@@ -2618,6 +2926,8 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -3343,7 +3653,7 @@ const createPendingTenant = `-- name: CreatePendingTenant :one
 INSERT INTO tenants (name, slug, domain, status)
 VALUES ($1, $2, $3, 'pending')
 ON CONFLICT (slug) DO NOTHING
-RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type CreatePendingTenantParams struct {
@@ -3370,6 +3680,7 @@ func (q *Queries) CreatePendingTenant(ctx context.Context, arg CreatePendingTena
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -3579,7 +3890,7 @@ func (q *Queries) CreateSegmentationProfile(ctx context.Context, arg CreateSegme
 const createSettingsProfile = `-- name: CreateSettingsProfile :one
 
 INSERT INTO settings_profiles (tenant_id, fuzzy_threshold, mt_on_upload, tm_on_upload, qa_profile_id)
-VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
+VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type CreateSettingsProfileParams struct {
@@ -3593,11 +3904,11 @@ type CreateSettingsProfileParams struct {
 // ============================================================
 // Settings Profile CRUD
 // ============================================================
-// Penalties, auto_complete, inline_html and linguist_terms are deliberately
-// absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
+// Penalties, auto_complete and linguist_terms are deliberately absent: they take
+// the column defaults (1% / 1% / on / pending). Adding them as params would make every existing
 // struct-literal caller pass a silent zero value — 0 means "locales are
 // equivalent" (new projects would start auto-confirming sublanguage variants)
-// and false would switch auto-completion or HTML strings off. Callers that need non-defaults
+// and false would switch auto-completion off. Callers that need non-defaults
 // (create-from-template) set them via UpdateSettingsProfile.
 func (q *Queries) CreateSettingsProfile(ctx context.Context, arg CreateSettingsProfileParams) (SettingsProfile, error) {
 	row := q.db.QueryRow(ctx, createSettingsProfile,
@@ -3624,7 +3935,6 @@ func (q *Queries) CreateSettingsProfile(ctx context.Context, arg CreateSettingsP
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
@@ -3945,7 +4255,7 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 }
 
 const createTenant = `-- name: CreateTenant :one
-INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type CreateTenantParams struct {
@@ -3967,6 +4277,7 @@ func (q *Queries) CreateTenant(ctx context.Context, arg CreateTenantParams) (Ten
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -4217,6 +4528,42 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.IsActive,
 		&i.DeactivatedAt,
+	)
+	return i, err
+}
+
+const createVendorTenant = `-- name: CreateVendorTenant :one
+INSERT INTO tenants (name, slug, domain, status, kind, client_tenant_id)
+VALUES ($1, $2, NULL, 'approved', 'vendor', $3::bigint)
+ON CONFLICT (slug) DO NOTHING
+RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
+`
+
+type CreateVendorTenantParams struct {
+	Name           string `json:"name"`
+	Slug           string `json:"slug"`
+	ClientTenantID int64  `json:"client_tenant_id"`
+}
+
+// A vendor organization, created when its admin accepts the client's
+// vendor-org invite. The client is already approved, so the vendor org is
+// too. No domain: domain sign-up and auto-join never reach a vendor org.
+// A taken slug returns no row, as in CreatePendingTenant.
+func (q *Queries) CreateVendorTenant(ctx context.Context, arg CreateVendorTenantParams) (Tenant, error) {
+	row := q.db.QueryRow(ctx, createVendorTenant, arg.Name, arg.Slug, arg.ClientTenantID)
+	var i Tenant
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.Domain,
+		&i.Slug,
+		&i.OpenRegistration,
+		&i.Status,
+		&i.Kind,
+		&i.DemoVersion,
+		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -5111,8 +5458,7 @@ func (q *Queries) DeleteUserHoldsInTenant(ctx context.Context, arg DeleteUserHol
 
 const deleteUserLanguagePairs = `-- name: DeleteUserLanguagePairs :exec
 DELETE FROM user_language_pairs
-WHERE user_language_pairs.user_id = $1
-  AND user_language_pairs.user_id IN (SELECT memberships.user_id FROM memberships WHERE memberships.tenant_id = $2)
+WHERE user_language_pairs.user_id = $1 AND user_language_pairs.tenant_id = $2
 `
 
 type DeleteUserLanguagePairsParams struct {
@@ -5121,9 +5467,8 @@ type DeleteUserLanguagePairsParams struct {
 }
 
 // Used by the PUT replace-semantics handler. Always paired with bulk insert
-// inside a transaction so the user's pair set is atomically replaced.
-// Org-scoped via the membership subquery — won't touch a user's pairs unless
-// they're a member of the given tenant.
+// inside a transaction so the member's pair set is atomically replaced.
+// Touches only the pairs this org set.
 func (q *Queries) DeleteUserLanguagePairs(ctx context.Context, arg DeleteUserLanguagePairsParams) error {
 	_, err := q.db.Exec(ctx, deleteUserLanguagePairs, arg.UserID, arg.TenantID)
 	return err
@@ -5191,6 +5536,39 @@ func (q *Queries) DemoWorkspacePresent(ctx context.Context, arg DemoWorkspacePre
 	return present, err
 }
 
+const disableInactiveVendorMemberships = `-- name: DisableInactiveVendorMemberships :execrows
+UPDATE memberships SET disabled_at = now()
+WHERE id IN (
+  SELECT m.id FROM memberships m
+  JOIN tenants t ON t.id = m.tenant_id AND t.kind = 'vendor' AND t.status = 'approved'
+  JOIN tenants c ON c.id = t.client_tenant_id AND c.status = 'approved'
+  WHERE m.disabled_at IS NULL
+    AND m.last_active_at < $1::timestamptz
+    AND m.inactivity_warned_at < $2::timestamptz
+  ORDER BY m.id
+  LIMIT $3
+  FOR UPDATE OF m SKIP LOCKED
+)
+`
+
+type DisableInactiveVendorMembershipsParams struct {
+	UnusedSince  pgtype.Timestamptz `json:"unused_since"`
+	WarnedBefore pgtype.Timestamptz `json:"warned_before"`
+	Lim          int32              `json:"lim"`
+}
+
+// Internal: the inactivity sweep. Disables up to @lim vendor org memberships
+// unused since @unused_since whose warning went out before @warned_before,
+// so nobody is disabled without a warning first, nor while their vendor org
+// or its client is not approved.
+func (q *Queries) DisableInactiveVendorMemberships(ctx context.Context, arg DisableInactiveVendorMembershipsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableInactiveVendorMemberships, arg.UnusedSince, arg.WarnedBefore, arg.Lim)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dismissJobFailure = `-- name: DismissJobFailure :one
 WITH old AS (
     SELECT j.id, j.error_message FROM jobs j WHERE j.id = $2 AND j.status = 'failed' FOR UPDATE
@@ -5216,6 +5594,71 @@ func (q *Queries) DismissJobFailure(ctx context.Context, arg DismissJobFailurePa
 	var error_message *string
 	err := row.Scan(&error_message)
 	return error_message, err
+}
+
+const enableMembership = `-- name: EnableMembership :one
+UPDATE memberships SET disabled_at = NULL, last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+WHERE tenant_id = $1 AND user_id = $2 AND disabled_at IS NOT NULL
+RETURNING id, user_id, tenant_id, role, created_at, last_active_at, inactivity_warned_at, disabled_at, inactivity_warning_claimed_at
+`
+
+type EnableMembershipParams struct {
+	TenantID int64 `json:"tenant_id"`
+	UserID   int64 `json:"user_id"`
+}
+
+// An admin enables a member their org disabled for disuse. The clock starts
+// again from now. ErrNoRows: no such disabled membership in this org.
+func (q *Queries) EnableMembership(ctx context.Context, arg EnableMembershipParams) (Membership, error) {
+	row := q.db.QueryRow(ctx, enableMembership, arg.TenantID, arg.UserID)
+	var i Membership
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TenantID,
+		&i.Role,
+		&i.CreatedAt,
+		&i.LastActiveAt,
+		&i.InactivityWarnedAt,
+		&i.DisabledAt,
+		&i.InactivityWarningClaimedAt,
+	)
+	return i, err
+}
+
+const enableVendorAdmin = `-- name: EnableVendorAdmin :one
+UPDATE memberships m SET disabled_at = NULL, last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+FROM tenants t
+WHERE t.id = m.tenant_id AND t.kind = 'vendor' AND t.client_tenant_id = $1
+  AND m.tenant_id = $2 AND m.user_id = $3
+  AND m.role = 'admin' AND m.disabled_at IS NOT NULL
+RETURNING m.id, m.user_id, m.tenant_id, m.role, m.created_at, m.last_active_at, m.inactivity_warned_at, m.disabled_at, m.inactivity_warning_claimed_at
+`
+
+type EnableVendorAdminParams struct {
+	ClientTenantID *int64 `json:"client_tenant_id"`
+	VendorTenantID int64  `json:"vendor_tenant_id"`
+	UserID         int64  `json:"user_id"`
+}
+
+// A client org enables an admin one of its own vendor orgs disabled for
+// disuse. Scoped by the client's tenant id through the vendor's link.
+// ErrNoRows: not a disabled admin of a vendor of this client.
+func (q *Queries) EnableVendorAdmin(ctx context.Context, arg EnableVendorAdminParams) (Membership, error) {
+	row := q.db.QueryRow(ctx, enableVendorAdmin, arg.ClientTenantID, arg.VendorTenantID, arg.UserID)
+	var i Membership
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TenantID,
+		&i.Role,
+		&i.CreatedAt,
+		&i.LastActiveAt,
+		&i.InactivityWarnedAt,
+		&i.DisabledAt,
+		&i.InactivityWarningClaimedAt,
+	)
+	return i, err
 }
 
 const ensureDeploymentMTEngine = `-- name: EnsureDeploymentMTEngine :exec
@@ -6377,6 +6820,29 @@ func (q *Queries) GetApplicableWorkflow(ctx context.Context, arg GetApplicableWo
 	return i, err
 }
 
+const getBuiltinFilterProfileByKey = `-- name: GetBuiltinFilterProfileByKey :one
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog WHERE tenant_id IS NULL AND builtin_key = $1
+`
+
+func (q *Queries) GetBuiltinFilterProfileByKey(ctx context.Context, builtinKey *string) (FilterProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getBuiltinFilterProfileByKey, builtinKey)
+	var i FilterProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.Format,
+		&i.Description,
+		&i.Options,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getChartByShareToken = `-- name: GetChartByShareToken :one
 SELECT c.id, c.dashboard_id, c.title, c.definition, c.viz, c.controls,
        d.name AS dashboard_name, d.filters AS dashboard_filters
@@ -6786,6 +7252,33 @@ func (q *Queries) GetDefaultAssigneeForStep(ctx context.Context, id int64) (*int
 	return default_assignee, err
 }
 
+const getDefaultFilterProfile = `-- name: GetDefaultFilterProfile :one
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog
+WHERE tenant_id IS NULL AND format = $1::text AND builtin_key LIKE 'builtin:' || $1::text || '-default@%'
+ORDER BY id DESC
+LIMIT 1
+`
+
+// A format's Default built-in: the newest version.
+func (q *Queries) GetDefaultFilterProfile(ctx context.Context, format string) (FilterProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getDefaultFilterProfile, format)
+	var i FilterProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.Format,
+		&i.Description,
+		&i.Options,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getDeletedProject = `-- name: GetDeletedProject :one
 SELECT id, tenant_id, settings_profile_id FROM projects
 WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
@@ -6811,7 +7304,7 @@ func (q *Queries) GetDeletedProject(ctx context.Context, arg GetDeletedProjectPa
 }
 
 const getDemoTenant = `-- name: GetDemoTenant :one
-SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at FROM tenants WHERE kind = 'demo'
+SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id FROM tenants WHERE kind = 'demo'
 `
 
 // Internal: the one demo tenant, not scoped by a caller's tenant.
@@ -6829,6 +7322,7 @@ func (q *Queries) GetDemoTenant(ctx context.Context) (Tenant, error) {
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -6906,7 +7400,7 @@ func (q *Queries) GetExtensionIcon(ctx context.Context, arg GetExtensionIconPara
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files WHERE id = $1
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile FROM files WHERE id = $1
 `
 
 // Internal: used by pipeline. For user-facing handlers, use GetFileTenant.
@@ -6926,12 +7420,13 @@ func (q *Queries) GetFile(ctx context.Context, id int64) (File, error) {
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
 
 const getFileTenant = `-- name: GetFileTenant :one
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation, f.filter_profile FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
 `
@@ -6958,6 +7453,68 @@ func (q *Queries) GetFileTenant(ctx context.Context, arg GetFileTenantParams) (F
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
+	)
+	return i, err
+}
+
+const getFilterProfile = `-- name: GetFilterProfile :one
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog
+WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL) AND deleted_at IS NULL
+`
+
+type GetFilterProfileParams struct {
+	ID       int64  `json:"id"`
+	TenantID *int64 `json:"tenant_id"`
+}
+
+// A live org profile of the tenant, or a built-in.
+func (q *Queries) GetFilterProfile(ctx context.Context, arg GetFilterProfileParams) (FilterProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getFilterProfile, arg.ID, arg.TenantID)
+	var i FilterProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.Format,
+		&i.Description,
+		&i.Options,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getFilterProfileForImport = `-- name: GetFilterProfileForImport :one
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog
+WHERE id = $1 AND (tenant_id = $2 OR tenant_id IS NULL)
+`
+
+type GetFilterProfileForImportParams struct {
+	ID       int64  `json:"id"`
+	TenantID *int64 `json:"tenant_id"`
+}
+
+// The profile a project or template names, deleted or not: an upload that
+// read its project's settings before a delete still resolves the profile.
+func (q *Queries) GetFilterProfileForImport(ctx context.Context, arg GetFilterProfileForImportParams) (FilterProfileCatalog, error) {
+	row := q.db.QueryRow(ctx, getFilterProfileForImport, arg.ID, arg.TenantID)
+	var i FilterProfileCatalog
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.BuiltinKey,
+		&i.Name,
+		&i.Format,
+		&i.Description,
+		&i.Options,
+		&i.BasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -7056,7 +7613,7 @@ func (q *Queries) GetHoldTarget(ctx context.Context, arg GetHoldTargetParams) (T
 }
 
 const getInviteByToken = `-- name: GetInviteByToken :one
-SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at FROM invites WHERE token = $1
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE token = $1
 `
 
 func (q *Queries) GetInviteByToken(ctx context.Context, token string) (Invite, error) {
@@ -7072,12 +7629,14 @@ func (q *Queries) GetInviteByToken(ctx context.Context, token string) (Invite, e
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
 
 const getInviteTenant = `-- name: GetInviteTenant :one
-SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at FROM invites WHERE id = $1 AND tenant_id = $2
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE id = $1 AND tenant_id = $2
 `
 
 type GetInviteTenantParams struct {
@@ -7099,6 +7658,8 @@ func (q *Queries) GetInviteTenant(ctx context.Context, arg GetInviteTenantParams
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -7410,6 +7971,21 @@ func (q *Queries) GetJobByFileAndLang(ctx context.Context, arg GetJobByFileAndLa
 		&i.MtSkipReason,
 	)
 	return i, err
+}
+
+const getJobCurrentStepID = `-- name: GetJobCurrentStepID :one
+SELECT current_step_id FROM jobs WHERE id = $1
+`
+
+// Internal: the job's step in progress, read inside the step advance's
+// transaction after LockJobForTaskEdit, so the advance sees the step a
+// concurrent advance may just have moved. The caller resolved the job
+// tenant-scoped.
+func (q *Queries) GetJobCurrentStepID(ctx context.Context, jobID int64) (*int64, error) {
+	row := q.db.QueryRow(ctx, getJobCurrentStepID, jobID)
+	var current_step_id *int64
+	err := row.Scan(&current_step_id)
+	return current_step_id, err
 }
 
 const getJobForAnalysis = `-- name: GetJobForAnalysis :one
@@ -8352,7 +8928,7 @@ func (q *Queries) GetMemberIssueAttachment(ctx context.Context, arg GetMemberIss
 }
 
 const getMembership = `-- name: GetMembership :one
-SELECT id, user_id, tenant_id, role, created_at FROM memberships WHERE user_id = $1 AND tenant_id = $2
+SELECT id, user_id, tenant_id, role, created_at, last_active_at, inactivity_warned_at, disabled_at, inactivity_warning_claimed_at FROM memberships WHERE user_id = $1 AND tenant_id = $2
 `
 
 type GetMembershipParams struct {
@@ -8371,6 +8947,10 @@ func (q *Queries) GetMembership(ctx context.Context, arg GetMembershipParams) (M
 		&i.TenantID,
 		&i.Role,
 		&i.CreatedAt,
+		&i.LastActiveAt,
+		&i.InactivityWarnedAt,
+		&i.DisabledAt,
+		&i.InactivityWarningClaimedAt,
 	)
 	return i, err
 }
@@ -8585,7 +9165,7 @@ func (q *Queries) GetPendingAutoAnalysis(ctx context.Context, projectID int64) (
 }
 
 const getPendingInviteByEmailAndTenant = `-- name: GetPendingInviteByEmailAndTenant :one
-SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at FROM invites WHERE email = $1 AND tenant_id = $2 AND accepted_at IS NULL
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE email = $1 AND tenant_id = $2 AND accepted_at IS NULL
 `
 
 type GetPendingInviteByEmailAndTenantParams struct {
@@ -8606,12 +9186,14 @@ func (q *Queries) GetPendingInviteByEmailAndTenant(ctx context.Context, arg GetP
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
 
 const getPendingInvitesByEmail = `-- name: GetPendingInvitesByEmail :many
-SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at FROM invites WHERE email = $1 AND accepted_at IS NULL
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE email = $1 AND accepted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM tenants t WHERE t.id = invites.tenant_id AND t.status = 'deleting')
 ORDER BY created_at DESC
 `
@@ -8643,6 +9225,8 @@ func (q *Queries) GetPendingInvitesByEmail(ctx context.Context, email string) ([
 			&i.AcceptedAt,
 			&i.ExpiresAt,
 			&i.CreatedAt,
+			&i.Kind,
+			&i.VendorOrgName,
 		); err != nil {
 			return nil, err
 		}
@@ -8655,7 +9239,7 @@ func (q *Queries) GetPendingInvitesByEmail(ctx context.Context, email string) ([
 }
 
 const getPendingUnexpiredInviteByToken = `-- name: GetPendingUnexpiredInviteByToken :one
-SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at FROM invites WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()
   AND NOT EXISTS (SELECT 1 FROM tenants t WHERE t.id = invites.tenant_id AND t.status = 'deleting')
 `
 
@@ -8675,6 +9259,8 @@ func (q *Queries) GetPendingUnexpiredInviteByToken(ctx context.Context, token st
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -9726,8 +10312,26 @@ func (q *Queries) GetSegmentationProfileForImport(ctx context.Context, arg GetSe
 	return i, err
 }
 
+const getSettingsFilterProfile = `-- name: GetSettingsFilterProfile :one
+SELECT filter_profile_id FROM settings_profile_filter_profiles
+WHERE settings_profile_id = $1 AND format = $2
+`
+
+type GetSettingsFilterProfileParams struct {
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	Format            string `json:"format"`
+}
+
+// Internal: as ListSettingsFilterProfiles, for one format.
+func (q *Queries) GetSettingsFilterProfile(ctx context.Context, arg GetSettingsFilterProfileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, getSettingsFilterProfile, arg.SettingsProfileID, arg.Format)
+	var filter_profile_id int64
+	err := row.Scan(&filter_profile_id)
+	return filter_profile_id, err
+}
+
 const getSettingsProfile = `-- name: GetSettingsProfile :one
-SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = $1
+SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = $1
 `
 
 func (q *Queries) GetSettingsProfile(ctx context.Context, id int64) (SettingsProfile, error) {
@@ -9749,7 +10353,6 @@ func (q *Queries) GetSettingsProfile(ctx context.Context, id int64) (SettingsPro
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
@@ -10384,7 +10987,7 @@ func (q *Queries) GetTMProfileWithStats(ctx context.Context, arg GetTMProfileWit
 }
 
 const getTMScopeSettingsProfile = `-- name: GetTMScopeSettingsProfile :one
-SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = tm_scope_profile_id($1)
+SELECT id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms FROM settings_profiles WHERE id = tm_scope_profile_id($1)
 `
 
 // The settings_profiles row whose TM rows + match scoring apply to this one:
@@ -10410,95 +11013,9 @@ func (q *Queries) GetTMScopeSettingsProfile(ctx context.Context, spID int64) (Se
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
-	)
-	return i, err
-}
-
-const getTaskEditState = `-- name: GetTaskEditState :one
-SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_step,
-       j.target_language, f.id AS file_id, f.name AS file_name, f.project_id,
-       EXISTS (SELECT 1 FROM job_step_assignments x WHERE x.job_id = j.id)::bool AS has_workflow,
-       COALESCE(cur.id, 0)::bigint AS active_id,
-       COALESCE(cur.is_ai_step, false)::bool AS active_is_ai_step,
-       COALESCE(cur.step_type, '')::text AS active_step_type,
-       COALESCE(cur.step_order, 0)::int AS active_step_order,
-       COALESCE(lc.id, 0)::bigint AS last_completed_id,
-       COALESCE(lc.step_order, 0)::int AS last_completed_order,
-       COALESCE(lc.name, '')::text AS last_completed_name,
-       COALESCE(lc.step_type, '')::text AS last_completed_type,
-       job_last_clear_step_order(j.id) AS last_clear_step_order
-FROM jobs j
-JOIN files f ON f.id = j.file_id
-JOIN projects p ON p.id = f.project_id
-LEFT JOIN LATERAL (
-    SELECT jsa.id, ws.step_order, ws.step_type, (ws.ai_router_id IS NOT NULL) AS is_ai_step
-    FROM job_step_assignments jsa
-    JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
-    WHERE jsa.job_id = j.id AND jsa.status = 'in_progress'
-    ORDER BY ws.step_order
-    LIMIT 1
-) cur ON true
-LEFT JOIN LATERAL (
-    SELECT jsa.id, ws.step_order, ws.name, ws.step_type
-    FROM job_step_assignments jsa
-    JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
-    WHERE jsa.job_id = j.id AND jsa.status = 'completed'
-    ORDER BY ws.step_order DESC
-    LIMIT 1
-) lc ON true
-WHERE j.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
-`
-
-type GetTaskEditStateParams struct {
-	JobID    int64 `json:"job_id"`
-	TenantID int64 `json:"tenant_id"`
-}
-
-type GetTaskEditStateRow struct {
-	JobID              int64  `json:"job_id"`
-	JobStatus          string `json:"job_status"`
-	JobCurrentStep     string `json:"job_current_step"`
-	TargetLanguage     string `json:"target_language"`
-	FileID             int64  `json:"file_id"`
-	FileName           string `json:"file_name"`
-	ProjectID          int64  `json:"project_id"`
-	HasWorkflow        bool   `json:"has_workflow"`
-	ActiveID           int64  `json:"active_id"`
-	ActiveIsAiStep     bool   `json:"active_is_ai_step"`
-	ActiveStepType     string `json:"active_step_type"`
-	ActiveStepOrder    int32  `json:"active_step_order"`
-	LastCompletedID    int64  `json:"last_completed_id"`
-	LastCompletedOrder int32  `json:"last_completed_order"`
-	LastCompletedName  string `json:"last_completed_name"`
-	LastCompletedType  string `json:"last_completed_type"`
-	LastClearStepOrder int32  `json:"last_clear_step_order"`
-}
-
-func (q *Queries) GetTaskEditState(ctx context.Context, arg GetTaskEditStateParams) (GetTaskEditStateRow, error) {
-	row := q.db.QueryRow(ctx, getTaskEditState, arg.JobID, arg.TenantID)
-	var i GetTaskEditStateRow
-	err := row.Scan(
-		&i.JobID,
-		&i.JobStatus,
-		&i.JobCurrentStep,
-		&i.TargetLanguage,
-		&i.FileID,
-		&i.FileName,
-		&i.ProjectID,
-		&i.HasWorkflow,
-		&i.ActiveID,
-		&i.ActiveIsAiStep,
-		&i.ActiveStepType,
-		&i.ActiveStepOrder,
-		&i.LastCompletedID,
-		&i.LastCompletedOrder,
-		&i.LastCompletedName,
-		&i.LastCompletedType,
-		&i.LastClearStepOrder,
 	)
 	return i, err
 }
@@ -10651,7 +11168,7 @@ func (q *Queries) GetTemplateByID(ctx context.Context, id int64) (Template, erro
 }
 
 const getTenant = `-- name: GetTenant :one
-SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at FROM tenants WHERE id = $1
+SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id FROM tenants WHERE id = $1
 `
 
 func (q *Queries) GetTenant(ctx context.Context, id int64) (Tenant, error) {
@@ -10668,12 +11185,13 @@ func (q *Queries) GetTenant(ctx context.Context, id int64) (Tenant, error) {
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
 
 const getTenantByDomain = `-- name: GetTenantByDomain :one
-SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at FROM tenants WHERE domain = $1
+SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id FROM tenants WHERE domain = $1
 `
 
 // Any tenant that already owns a domain, regardless of status. Guards self-serve
@@ -10693,12 +11211,13 @@ func (q *Queries) GetTenantByDomain(ctx context.Context, domain *string) (Tenant
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
 
 const getTenantByDomainOpenReg = `-- name: GetTenantByDomainOpenReg :one
-SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at FROM tenants WHERE domain = $1 AND open_registration = true AND status = 'approved'
+SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id FROM tenants WHERE domain = $1 AND open_registration = true AND status = 'approved'
 `
 
 // Domain auto-join. Only APPROVED orgs absorb same-domain colleagues:
@@ -10718,12 +11237,13 @@ func (q *Queries) GetTenantByDomainOpenReg(ctx context.Context, domain *string) 
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
 
 const getTenantBySlug = `-- name: GetTenantBySlug :one
-SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at FROM tenants WHERE slug = $1
+SELECT id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id FROM tenants WHERE slug = $1
 `
 
 func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (Tenant, error) {
@@ -10740,7 +11260,31 @@ func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (Tenant, err
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
+	return i, err
+}
+
+const getTenantGate = `-- name: GetTenantGate :one
+SELECT t.status, t.kind, c.status AS client_status
+FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
+WHERE t.id = $1
+`
+
+type GetTenantGateRow struct {
+	Status       string  `json:"status"`
+	Kind         string  `json:"kind"`
+	ClientStatus *string `json:"client_status"`
+}
+
+// Per-request tenant gate: the org's own status and kind, plus its client's
+// status for a vendor org (NULL otherwise). A vendor org works only while
+// its client does.
+func (q *Queries) GetTenantGate(ctx context.Context, tenantID int64) (GetTenantGateRow, error) {
+	row := q.db.QueryRow(ctx, getTenantGate, tenantID)
+	var i GetTenantGateRow
+	err := row.Scan(&i.Status, &i.Kind, &i.ClientStatus)
 	return i, err
 }
 
@@ -10768,6 +11312,40 @@ func (q *Queries) GetTenantOwner(ctx context.Context, tenantID int64) (GetTenant
 	return i, err
 }
 
+const getTenantProfile = `-- name: GetTenantProfile :one
+SELECT t.id, t.name, t.slug, t.status, t.kind AS tenant_kind, c.name AS client_org_name, c.status AS client_status
+FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
+WHERE t.id = $1
+`
+
+type GetTenantProfileRow struct {
+	ID            int64   `json:"id"`
+	Name          string  `json:"name"`
+	Slug          string  `json:"slug"`
+	Status        string  `json:"status"`
+	TenantKind    string  `json:"tenant_kind"`
+	ClientOrgName *string `json:"client_org_name"`
+	ClientStatus  *string `json:"client_status"`
+}
+
+// The selected org as /api/auth/me shows it. client_org_name and
+// client_status are a vendor org's client's, NULL for any other kind.
+func (q *Queries) GetTenantProfile(ctx context.Context, tenantID int64) (GetTenantProfileRow, error) {
+	row := q.db.QueryRow(ctx, getTenantProfile, tenantID)
+	var i GetTenantProfileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.Status,
+		&i.TenantKind,
+		&i.ClientOrgName,
+		&i.ClientStatus,
+	)
+	return i, err
+}
+
 const getTenantStatus = `-- name: GetTenantStatus :one
 SELECT status, kind FROM tenants WHERE id = $1
 `
@@ -10777,10 +11355,7 @@ type GetTenantStatusRow struct {
 	Kind   string `json:"kind"`
 }
 
-// Per-request pending-gate. auth.Middleware calls this so approval
-// takes effect on the next request without a re-login (a JWT claim would go
-// stale for the token's 24h lifetime).
-// Also returns kind: the demo organization is read-only.
+// The org's status and kind. The per-request gate reads GetTenantGate.
 func (q *Queries) GetTenantStatus(ctx context.Context, id int64) (GetTenantStatusRow, error) {
 	row := q.db.QueryRow(ctx, getTenantStatus, id)
 	var i GetTenantStatusRow
@@ -12127,6 +12702,35 @@ func (q *Queries) InsertProjectEvent(ctx context.Context, arg InsertProjectEvent
 	return id, err
 }
 
+const insertPropagationHistoryBatch = `-- name: InsertPropagationHistoryBatch :exec
+INSERT INTO translation_history (translation_id, kind, text, rich_text, created_by, details)
+SELECT unnest($1::bigint[]), 'propagation',
+       $2::text, $3::text, $4::bigint,
+       $5::jsonb
+`
+
+type InsertPropagationHistoryBatchParams struct {
+	TranslationIds []int64 `json:"translation_ids"`
+	Text           *string `json:"text"`
+	RichText       *string `json:"rich_text"`
+	CreatedBy      *int64  `json:"created_by"`
+	Details        []byte  `json:"details"`
+}
+
+// One `propagation` event per sibling a propagation wrote, all with the same
+// text and the same source translation in @details. Internal: the ids are
+// rows PropagateTranslation just returned for a tenant-scoped scope.
+func (q *Queries) InsertPropagationHistoryBatch(ctx context.Context, arg InsertPropagationHistoryBatchParams) error {
+	_, err := q.db.Exec(ctx, insertPropagationHistoryBatch,
+		arg.TranslationIds,
+		arg.Text,
+		arg.RichText,
+		arg.CreatedBy,
+		arg.Details,
+	)
+	return err
+}
+
 const insertTM = `-- name: InsertTM :one
 
 INSERT INTO translation_memory (tm_id, source_language, target_language, source_text, target_text,
@@ -12345,34 +12949,51 @@ func (q *Queries) InsertTranslationHistory(ctx context.Context, arg InsertTransl
 }
 
 const insertUserLanguagePair = `-- name: InsertUserLanguagePair :exec
-INSERT INTO user_language_pairs (user_id, source_lang, target_lang, row_group)
-SELECT $1, $2, $3, $4
+INSERT INTO user_language_pairs (tenant_id, user_id, source_lang, target_lang, row_group)
+SELECT memberships.tenant_id, memberships.user_id, $1, $2, $3
 FROM memberships
-WHERE memberships.user_id = $1 AND memberships.tenant_id = $5
-ON CONFLICT (user_id, source_lang, target_lang) DO NOTHING
+WHERE memberships.user_id = $4 AND memberships.tenant_id = $5
+ON CONFLICT (tenant_id, user_id, source_lang, target_lang) DO NOTHING
 `
 
 type InsertUserLanguagePairParams struct {
-	UserID     int64  `json:"user_id"`
 	SourceLang string `json:"source_lang"`
 	TargetLang string `json:"target_lang"`
 	RowGroup   int32  `json:"row_group"`
+	UserID     int64  `json:"user_id"`
 	TenantID   int64  `json:"tenant_id"`
 }
 
 // Single-pair insert. Bulk insert is done by the handler in a loop inside
 // a transaction (sqlc's batch insert support is awkward for our setup).
-// Org-scoped via the membership subquery — the INSERT silently no-ops if the
-// user isn't a member of tenant_id (defense in depth).
+// Org-scoped via the membership: the INSERT silently no-ops if the user isn't
+// a member of tenant_id (defense in depth).
 func (q *Queries) InsertUserLanguagePair(ctx context.Context, arg InsertUserLanguagePairParams) error {
 	_, err := q.db.Exec(ctx, insertUserLanguagePair,
-		arg.UserID,
 		arg.SourceLang,
 		arg.TargetLang,
 		arg.RowGroup,
+		arg.UserID,
 		arg.TenantID,
 	)
 	return err
+}
+
+const isFilterProfileDefault = `-- name: IsFilterProfileDefault :one
+SELECT EXISTS (SELECT 1 FROM filter_profile_defaults WHERE tenant_id = $1 AND filter_profile_id = $2)
+`
+
+type IsFilterProfileDefaultParams struct {
+	TenantID        int64 `json:"tenant_id"`
+	FilterProfileID int64 `json:"filter_profile_id"`
+}
+
+// Whether a profile is the tenant's default for its format.
+func (q *Queries) IsFilterProfileDefault(ctx context.Context, arg IsFilterProfileDefaultParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isFilterProfileDefault, arg.TenantID, arg.FilterProfileID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const isUserAssignedToFile = `-- name: IsUserAssignedToFile :one
@@ -13042,6 +13663,81 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, arg ListAPITokensByUs
 			&i.ExpiresAt,
 			&i.RevokedAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAcceptedInvitesPage = `-- name: ListAcceptedInvitesPage :many
+SELECT i.id, i.tenant_id, i.email, i.role, i.kind, i.vendor_org_name, i.invited_by,
+       i.accepted_at, i.expires_at, i.created_at, count(*) OVER () AS total
+FROM invites i
+WHERE i.tenant_id = $1 AND i.accepted_at IS NOT NULL AND i.role = ANY($2::text[])
+  AND ($3::text IS NULL
+       OR strpos(lower(i.email), lower($3::text)) > 0
+       OR strpos(lower(coalesce(i.vendor_org_name, '')), lower($3::text)) > 0)
+ORDER BY i.accepted_at DESC, i.id DESC
+LIMIT $5 OFFSET $4
+`
+
+type ListAcceptedInvitesPageParams struct {
+	TenantID int64    `json:"tenant_id"`
+	Roles    []string `json:"roles"`
+	Q        *string  `json:"q"`
+	Off      int32    `json:"off"`
+	Lim      int32    `json:"lim"`
+}
+
+type ListAcceptedInvitesPageRow struct {
+	ID            int64              `json:"id"`
+	TenantID      int64              `json:"tenant_id"`
+	Email         string             `json:"email"`
+	Role          string             `json:"role"`
+	Kind          string             `json:"kind"`
+	VendorOrgName *string            `json:"vendor_org_name"`
+	InvitedBy     int64              `json:"invited_by"`
+	AcceptedAt    pgtype.Timestamptz `json:"accepted_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	Total         int64              `json:"total"`
+}
+
+// One page of the org's accepted invites the caller may handle (roles, as in
+// ListInvitesByTenant), newest acceptance first. q matches the email or the
+// vendor org's name as plain text. total counts every match.
+func (q *Queries) ListAcceptedInvitesPage(ctx context.Context, arg ListAcceptedInvitesPageParams) ([]ListAcceptedInvitesPageRow, error) {
+	rows, err := q.db.Query(ctx, listAcceptedInvitesPage,
+		arg.TenantID,
+		arg.Roles,
+		arg.Q,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAcceptedInvitesPageRow{}
+	for rows.Next() {
+		var i ListAcceptedInvitesPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Email,
+			&i.Role,
+			&i.Kind,
+			&i.VendorOrgName,
+			&i.InvitedBy,
+			&i.AcceptedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.Total,
 		); err != nil {
 			return nil, err
 		}
@@ -14297,9 +14993,91 @@ func (q *Queries) ListDuplicatesToReopen(ctx context.Context, originalID int64) 
 	return items, nil
 }
 
+const listEditorFuzzyCandidates = `-- name: ListEditorFuzzyCandidates :many
+SELECT s.id AS segment_id, s.file_id, s.source_text, s.source_rich_text,
+       t.id AS translation_id,
+       COALESCE(t.active_text, '')::text AS target_text, t.active_rich_text AS target_rich_text,
+       t.updated_at
+FROM segments s
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
+WHERE s.file_id = ANY($2::bigint[])
+  AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
+  AND t.status = 'approved'
+  AND COALESCE(t.active_text, '') <> ''
+  AND s.id <> $4::bigint
+  AND s.source_text <> $5::text
+  AND s.source_text % $5::text
+ORDER BY similarity(s.source_text, $5::text) DESC, s.id
+LIMIT $6::int
+`
+
+type ListEditorFuzzyCandidatesParams struct {
+	TargetLanguage string  `json:"target_language"`
+	FileIds        []int64 `json:"file_ids"`
+	TenantID       int64   `json:"tenant_id"`
+	SegmentID      int64   `json:"segment_id"`
+	Query          string  `json:"query"`
+	CandidateLimit int32   `json:"candidate_limit"`
+}
+
+type ListEditorFuzzyCandidatesRow struct {
+	SegmentID      int64              `json:"segment_id"`
+	FileID         int64              `json:"file_id"`
+	SourceText     string             `json:"source_text"`
+	SourceRichText *string            `json:"source_rich_text"`
+	TranslationID  int64              `json:"translation_id"`
+	TargetText     string             `json:"target_text"`
+	TargetRichText *string            `json:"target_rich_text"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Internal fuzzy matches: confirmed translations in the scope's files whose
+// source looks like @query, best first. The segment itself and identical
+// sources (repetitions, which propagation fills) are left out. `%` compares
+// against pg_trgm.similarity_threshold: run it through editor.fuzzyCandidates,
+// which sets that first. The caller rescores with the TM scorer.
+func (q *Queries) ListEditorFuzzyCandidates(ctx context.Context, arg ListEditorFuzzyCandidatesParams) ([]ListEditorFuzzyCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listEditorFuzzyCandidates,
+		arg.TargetLanguage,
+		arg.FileIds,
+		arg.TenantID,
+		arg.SegmentID,
+		arg.Query,
+		arg.CandidateLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorFuzzyCandidatesRow{}
+	for rows.Next() {
+		var i ListEditorFuzzyCandidatesRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.FileID,
+			&i.SourceText,
+			&i.SourceRichText,
+			&i.TranslationID,
+			&i.TargetText,
+			&i.TargetRichText,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEditorIndex = `-- name: ListEditorIndex :many
 SELECT
     s.id                        AS segment_id,
+    s.file_id                   AS file_id,
     s.position                  AS position,
     s.sub_position              AS sub_position,
     s.word_count                AS word_count,
@@ -14324,19 +15102,20 @@ FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
-WHERE s.file_id = $2::bigint
+WHERE s.file_id = ANY($2::bigint[])
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
-ORDER BY s.position, s.sub_position
+ORDER BY array_position($2::bigint[], s.file_id), s.position, s.sub_position
 `
 
 type ListEditorIndexParams struct {
-	TargetLanguage string `json:"target_language"`
-	FileID         int64  `json:"file_id"`
-	TenantID       int64  `json:"tenant_id"`
+	TargetLanguage string  `json:"target_language"`
+	FileIds        []int64 `json:"file_ids"`
+	TenantID       int64   `json:"tenant_id"`
 }
 
 type ListEditorIndexRow struct {
 	SegmentID      int64                 `json:"segment_id"`
+	FileID         int64                 `json:"file_id"`
 	Position       int32                 `json:"position"`
 	SubPosition    int32                 `json:"sub_position"`
 	WordCount      int32                 `json:"word_count"`
@@ -14356,14 +15135,15 @@ type ListEditorIndexRow struct {
 	FileFormat     FileFormat            `json:"file_format"`
 }
 
-// One row per segment of a job, in document order, without the text the grid
+// One row per segment of the editor's scope (the files of its jobs, in the
+// order of @file_ids, each in document order), without the text the grid
 // renders: what the CAT editor counts, filters and navigates on. A job's rows
 // are the segments that own a translation in its language, so a shared segment
 // a split or join replaced in this language is left out. The source text is
 // read only to find repetitions, and is not sent on. Tenant scoping is
 // structural via files→projects.
 func (q *Queries) ListEditorIndex(ctx context.Context, arg ListEditorIndexParams) ([]ListEditorIndexRow, error) {
-	rows, err := q.db.Query(ctx, listEditorIndex, arg.TargetLanguage, arg.FileID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listEditorIndex, arg.TargetLanguage, arg.FileIds, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -14373,6 +15153,7 @@ func (q *Queries) ListEditorIndex(ctx context.Context, arg ListEditorIndexParams
 		var i ListEditorIndexRow
 		if err := rows.Scan(
 			&i.SegmentID,
+			&i.FileID,
 			&i.Position,
 			&i.SubPosition,
 			&i.WordCount,
@@ -14461,36 +15242,116 @@ func (q *Queries) ListEditorPreviousStepTexts(ctx context.Context, arg ListEdito
 }
 
 const listEditorRefSources = `-- name: ListEditorRefSources :many
-SELECT s.source_rich_text::text AS source_rich_text
+SELECT s.file_id AS file_id, s.source_rich_text::text AS source_rich_text
 FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
-WHERE s.file_id = $2::bigint
+WHERE s.file_id = ANY($2::bigint[])
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
   AND s.source_rich_text LIKE '%ref\_key="%'
 `
 
 type ListEditorRefSourcesParams struct {
-	TargetLanguage string `json:"target_language"`
-	FileID         int64  `json:"file_id"`
-	TenantID       int64  `json:"tenant_id"`
+	TargetLanguage string  `json:"target_language"`
+	FileIds        []int64 `json:"file_ids"`
+	TenantID       int64   `json:"tenant_id"`
 }
 
-// Tagged sources of a job's segments that carry a cross-reference chip.
-func (q *Queries) ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listEditorRefSources, arg.TargetLanguage, arg.FileID, arg.TenantID)
+type ListEditorRefSourcesRow struct {
+	FileID         int64  `json:"file_id"`
+	SourceRichText string `json:"source_rich_text"`
+}
+
+// Tagged sources of the scope's segments that carry a cross-reference chip,
+// with their file: a chip points at a key in its own file.
+func (q *Queries) ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]ListEditorRefSourcesRow, error) {
+	rows, err := q.db.Query(ctx, listEditorRefSources, arg.TargetLanguage, arg.FileIds, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []ListEditorRefSourcesRow{}
 	for rows.Next() {
-		var source_rich_text string
-		if err := rows.Scan(&source_rich_text); err != nil {
+		var i ListEditorRefSourcesRow
+		if err := rows.Scan(&i.FileID, &i.SourceRichText); err != nil {
 			return nil, err
 		}
-		items = append(items, source_rich_text)
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEditorScopeJobs = `-- name: ListEditorScopeJobs :many
+SELECT j.id AS job_id, j.file_id, j.target_language, f.project_id,
+       f.name AS file_name, f.format AS file_format, f.inline_html,
+       COALESCE(cur.name, '')::text AS step_name,
+       cur.assigned_to AS step_assignee,
+       COALESCE(cur.id, 0)::bigint AS step_id
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+JOIN projects p ON p.id = f.project_id
+LEFT JOIN LATERAL (
+    SELECT jsa.id, ws.name, jsa.assigned_to
+    FROM job_step_assignments jsa
+    JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
+    WHERE jsa.job_id = j.id AND jsa.status = 'in_progress'
+    ORDER BY ws.step_order
+    LIMIT 1
+) cur ON true
+WHERE j.id = ANY($1::bigint[])
+  AND p.tenant_id = $2::bigint AND p.deleted_at IS NULL
+`
+
+type ListEditorScopeJobsParams struct {
+	JobIds   []int64 `json:"job_ids"`
+	TenantID int64   `json:"tenant_id"`
+}
+
+type ListEditorScopeJobsRow struct {
+	JobID          int64      `json:"job_id"`
+	FileID         int64      `json:"file_id"`
+	TargetLanguage string     `json:"target_language"`
+	ProjectID      int64      `json:"project_id"`
+	FileName       string     `json:"file_name"`
+	FileFormat     FileFormat `json:"file_format"`
+	InlineHtml     bool       `json:"inline_html"`
+	StepName       string     `json:"step_name"`
+	StepAssignee   *int64     `json:"step_assignee"`
+	StepID         int64      `json:"step_id"`
+}
+
+// The jobs of @job_ids in the caller's tenant, with their file and the step in
+// progress (none: empty name): what an editor scope opens. A job of a deleted
+// project is left out; the caller checks that every id came back. Tenant
+// scoping is structural via files→projects.
+func (q *Queries) ListEditorScopeJobs(ctx context.Context, arg ListEditorScopeJobsParams) ([]ListEditorScopeJobsRow, error) {
+	rows, err := q.db.Query(ctx, listEditorScopeJobs, arg.JobIds, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorScopeJobsRow{}
+	for rows.Next() {
+		var i ListEditorScopeJobsRow
+		if err := rows.Scan(
+			&i.JobID,
+			&i.FileID,
+			&i.TargetLanguage,
+			&i.ProjectID,
+			&i.FileName,
+			&i.FileFormat,
+			&i.InlineHtml,
+			&i.StepName,
+			&i.StepAssignee,
+			&i.StepID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -14502,25 +15363,25 @@ const listEditorSegmentsByIDs = `-- name: ListEditorSegmentsByIDs :many
 SELECT s.id, s.file_id, s.source_text, s.segment_key, s.position, s.context, s.created_at, s.word_count, s.source_rich_text, s.target_language, s.sub_position, s.export_key, s.gap_before, s.chip_base FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.file_id = $1::bigint
+WHERE s.file_id = ANY($1::bigint[])
   AND (s.target_language IS NULL OR s.target_language = $2::text)
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
   AND s.id = ANY($4::bigint[])
-ORDER BY s.position, s.sub_position
+ORDER BY array_position($1::bigint[], s.file_id), s.position, s.sub_position
 `
 
 type ListEditorSegmentsByIDsParams struct {
-	FileID         int64   `json:"file_id"`
+	FileIds        []int64 `json:"file_ids"`
 	TargetLanguage string  `json:"target_language"`
 	TenantID       int64   `json:"tenant_id"`
 	Ids            []int64 `json:"ids"`
 }
 
-// The segments of @ids that belong to the job's file and language; others are
-// not returned.
+// The segments of @ids that belong to the scope's files and language; others
+// are not returned.
 func (q *Queries) ListEditorSegmentsByIDs(ctx context.Context, arg ListEditorSegmentsByIDsParams) ([]Segment, error) {
 	rows, err := q.db.Query(ctx, listEditorSegmentsByIDs,
-		arg.FileID,
+		arg.FileIds,
 		arg.TargetLanguage,
 		arg.TenantID,
 		arg.Ids,
@@ -14561,6 +15422,7 @@ func (q *Queries) ListEditorSegmentsByIDs(ctx context.Context, arg ListEditorSeg
 const listEditorSegmentsByKeys = `-- name: ListEditorSegmentsByKeys :many
 SELECT
     s.id          AS segment_id,
+    s.file_id     AS file_id,
     COALESCE(s.export_key, s.segment_key)::text AS segment_key,
     s.source_text AS source_text,
     COALESCE(t.active_text, '')::text AS target_text
@@ -14568,33 +15430,35 @@ FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
-WHERE s.file_id = $2::bigint
+WHERE s.file_id = ANY($2::bigint[])
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
   AND COALESCE(s.export_key, s.segment_key) = ANY($4::text[])
-ORDER BY s.position, s.sub_position
+ORDER BY array_position($2::bigint[], s.file_id), s.position, s.sub_position
 `
 
 type ListEditorSegmentsByKeysParams struct {
 	TargetLanguage string   `json:"target_language"`
-	FileID         int64    `json:"file_id"`
+	FileIds        []int64  `json:"file_ids"`
 	TenantID       int64    `json:"tenant_id"`
 	Keys           []string `json:"keys"`
 }
 
 type ListEditorSegmentsByKeysRow struct {
 	SegmentID  int64  `json:"segment_id"`
+	FileID     int64  `json:"file_id"`
 	SegmentKey string `json:"segment_key"`
 	SourceText string `json:"source_text"`
 	TargetText string `json:"target_text"`
 }
 
-// The job's segments with these original keys, and their translation. A key
-// a split replaced in this language comes back once per piece, keyed by the
-// original key, in document order.
+// The scope's segments with these original keys, and their translation. A
+// key a split replaced in this language comes back once per piece, keyed by
+// the original key, in document order. The caller keeps the keys each file's
+// chips name.
 func (q *Queries) ListEditorSegmentsByKeys(ctx context.Context, arg ListEditorSegmentsByKeysParams) ([]ListEditorSegmentsByKeysRow, error) {
 	rows, err := q.db.Query(ctx, listEditorSegmentsByKeys,
 		arg.TargetLanguage,
-		arg.FileID,
+		arg.FileIds,
 		arg.TenantID,
 		arg.Keys,
 	)
@@ -14607,6 +15471,7 @@ func (q *Queries) ListEditorSegmentsByKeys(ctx context.Context, arg ListEditorSe
 		var i ListEditorSegmentsByKeysRow
 		if err := rows.Scan(
 			&i.SegmentID,
+			&i.FileID,
 			&i.SegmentKey,
 			&i.SourceText,
 			&i.TargetText,
@@ -14630,15 +15495,15 @@ FROM segments s
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
 JOIN translations t ON t.segment_id = s.id AND t.target_language = $1::text
-WHERE s.file_id = $2::bigint
+WHERE s.file_id = ANY($2::bigint[])
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
-ORDER BY s.position, s.sub_position
+ORDER BY array_position($2::bigint[], s.file_id), s.position, s.sub_position
 `
 
 type ListEditorTextsParams struct {
-	TargetLanguage string `json:"target_language"`
-	FileID         int64  `json:"file_id"`
-	TenantID       int64  `json:"tenant_id"`
+	TargetLanguage string  `json:"target_language"`
+	FileIds        []int64 `json:"file_ids"`
+	TenantID       int64   `json:"tenant_id"`
 }
 
 type ListEditorTextsRow struct {
@@ -14647,10 +15512,10 @@ type ListEditorTextsRow struct {
 	TargetText string `json:"target_text"`
 }
 
-// Source and target text of every segment of a job, for the editor's text
-// search.
+// Source and target text of every segment of the scope, for the editor's
+// text search.
 func (q *Queries) ListEditorTexts(ctx context.Context, arg ListEditorTextsParams) ([]ListEditorTextsRow, error) {
-	rows, err := q.db.Query(ctx, listEditorTexts, arg.TargetLanguage, arg.FileID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listEditorTexts, arg.TargetLanguage, arg.FileIds, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -14728,18 +15593,18 @@ FROM translations t
 JOIN segments s ON s.id = t.segment_id
 JOIN files f ON f.id = s.file_id
 JOIN projects p ON p.id = f.project_id
-WHERE s.file_id = $1::bigint
+WHERE s.file_id = ANY($1::bigint[])
   AND t.target_language = $2::text
   AND p.tenant_id = $3::bigint AND p.deleted_at IS NULL
   AND strpos(t.active_text, $4::text) > 0
-ORDER BY s.position, s.sub_position
+ORDER BY array_position($1::bigint[], s.file_id), s.position, s.sub_position
 `
 
 type ListEditorWordCandidatesParams struct {
-	FileID         int64  `json:"file_id"`
-	TargetLanguage string `json:"target_language"`
-	TenantID       int64  `json:"tenant_id"`
-	Word           string `json:"word"`
+	FileIds        []int64 `json:"file_ids"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+	Word           string  `json:"word"`
 }
 
 type ListEditorWordCandidatesRow struct {
@@ -14751,11 +15616,11 @@ type ListEditorWordCandidatesRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-// Translations of a job's file whose target contains @word anywhere (case
-// sensitive). The caller narrows to whole words.
+// Translations of the scope's files whose target contains @word anywhere
+// (case sensitive). The caller narrows to whole words.
 func (q *Queries) ListEditorWordCandidates(ctx context.Context, arg ListEditorWordCandidatesParams) ([]ListEditorWordCandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listEditorWordCandidates,
-		arg.FileID,
+		arg.FileIds,
 		arg.TargetLanguage,
 		arg.TenantID,
 		arg.Word,
@@ -14894,7 +15759,7 @@ func (q *Queries) ListFailedJobs(ctx context.Context, arg ListFailedJobsParams) 
 }
 
 const listFilesByProject = `-- name: ListFilesByProject :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile FROM files WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 // Used internally (pipeline, export). For paginated API responses, use ListFilesPaginated.
@@ -14920,6 +15785,7 @@ func (q *Queries) ListFilesByProject(ctx context.Context, projectID int64) ([]Fi
 			&i.InlineHtml,
 			&i.XlsxLayout,
 			&i.Segmentation,
+			&i.FilterProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -14932,7 +15798,7 @@ func (q *Queries) ListFilesByProject(ctx context.Context, projectID int64) ([]Fi
 }
 
 const listFilesPaginated = `-- name: ListFilesPaginated :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile FROM files
 WHERE project_id = $1 AND id > $2
 ORDER BY id
 LIMIT $3
@@ -14966,6 +15832,7 @@ func (q *Queries) ListFilesPaginated(ctx context.Context, arg ListFilesPaginated
 			&i.InlineHtml,
 			&i.XlsxLayout,
 			&i.Segmentation,
+			&i.FilterProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -14978,7 +15845,7 @@ func (q *Queries) ListFilesPaginated(ctx context.Context, arg ListFilesPaginated
 }
 
 const listFilesWithoutJobs = `-- name: ListFilesWithoutJobs :many
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation, f.filter_profile FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.project_id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id)
@@ -15014,6 +15881,155 @@ func (q *Queries) ListFilesWithoutJobs(ctx context.Context, arg ListFilesWithout
 			&i.InlineHtml,
 			&i.XlsxLayout,
 			&i.Segmentation,
+			&i.FilterProfile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFilterProfileDefaults = `-- name: ListFilterProfileDefaults :many
+
+SELECT d.format, d.filter_profile_id, c.name
+FROM filter_profile_defaults d
+JOIN filter_profile_catalog c ON c.id = d.filter_profile_id
+WHERE d.tenant_id = $1
+ORDER BY d.format
+`
+
+type ListFilterProfileDefaultsRow struct {
+	Format          string `json:"format"`
+	FilterProfileID int64  `json:"filter_profile_id"`
+	Name            string `json:"name"`
+}
+
+// ============================================================
+// The org's default per format
+// ============================================================
+// The org's default per format, with the profile's name.
+func (q *Queries) ListFilterProfileDefaults(ctx context.Context, tenantID int64) ([]ListFilterProfileDefaultsRow, error) {
+	rows, err := q.db.Query(ctx, listFilterProfileDefaults, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFilterProfileDefaultsRow{}
+	for rows.Next() {
+		var i ListFilterProfileDefaultsRow
+		if err := rows.Scan(&i.Format, &i.FilterProfileID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFilterProfiles = `-- name: ListFilterProfiles :many
+
+
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog
+WHERE (tenant_id = $1 OR tenant_id IS NULL) AND deleted_at IS NULL
+  AND ($2::text = '' OR format = $2::text)
+ORDER BY format, tenant_id IS NOT NULL, lower(name), id
+`
+
+type ListFilterProfilesParams struct {
+	TenantID *int64 `json:"tenant_id"`
+	Format   string `json:"format"`
+}
+
+// ============================================================
+// Filter profiles
+// ============================================================
+// Reads go through filter_profile_catalog: the built-ins (tenant_id NULL,
+// read by every org) and the org's own profiles, so reads take
+// tenant_id = $tenant OR tenant_id IS NULL. Writes touch the org's table
+// alone, scoped by tenant_id. Org profiles are soft-deleted: live reads
+// filter deleted_at IS NULL.
+// The built-ins, then the org's own profiles; @format, when set, keeps one
+// format's.
+func (q *Queries) ListFilterProfiles(ctx context.Context, arg ListFilterProfilesParams) ([]FilterProfileCatalog, error) {
+	rows, err := q.db.Query(ctx, listFilterProfiles, arg.TenantID, arg.Format)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FilterProfileCatalog{}
+	for rows.Next() {
+		var i FilterProfileCatalog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.BuiltinKey,
+			&i.Name,
+			&i.Format,
+			&i.Description,
+			&i.Options,
+			&i.BasedOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFilterProfilesPage = `-- name: ListFilterProfilesPage :many
+SELECT id, tenant_id, builtin_key, name, format, description, options, based_on, created_at, updated_at, deleted_at FROM filter_profile_catalog
+WHERE (tenant_id = $1 OR tenant_id IS NULL) AND deleted_at IS NULL AND id > $2
+  AND ($3::text = '' OR format = $3::text)
+ORDER BY id
+LIMIT $4
+`
+
+type ListFilterProfilesPageParams struct {
+	TenantID *int64 `json:"tenant_id"`
+	Cursor   int64  `json:"cursor"`
+	Format   string `json:"format"`
+	Lim      int32  `json:"lim"`
+}
+
+// One page by id after @cursor, with ListFilterProfiles' format filter.
+func (q *Queries) ListFilterProfilesPage(ctx context.Context, arg ListFilterProfilesPageParams) ([]FilterProfileCatalog, error) {
+	rows, err := q.db.Query(ctx, listFilterProfilesPage,
+		arg.TenantID,
+		arg.Cursor,
+		arg.Format,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FilterProfileCatalog{}
+	for rows.Next() {
+		var i FilterProfileCatalog
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.BuiltinKey,
+			&i.Name,
+			&i.Format,
+			&i.Description,
+			&i.Options,
+			&i.BasedOn,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -15061,17 +16077,19 @@ func (q *Queries) ListIgnoredQAResultsForTranslations(ctx context.Context, ids [
 }
 
 const listInvitesByTenant = `-- name: ListInvitesByTenant :many
-SELECT i.id, i.tenant_id, i.email, i.role, i.invited_by, i.accepted_at, i.expires_at, i.created_at,
-       u.name AS invited_by_name
+SELECT i.id, i.tenant_id, i.email, i.role, i.kind, i.vendor_org_name, i.invited_by,
+       i.accepted_at, i.expires_at, i.created_at, u.name AS invited_by_name
 FROM invites i
 JOIN users u ON u.id = i.invited_by
 WHERE i.tenant_id = $1 AND i.role = ANY($2::text[])
+  AND (NOT $3::bool OR i.accepted_at IS NULL)
 ORDER BY i.created_at DESC
 `
 
 type ListInvitesByTenantParams struct {
-	TenantID int64    `json:"tenant_id"`
-	Roles    []string `json:"roles"`
+	TenantID    int64    `json:"tenant_id"`
+	Roles       []string `json:"roles"`
+	PendingOnly bool     `json:"pending_only"`
 }
 
 type ListInvitesByTenantRow struct {
@@ -15079,6 +16097,8 @@ type ListInvitesByTenantRow struct {
 	TenantID      int64              `json:"tenant_id"`
 	Email         string             `json:"email"`
 	Role          string             `json:"role"`
+	Kind          string             `json:"kind"`
+	VendorOrgName *string            `json:"vendor_org_name"`
 	InvitedBy     int64              `json:"invited_by"`
 	AcceptedAt    pgtype.Timestamptz `json:"accepted_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
@@ -15087,9 +16107,10 @@ type ListInvitesByTenantRow struct {
 }
 
 // Leaves the token out: only the invite email carries it. roles is the set the
-// caller may handle (invite.handledRoles).
+// caller may handle (invite.handledRoles); pending_only leaves out the
+// accepted invites, which ListAcceptedInvitesPage pages.
 func (q *Queries) ListInvitesByTenant(ctx context.Context, arg ListInvitesByTenantParams) ([]ListInvitesByTenantRow, error) {
-	rows, err := q.db.Query(ctx, listInvitesByTenant, arg.TenantID, arg.Roles)
+	rows, err := q.db.Query(ctx, listInvitesByTenant, arg.TenantID, arg.Roles, arg.PendingOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -15102,6 +16123,8 @@ func (q *Queries) ListInvitesByTenant(ctx context.Context, arg ListInvitesByTena
 			&i.TenantID,
 			&i.Email,
 			&i.Role,
+			&i.Kind,
+			&i.VendorOrgName,
 			&i.InvitedBy,
 			&i.AcceptedAt,
 			&i.ExpiresAt,
@@ -15688,13 +16711,13 @@ SELECT h.translation_id, h.user_id, COALESCE(NULLIF(u.name, ''), u.email) AS hol
        h.acquired_at, h.expires_at
 FROM translation_holds h
 JOIN users u ON u.id = h.user_id
-WHERE h.job_id = $1 AND h.tenant_id = $2 AND h.expires_at > now()
+WHERE h.job_id = ANY($1::bigint[]) AND h.tenant_id = $2 AND h.expires_at > now()
 ORDER BY h.translation_id
 `
 
 type ListJobHoldsParams struct {
-	JobID    int64 `json:"job_id"`
-	TenantID int64 `json:"tenant_id"`
+	JobIds   []int64 `json:"job_ids"`
+	TenantID int64   `json:"tenant_id"`
 }
 
 type ListJobHoldsRow struct {
@@ -15705,9 +16728,10 @@ type ListJobHoldsRow struct {
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
 
-// Tenant-scoped: the live holds in a job, with the holders' names.
+// Tenant-scoped: the live holds in the jobs of @job_ids, with the holders'
+// names.
 func (q *Queries) ListJobHolds(ctx context.Context, arg ListJobHoldsParams) ([]ListJobHoldsRow, error) {
-	rows, err := q.db.Query(ctx, listJobHolds, arg.JobID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listJobHolds, arg.JobIds, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -16334,7 +17358,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = $1
@@ -16360,6 +17384,7 @@ type ListJobsByProjectRow struct {
 	FileInlineHtml  bool               `json:"file_inline_html"`
 	SegmentCount    int32              `json:"segment_count"`
 	FileCreatedAt   pgtype.Timestamptz `json:"file_created_at"`
+	FileXlsxLayout  json.RawMessage    `json:"file_xlsx_layout"`
 }
 
 func (q *Queries) ListJobsByProject(ctx context.Context, projectID int64) ([]ListJobsByProjectRow, error) {
@@ -16390,6 +17415,7 @@ func (q *Queries) ListJobsByProject(ctx context.Context, projectID int64) ([]Lis
 			&i.FileInlineHtml,
 			&i.SegmentCount,
 			&i.FileCreatedAt,
+			&i.FileXlsxLayout,
 		); err != nil {
 			return nil, err
 		}
@@ -16408,7 +17434,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = $1 AND j.id = ANY($2::bigint[])
@@ -16439,6 +17465,7 @@ type ListJobsByProjectIDsRow struct {
 	FileInlineHtml  bool               `json:"file_inline_html"`
 	SegmentCount    int32              `json:"segment_count"`
 	FileCreatedAt   pgtype.Timestamptz `json:"file_created_at"`
+	FileXlsxLayout  json.RawMessage    `json:"file_xlsx_layout"`
 }
 
 // Internal: no tenant filter. job.Service.ListByProjectIDs checks the project
@@ -16472,6 +17499,7 @@ func (q *Queries) ListJobsByProjectIDs(ctx context.Context, arg ListJobsByProjec
 			&i.FileInlineHtml,
 			&i.SegmentCount,
 			&i.FileCreatedAt,
+			&i.FileXlsxLayout,
 		); err != nil {
 			return nil, err
 		}
@@ -16490,7 +17518,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = $1 AND j.id > $2
@@ -16523,6 +17551,7 @@ type ListJobsByProjectPageRow struct {
 	FileInlineHtml  bool               `json:"file_inline_html"`
 	SegmentCount    int32              `json:"segment_count"`
 	FileCreatedAt   pgtype.Timestamptz `json:"file_created_at"`
+	FileXlsxLayout  json.RawMessage    `json:"file_xlsx_layout"`
 }
 
 // Internal: no tenant filter. job.Service.ListPageByProject checks the
@@ -16556,6 +17585,7 @@ func (q *Queries) ListJobsByProjectPage(ctx context.Context, arg ListJobsByProje
 			&i.FileInlineHtml,
 			&i.SegmentCount,
 			&i.FileCreatedAt,
+			&i.FileXlsxLayout,
 		); err != nil {
 			return nil, err
 		}
@@ -16674,6 +17704,49 @@ func (q *Queries) ListJobsForUserStep(ctx context.Context, userID *int64) ([]Lis
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsWithPreviousStep = `-- name: ListJobsWithPreviousStep :many
+SELECT j.id AS job_id
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE j.id = ANY($1::bigint[])
+  AND p.tenant_id = $2::bigint AND p.deleted_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM job_step_assignments jsa
+    JOIN translation_step_statuses tss ON tss.job_step_assignment_id = jsa.id
+    WHERE jsa.job_id = j.id AND tss.ended_at IS NOT NULL
+  )
+`
+
+type ListJobsWithPreviousStepParams struct {
+	JobIds   []int64 `json:"job_ids"`
+	TenantID int64   `json:"tenant_id"`
+}
+
+// The jobs of @job_ids with a finished step round on any of their segments:
+// the editor's track changes has a baseline to mark against. Tenant scoping
+// is structural via files→projects.
+func (q *Queries) ListJobsWithPreviousStep(ctx context.Context, arg ListJobsWithPreviousStepParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listJobsWithPreviousStep, arg.JobIds, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var job_id int64
+		if err := rows.Scan(&job_id); err != nil {
+			return nil, err
+		}
+		items = append(items, job_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -16885,6 +17958,52 @@ func (q *Queries) ListLabelValues(ctx context.Context, tenantID int64) ([]LabelV
 	return items, nil
 }
 
+const listLanguagePairsForMembers = `-- name: ListLanguagePairsForMembers :many
+SELECT ulp.user_id, ulp.source_lang, ulp.target_lang, ulp.row_group
+FROM user_language_pairs ulp
+WHERE ulp.tenant_id = $1 AND ulp.user_id = ANY($2::bigint[])
+ORDER BY ulp.user_id, ulp.row_group, ulp.source_lang, ulp.target_lang
+`
+
+type ListLanguagePairsForMembersParams struct {
+	TenantID int64   `json:"tenant_id"`
+	UserIds  []int64 `json:"user_ids"`
+}
+
+type ListLanguagePairsForMembersRow struct {
+	UserID     int64  `json:"user_id"`
+	SourceLang string `json:"source_lang"`
+	TargetLang string `json:"target_lang"`
+	RowGroup   int32  `json:"row_group"`
+}
+
+// The pairs of several members of one org at once (one page of the Members
+// tab). Ordered like ListUserLanguagePairs.
+func (q *Queries) ListLanguagePairsForMembers(ctx context.Context, arg ListLanguagePairsForMembersParams) ([]ListLanguagePairsForMembersRow, error) {
+	rows, err := q.db.Query(ctx, listLanguagePairsForMembers, arg.TenantID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLanguagePairsForMembersRow{}
+	for rows.Next() {
+		var i ListLanguagePairsForMembersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.SourceLang,
+			&i.TargetLang,
+			&i.RowGroup,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLanguages = `-- name: ListLanguages :many
 SELECT code, name FROM languages ORDER BY name
 `
@@ -16945,7 +18064,7 @@ func (q *Queries) ListLatestHistoryTexts(ctx context.Context, ids []int64) ([]Li
 }
 
 const listMCPFilesPage = `-- name: ListMCPFilesPage :many
-SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation FROM files
+SELECT id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile FROM files
 WHERE project_id = $1
   AND ($2::bigint = 0 OR id < $2::bigint)
 ORDER BY id DESC
@@ -16982,6 +18101,7 @@ func (q *Queries) ListMCPFilesPage(ctx context.Context, arg ListMCPFilesPagePara
 			&i.InlineHtml,
 			&i.XlsxLayout,
 			&i.Segmentation,
+			&i.FilterProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -17251,7 +18371,7 @@ LEFT JOIN LATERAL (
     SELECT array_agg(ulp.source_lang || '→' || ulp.target_lang
                      ORDER BY ulp.source_lang, ulp.target_lang) AS pairs
     FROM user_language_pairs ulp
-    WHERE ulp.user_id = u.id
+    WHERE ulp.user_id = u.id AND ulp.tenant_id = m.tenant_id
 ) lp ON true
 LEFT JOIN LATERAL (
     SELECT count(*) AS active_jobs
@@ -17759,6 +18879,102 @@ func (q *Queries) ListMTRouters(ctx context.Context, tenantID int64) ([]MtRouter
 	return items, nil
 }
 
+const listMemberFacetPairs = `-- name: ListMemberFacetPairs :many
+SELECT DISTINCT p.source_lang, p.target_lang
+FROM memberships m
+JOIN users u ON u.id = m.user_id AND u.is_active = true
+JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+WHERE m.tenant_id = $1
+  AND ($2::text IS NULL
+       OR strpos(lower(u.name), lower($2::text)) > 0
+       OR strpos(lower(u.email), lower($2::text)) > 0)
+  AND ($3::text IS NULL OR m.role = $3::text)
+ORDER BY p.source_lang, p.target_lang
+`
+
+type ListMemberFacetPairsParams struct {
+	TenantID int64   `json:"tenant_id"`
+	Q        *string `json:"q"`
+	Role     *string `json:"role"`
+}
+
+type ListMemberFacetPairsRow struct {
+	SourceLang string `json:"source_lang"`
+	TargetLang string `json:"target_lang"`
+}
+
+// The distinct pairs of the org's active members that match q and role: the
+// Source and Target filters offer languages from these.
+func (q *Queries) ListMemberFacetPairs(ctx context.Context, arg ListMemberFacetPairsParams) ([]ListMemberFacetPairsRow, error) {
+	rows, err := q.db.Query(ctx, listMemberFacetPairs, arg.TenantID, arg.Q, arg.Role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMemberFacetPairsRow{}
+	for rows.Next() {
+		var i ListMemberFacetPairsRow
+		if err := rows.Scan(&i.SourceLang, &i.TargetLang); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMemberFacetRoles = `-- name: ListMemberFacetRoles :many
+SELECT DISTINCT m.role
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = $1
+  AND u.is_active = true
+  AND ($2::text IS NULL
+       OR strpos(lower(u.name), lower($2::text)) > 0
+       OR strpos(lower(u.email), lower($2::text)) > 0)
+  AND ($3::text IS NULL AND $4::text IS NULL
+       OR EXISTS (SELECT 1 FROM user_language_pairs p
+                  WHERE p.user_id = u.id AND p.tenant_id = m.tenant_id
+                    AND ($3::text IS NULL OR p.source_lang = $3::text)
+                    AND ($4::text IS NULL OR p.target_lang = $4::text)))
+`
+
+type ListMemberFacetRolesParams struct {
+	TenantID   int64   `json:"tenant_id"`
+	Q          *string `json:"q"`
+	SourceLang *string `json:"source_lang"`
+	TargetLang *string `json:"target_lang"`
+}
+
+// The roles of the org's active members that match q and the language pair
+// (the Members list's filters but its own): the Role filter offers only these.
+func (q *Queries) ListMemberFacetRoles(ctx context.Context, arg ListMemberFacetRolesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listMemberFacetRoles,
+		arg.TenantID,
+		arg.Q,
+		arg.SourceLang,
+		arg.TargetLang,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			return nil, err
+		}
+		items = append(items, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMemberIssueAttachments = `-- name: ListMemberIssueAttachments :many
 SELECT a.id, a.issue_id, a.comment_id, a.filename, a.content_type, a.size_bytes, a.storage_key, a.created_at FROM issue_attachments a
 LEFT JOIN issue_comments c ON c.id = a.comment_id
@@ -17928,23 +19144,111 @@ func (q *Queries) ListMembersByTenant(ctx context.Context, arg ListMembersByTena
 	return items, nil
 }
 
+const listMembersPage = `-- name: ListMembersPage :many
+SELECT u.id, u.email, u.name, m.role, u.created_at, m.disabled_at, count(*) OVER () AS total
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = $1
+  AND u.is_active = true
+  AND ($2::text IS NULL
+       OR strpos(lower(u.name), lower($2::text)) > 0
+       OR strpos(lower(u.email), lower($2::text)) > 0)
+  AND ($3::text IS NULL OR m.role = $3::text)
+  AND ($4::text IS NULL AND $5::text IS NULL
+       OR EXISTS (SELECT 1 FROM user_language_pairs p
+                  WHERE p.user_id = u.id AND p.tenant_id = m.tenant_id
+                    AND ($4::text IS NULL OR p.source_lang = $4::text)
+                    AND ($5::text IS NULL OR p.target_lang = $5::text)))
+ORDER BY CASE m.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'project_manager' THEN 3 WHEN 'linguist' THEN 4 ELSE 5 END,
+         lower(u.name), u.id
+LIMIT $7 OFFSET $6
+`
+
+type ListMembersPageParams struct {
+	TenantID   int64   `json:"tenant_id"`
+	Q          *string `json:"q"`
+	Role       *string `json:"role"`
+	SourceLang *string `json:"source_lang"`
+	TargetLang *string `json:"target_lang"`
+	Off        int32   `json:"off"`
+	Lim        int32   `json:"lim"`
+}
+
+type ListMembersPageRow struct {
+	ID         int64              `json:"id"`
+	Email      string             `json:"email"`
+	Name       string             `json:"name"`
+	Role       string             `json:"role"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	DisabledAt pgtype.Timestamptz `json:"disabled_at"`
+	Total      int64              `json:"total"`
+}
+
+// The Members tab, one page of the org's active members: the most powerful
+// role first, then name, then id. q matches name or email as plain text (no
+// wildcards); role is one role; source and target together match one pair.
+// total counts every match, for the page heading. disabled_at marks a vendor
+// org member disabled for disuse; they stay listed so an admin can enable them.
+func (q *Queries) ListMembersPage(ctx context.Context, arg ListMembersPageParams) ([]ListMembersPageRow, error) {
+	rows, err := q.db.Query(ctx, listMembersPage,
+		arg.TenantID,
+		arg.Q,
+		arg.Role,
+		arg.SourceLang,
+		arg.TargetLang,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMembersPageRow{}
+	for rows.Next() {
+		var i ListMembersPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.Role,
+			&i.CreatedAt,
+			&i.DisabledAt,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMembershipsWithTenant = `-- name: ListMembershipsWithTenant :many
-SELECT m.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug, m.role
+SELECT m.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug, m.role,
+       t.kind AS tenant_kind, c.name AS client_org_name, m.disabled_at
 FROM memberships m
 JOIN tenants t ON t.id = m.tenant_id
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
 WHERE m.user_id = $1 AND t.status <> 'deleting'
 ORDER BY t.name
 `
 
 type ListMembershipsWithTenantRow struct {
-	TenantID   int64  `json:"tenant_id"`
-	TenantName string `json:"tenant_name"`
-	TenantSlug string `json:"tenant_slug"`
-	Role       string `json:"role"`
+	TenantID      int64              `json:"tenant_id"`
+	TenantName    string             `json:"tenant_name"`
+	TenantSlug    string             `json:"tenant_slug"`
+	Role          string             `json:"role"`
+	TenantKind    string             `json:"tenant_kind"`
+	ClientOrgName *string            `json:"client_org_name"`
+	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
 }
 
 // The org picker: every org this identity can enter, with the user's role. An
 // organization being deleted is gone for its members already.
+// client_org_name names a vendor org's client, NULL for any other kind;
+// disabled_at is set when a vendor org disabled the membership for disuse.
 func (q *Queries) ListMembershipsWithTenant(ctx context.Context, userID int64) ([]ListMembershipsWithTenantRow, error) {
 	rows, err := q.db.Query(ctx, listMembershipsWithTenant, userID)
 	if err != nil {
@@ -17959,6 +19263,9 @@ func (q *Queries) ListMembershipsWithTenant(ctx context.Context, userID int64) (
 			&i.TenantName,
 			&i.TenantSlug,
 			&i.Role,
+			&i.TenantKind,
+			&i.ClientOrgName,
+			&i.DisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -18147,19 +19454,25 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = $1
   AND t.target_language = $2
   AND t.active_text IS NOT NULL
-  AND t.status = 'needs_review'
-  AND t.predict_outcome IS NULL
   AND (
-    (t.origin IS NOT NULL AND t.edited_by IS NULL)
-    OR ($3::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
+    ($3::bool AND t.active_text <> '')
+    OR (
+      t.status = 'needs_review'
+      AND t.predict_outcome IS NULL
+      AND (
+        (t.origin IS NOT NULL AND t.edited_by IS NULL)
+        OR ($4::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
+      )
+    )
   )
 ORDER BY s.position, s.sub_position
 `
 
 type ListPreTranslatedByFileParams struct {
-	FileID         int64  `json:"file_id"`
-	TargetLanguage string `json:"target_language"`
-	ReviewAll      bool   `json:"review_all"`
+	FileID           int64  `json:"file_id"`
+	TargetLanguage   string `json:"target_language"`
+	EveryTranslation bool   `json:"every_translation"`
+	ReviewAll        bool   `json:"review_all"`
 }
 
 type ListPreTranslatedByFileRow struct {
@@ -18188,8 +19501,15 @@ type ListPreTranslatedByFileRow struct {
 // the model reads is the one the editor shows.
 // @review_all (a step round that re-runs its AI after a rollback) takes every
 // unconfirmed, unlocked segment with text, people's text included.
+// @every_translation (a comment-only review, which changes nothing) takes
+// every segment with text, whatever its status or lock.
 func (q *Queries) ListPreTranslatedByFile(ctx context.Context, arg ListPreTranslatedByFileParams) ([]ListPreTranslatedByFileRow, error) {
-	rows, err := q.db.Query(ctx, listPreTranslatedByFile, arg.FileID, arg.TargetLanguage, arg.ReviewAll)
+	rows, err := q.db.Query(ctx, listPreTranslatedByFile,
+		arg.FileID,
+		arg.TargetLanguage,
+		arg.EveryTranslation,
+		arg.ReviewAll,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -18705,20 +20025,35 @@ WHERE p.tenant_id = $1 AND p.deleted_at IS NULL
   AND ($6::text IS NULL OR p.target_languages @> ARRAY[$6::text])
   AND ($7::bigint IS NULL OR p.created_by = $7::bigint)
   AND ($8::text IS NULL OR p.name ILIKE '%' || $8::text || '%')
+  -- deadline_bands keeps the projects in any of the named bands. Bands and
+  -- their edges are the deadline chip's (web/src/lib/deadline.ts): overdue,
+  -- approaching (due within 24h), soon (1-7 days), far (later), none (no
+  -- deadline). A completed project is never overdue or due, so it lands only
+  -- in none, and only when it has no deadline.
+  AND ($9::text[] IS NULL
+       OR ('none' = ANY($9::text[]) AND p.deadline IS NULL)
+       OR (p.status <> 'completed' AND (
+            ('overdue' = ANY($9::text[]) AND p.deadline < now())
+         OR ('approaching' = ANY($9::text[])
+             AND p.deadline >= now() AND p.deadline <= now() + interval '24 hours')
+         OR ('soon' = ANY($9::text[])
+             AND p.deadline > now() + interval '24 hours' AND p.deadline <= now() + interval '7 days')
+         OR ('far' = ANY($9::text[]) AND p.deadline > now() + interval '7 days'))))
 ORDER BY p.id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type ListProjectsFilteredParams struct {
-	TenantID   int64             `json:"tenant_id"`
-	Cursor     int64             `json:"cursor"`
-	Status     NullProjectStatus `json:"status"`
-	CustomerID *int64            `json:"customer_id"`
-	SourceLang *string           `json:"source_lang"`
-	TargetLang *string           `json:"target_lang"`
-	CreatedBy  *int64            `json:"created_by"`
-	Q          *string           `json:"q"`
-	Lim        int32             `json:"lim"`
+	TenantID      int64             `json:"tenant_id"`
+	Cursor        int64             `json:"cursor"`
+	Status        NullProjectStatus `json:"status"`
+	CustomerID    *int64            `json:"customer_id"`
+	SourceLang    *string           `json:"source_lang"`
+	TargetLang    *string           `json:"target_lang"`
+	CreatedBy     *int64            `json:"created_by"`
+	Q             *string           `json:"q"`
+	DeadlineBands []string          `json:"deadline_bands"`
+	Lim           int32             `json:"lim"`
 }
 
 type ListProjectsFilteredRow struct {
@@ -18770,6 +20105,7 @@ func (q *Queries) ListProjectsFiltered(ctx context.Context, arg ListProjectsFilt
 		arg.TargetLang,
 		arg.CreatedBy,
 		arg.Q,
+		arg.DeadlineBands,
 		arg.Lim,
 	)
 	if err != nil {
@@ -18907,6 +20243,76 @@ func (q *Queries) ListQAProfiles(ctx context.Context, tenantID int64) ([]QaProfi
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQAResultsForFiles = `-- name: ListQAResultsForFiles :many
+SELECT qr.id, qr.translation_id, qr.check_type, qr.severity, qr.message, qr.created_at, qr.ignored, qr.ignored_by, qr.ignored_at, t.segment_id, s.position AS segment_position, u.name AS ignored_by_name
+FROM qa_results qr
+JOIN translations t ON t.id = qr.translation_id
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+LEFT JOIN users u ON u.id = qr.ignored_by
+WHERE f.id = ANY($1::bigint[]) AND t.target_language = $2
+  AND p.tenant_id = $3
+ORDER BY array_position($1::bigint[], f.id), s.position, s.sub_position, qr.severity, qr.check_type
+`
+
+type ListQAResultsForFilesParams struct {
+	FileIds        []int64 `json:"file_ids"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+}
+
+type ListQAResultsForFilesRow struct {
+	ID              int64              `json:"id"`
+	TranslationID   int64              `json:"translation_id"`
+	CheckType       string             `json:"check_type"`
+	Severity        string             `json:"severity"`
+	Message         string             `json:"message"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Ignored         bool               `json:"ignored"`
+	IgnoredBy       *int64             `json:"ignored_by"`
+	IgnoredAt       pgtype.Timestamptz `json:"ignored_at"`
+	SegmentID       int64              `json:"segment_id"`
+	SegmentPosition int32              `json:"segment_position"`
+	IgnoredByName   *string            `json:"ignored_by_name"`
+}
+
+// The findings of the files of @file_ids in one target language, file by file
+// in the order given: a multi-file editor's QA report. Tenant scoping is
+// structural via files→projects.
+func (q *Queries) ListQAResultsForFiles(ctx context.Context, arg ListQAResultsForFilesParams) ([]ListQAResultsForFilesRow, error) {
+	rows, err := q.db.Query(ctx, listQAResultsForFiles, arg.FileIds, arg.TargetLanguage, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListQAResultsForFilesRow{}
+	for rows.Next() {
+		var i ListQAResultsForFilesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TranslationID,
+			&i.CheckType,
+			&i.Severity,
+			&i.Message,
+			&i.CreatedAt,
+			&i.Ignored,
+			&i.IgnoredBy,
+			&i.IgnoredAt,
+			&i.SegmentID,
+			&i.SegmentPosition,
+			&i.IgnoredByName,
 		); err != nil {
 			return nil, err
 		}
@@ -19451,6 +20857,46 @@ func (q *Queries) ListSegmentsByFileTenant(ctx context.Context, arg ListSegments
 			&i.GapBefore,
 			&i.ChipBase,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSettingsFilterProfiles = `-- name: ListSettingsFilterProfiles :many
+
+SELECT l.format, l.filter_profile_id, c.name
+FROM settings_profile_filter_profiles l
+JOIN filter_profile_catalog c ON c.id = l.filter_profile_id
+WHERE l.settings_profile_id = $1
+ORDER BY l.format
+`
+
+type ListSettingsFilterProfilesRow struct {
+	Format          string `json:"format"`
+	FilterProfileID int64  `json:"filter_profile_id"`
+	Name            string `json:"name"`
+}
+
+// ============================================================
+// A project's or template's choice per format
+// ============================================================
+// Internal: callers pass the settings profile id of a project or template
+// they read with its tenant. The chosen profile per format, with its name.
+func (q *Queries) ListSettingsFilterProfiles(ctx context.Context, settingsProfileID int64) ([]ListSettingsFilterProfilesRow, error) {
+	rows, err := q.db.Query(ctx, listSettingsFilterProfiles, settingsProfileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSettingsFilterProfilesRow{}
+	for rows.Next() {
+		var i ListSettingsFilterProfilesRow
+		if err := rows.Scan(&i.Format, &i.FilterProfileID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -20555,6 +22001,105 @@ func (q *Queries) ListTargetsForSources(ctx context.Context, arg ListTargetsForS
 	return items, nil
 }
 
+const listTaskEditStates = `-- name: ListTaskEditStates :many
+SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_step,
+       j.target_language, f.id AS file_id, f.name AS file_name, f.project_id,
+       EXISTS (SELECT 1 FROM job_step_assignments x WHERE x.job_id = j.id)::bool AS has_workflow,
+       COALESCE(cur.id, 0)::bigint AS active_id,
+       COALESCE(cur.is_ai_step, false)::bool AS active_is_ai_step,
+       COALESCE(cur.step_type, '')::text AS active_step_type,
+       COALESCE(cur.step_order, 0)::int AS active_step_order,
+       COALESCE(lc.id, 0)::bigint AS last_completed_id,
+       COALESCE(lc.step_order, 0)::int AS last_completed_order,
+       COALESCE(lc.name, '')::text AS last_completed_name,
+       COALESCE(lc.step_type, '')::text AS last_completed_type,
+       job_last_clear_step_order(j.id) AS last_clear_step_order
+FROM jobs j
+JOIN files f ON f.id = j.file_id
+JOIN projects p ON p.id = f.project_id
+LEFT JOIN LATERAL (
+    SELECT jsa.id, ws.step_order, ws.step_type, (ws.ai_router_id IS NOT NULL) AS is_ai_step
+    FROM job_step_assignments jsa
+    JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
+    WHERE jsa.job_id = j.id AND jsa.status = 'in_progress'
+    ORDER BY ws.step_order
+    LIMIT 1
+) cur ON true
+LEFT JOIN LATERAL (
+    SELECT jsa.id, ws.step_order, ws.name, ws.step_type
+    FROM job_step_assignments jsa
+    JOIN workflow_steps ws ON ws.id = jsa.workflow_step_id
+    WHERE jsa.job_id = j.id AND jsa.status = 'completed'
+    ORDER BY ws.step_order DESC
+    LIMIT 1
+) lc ON true
+WHERE j.id = ANY($1::bigint[]) AND p.tenant_id = $2 AND p.deleted_at IS NULL
+`
+
+type ListTaskEditStatesParams struct {
+	JobIds   []int64 `json:"job_ids"`
+	TenantID int64   `json:"tenant_id"`
+}
+
+type ListTaskEditStatesRow struct {
+	JobID              int64  `json:"job_id"`
+	JobStatus          string `json:"job_status"`
+	JobCurrentStep     string `json:"job_current_step"`
+	TargetLanguage     string `json:"target_language"`
+	FileID             int64  `json:"file_id"`
+	FileName           string `json:"file_name"`
+	ProjectID          int64  `json:"project_id"`
+	HasWorkflow        bool   `json:"has_workflow"`
+	ActiveID           int64  `json:"active_id"`
+	ActiveIsAiStep     bool   `json:"active_is_ai_step"`
+	ActiveStepType     string `json:"active_step_type"`
+	ActiveStepOrder    int32  `json:"active_step_order"`
+	LastCompletedID    int64  `json:"last_completed_id"`
+	LastCompletedOrder int32  `json:"last_completed_order"`
+	LastCompletedName  string `json:"last_completed_name"`
+	LastCompletedType  string `json:"last_completed_type"`
+	LastClearStepOrder int32  `json:"last_clear_step_order"`
+}
+
+// The jobs of @job_ids, one row each; a job outside the tenant is left out.
+func (q *Queries) ListTaskEditStates(ctx context.Context, arg ListTaskEditStatesParams) ([]ListTaskEditStatesRow, error) {
+	rows, err := q.db.Query(ctx, listTaskEditStates, arg.JobIds, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskEditStatesRow{}
+	for rows.Next() {
+		var i ListTaskEditStatesRow
+		if err := rows.Scan(
+			&i.JobID,
+			&i.JobStatus,
+			&i.JobCurrentStep,
+			&i.TargetLanguage,
+			&i.FileID,
+			&i.FileName,
+			&i.ProjectID,
+			&i.HasWorkflow,
+			&i.ActiveID,
+			&i.ActiveIsAiStep,
+			&i.ActiveStepType,
+			&i.ActiveStepOrder,
+			&i.LastCompletedID,
+			&i.LastCompletedOrder,
+			&i.LastCompletedName,
+			&i.LastCompletedType,
+			&i.LastClearStepOrder,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskStepNames = `-- name: ListTaskStepNames :many
 SELECT DISTINCT ws.name
 FROM jobs j
@@ -20872,6 +22417,35 @@ func (q *Queries) ListTemplatesFiltered(ctx context.Context, arg ListTemplatesFi
 	return items, nil
 }
 
+const listTenantAdminIDs = `-- name: ListTenantAdminIDs :many
+SELECT m.user_id FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = $1 AND u.is_active = true AND m.role IN ('admin', 'owner')
+ORDER BY m.user_id
+`
+
+// The org's active owners and admins: who hears that one of its vendor orgs
+// has a new admin.
+func (q *Queries) ListTenantAdminIDs(ctx context.Context, tenantID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listTenantAdminIDs, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var user_id int64
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTenantFileIDsIn = `-- name: ListTenantFileIDsIn :many
 SELECT f.id
 FROM files f
@@ -20971,9 +22545,10 @@ func (q *Queries) ListTenantProjectIDsPage(ctx context.Context, arg ListTenantPr
 }
 
 const listTenantsForPlatform = `-- name: ListTenantsForPlatform :many
-SELECT t.id AS tenant_id, t.name, t.slug, t.domain, t.status, t.created_at,
-       u.email AS owner_email, u.name AS owner_name
+SELECT t.id AS tenant_id, t.name, t.slug, t.domain, t.status, t.kind, t.created_at,
+       u.email AS owner_email, u.name AS owner_name, c.name AS client_org_name
 FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
 LEFT JOIN LATERAL (
     SELECT m.user_id FROM memberships m
     WHERE m.tenant_id = t.id AND m.role = 'owner'
@@ -20981,25 +22556,28 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) owner ON true
 LEFT JOIN users u ON u.id = owner.user_id
-WHERE t.kind = 'customer' AND t.status <> 'deleting'
+WHERE t.kind IN ('customer', 'vendor') AND t.status <> 'deleting'
 ORDER BY (t.status = 'pending') DESC, t.created_at DESC
 `
 
 type ListTenantsForPlatformRow struct {
-	TenantID   int64              `json:"tenant_id"`
-	Name       string             `json:"name"`
-	Slug       string             `json:"slug"`
-	Domain     *string            `json:"domain"`
-	Status     string             `json:"status"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	OwnerEmail *string            `json:"owner_email"`
-	OwnerName  *string            `json:"owner_name"`
+	TenantID      int64              `json:"tenant_id"`
+	Name          string             `json:"name"`
+	Slug          string             `json:"slug"`
+	Domain        *string            `json:"domain"`
+	Status        string             `json:"status"`
+	Kind          string             `json:"kind"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	OwnerEmail    *string            `json:"owner_email"`
+	OwnerName     *string            `json:"owner_name"`
+	ClientOrgName *string            `json:"client_org_name"`
 }
 
 // Operator org list: every organization with its status + owner,
 // pending first (they need action), then newest. LEFT JOIN owner so an org
 // without one still appears (owner_email/name are then NULL).
 // The demo organization is built and rebuilt by the server, not managed here.
+// A vendor org has no owner and lists with its client's name.
 func (q *Queries) ListTenantsForPlatform(ctx context.Context) ([]ListTenantsForPlatformRow, error) {
 	rows, err := q.db.Query(ctx, listTenantsForPlatform)
 	if err != nil {
@@ -21015,9 +22593,11 @@ func (q *Queries) ListTenantsForPlatform(ctx context.Context) ([]ListTenantsForP
 			&i.Slug,
 			&i.Domain,
 			&i.Status,
+			&i.Kind,
 			&i.CreatedAt,
 			&i.OwnerEmail,
 			&i.OwnerName,
+			&i.ClientOrgName,
 		); err != nil {
 			return nil, err
 		}
@@ -21178,6 +22758,56 @@ func (q *Queries) ListTermsForConcepts(ctx context.Context, conceptIds []int64) 
 			&i.CreatedByName,
 			&i.UpdatedByName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTranslationFilesForQA = `-- name: ListTranslationFilesForQA :many
+SELECT t.id AS translation_id, s.file_id
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE t.id = ANY($1::bigint[]) AND s.file_id = ANY($2::bigint[])
+  AND t.target_language = $3 AND p.tenant_id = $4
+`
+
+type ListTranslationFilesForQAParams struct {
+	Ids            []int64 `json:"ids"`
+	FileIds        []int64 `json:"file_ids"`
+	TargetLanguage string  `json:"target_language"`
+	TenantID       int64   `json:"tenant_id"`
+}
+
+type ListTranslationFilesForQARow struct {
+	TranslationID int64 `json:"translation_id"`
+	FileID        int64 `json:"file_id"`
+}
+
+// The file of each translation of @ids among the files of @file_ids in one
+// target language: a multi-file QA run on a selection sends each job only
+// its own rows. Tenant scoping is structural via files→projects.
+func (q *Queries) ListTranslationFilesForQA(ctx context.Context, arg ListTranslationFilesForQAParams) ([]ListTranslationFilesForQARow, error) {
+	rows, err := q.db.Query(ctx, listTranslationFilesForQA,
+		arg.Ids,
+		arg.FileIds,
+		arg.TargetLanguage,
+		arg.TenantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTranslationFilesForQARow{}
+	for rows.Next() {
+		var i ListTranslationFilesForQARow
+		if err := rows.Scan(&i.TranslationID, &i.FileID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -21838,8 +23468,7 @@ const listUserLanguagePairs = `-- name: ListUserLanguagePairs :many
 
 SELECT ulp.user_id, ulp.source_lang, ulp.target_lang, ulp.row_group, ulp.created_at
 FROM user_language_pairs ulp
-JOIN memberships m ON m.user_id = ulp.user_id AND m.tenant_id = $2
-WHERE ulp.user_id = $1
+WHERE ulp.user_id = $1 AND ulp.tenant_id = $2
 ORDER BY ulp.row_group, ulp.source_lang, ulp.target_lang
 `
 
@@ -21856,10 +23485,9 @@ type ListUserLanguagePairsRow struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
-// Per-user language pair qualification.
-// Tenant isolation goes through user_id → memberships(tenant_id). Every query scopes through the membership so
-// a multi-org linguist's pairs are visible/editable only in the org being viewed.
-// List all pairs for a user, scoped to an org via the membership.
+// Per-org language pair qualification. A pair belongs to a membership
+// (tenant_id, user_id): each org sets and reads only its own pairs for a person.
+// List a member's pairs in one org.
 // Ordered by row_group first so the client can reconstruct editor rows in order.
 func (q *Queries) ListUserLanguagePairs(ctx context.Context, arg ListUserLanguagePairsParams) ([]ListUserLanguagePairsRow, error) {
 	rows, err := q.db.Query(ctx, listUserLanguagePairs, arg.UserID, arg.TenantID)
@@ -21953,7 +23581,7 @@ const listUsersForLanguagePair = `-- name: ListUsersForLanguagePair :many
 SELECT u.id, u.email, u.name, m.role
 FROM users u
 JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $1
-JOIN user_language_pairs ulp ON ulp.user_id = u.id
+JOIN user_language_pairs ulp ON ulp.user_id = u.id AND ulp.tenant_id = m.tenant_id
 WHERE u.is_active = true
   AND u.deactivated_at IS NULL
   AND ulp.source_lang = $2
@@ -21974,7 +23602,7 @@ type ListUsersForLanguagePairRow struct {
 	Role  string `json:"role"`
 }
 
-// List members of an org qualified for a given source→target pair.
+// List members of an org qualified for a given source→target pair in that org.
 // Used by the workflow assignment dropdown filter.
 // Filters out soft-deleted / inactive users. Role comes from the membership.
 func (q *Queries) ListUsersForLanguagePair(ctx context.Context, arg ListUsersForLanguagePairParams) ([]ListUsersForLanguagePairRow, error) {
@@ -21995,6 +23623,203 @@ func (q *Queries) ListUsersForLanguagePair(ctx context.Context, arg ListUsersFor
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVendorOrgFacetPairs = `-- name: ListVendorOrgFacetPairs :many
+SELECT DISTINCT p.source_lang, p.target_lang
+FROM tenants t
+JOIN memberships m ON m.tenant_id = t.id
+JOIN users u ON u.id = m.user_id AND u.is_active = true
+JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+WHERE t.client_tenant_id = $1 AND t.kind = 'vendor' AND t.status = 'approved'
+  AND ($2::text IS NULL
+       OR strpos(lower(t.name), lower($2::text)) > 0
+       OR EXISTS (SELECT 1 FROM memberships am JOIN users au ON au.id = am.user_id
+                  WHERE am.tenant_id = t.id AND am.role = 'admin' AND au.is_active
+                    AND strpos(lower(au.email), lower($2::text)) > 0))
+ORDER BY p.source_lang, p.target_lang
+`
+
+type ListVendorOrgFacetPairsParams struct {
+	ClientTenantID *int64  `json:"client_tenant_id"`
+	Q              *string `json:"q"`
+}
+
+type ListVendorOrgFacetPairsRow struct {
+	SourceLang string `json:"source_lang"`
+	TargetLang string `json:"target_lang"`
+}
+
+// The distinct pairs the active people of a client's vendor orgs cover, among
+// the vendor orgs that match q (name or admin email): the Vendors list's
+// Source and Target filters offer languages from these.
+func (q *Queries) ListVendorOrgFacetPairs(ctx context.Context, arg ListVendorOrgFacetPairsParams) ([]ListVendorOrgFacetPairsRow, error) {
+	rows, err := q.db.Query(ctx, listVendorOrgFacetPairs, arg.ClientTenantID, arg.Q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVendorOrgFacetPairsRow{}
+	for rows.Next() {
+		var i ListVendorOrgFacetPairsRow
+		if err := rows.Scan(&i.SourceLang, &i.TargetLang); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVendorOrgLanguagePairs = `-- name: ListVendorOrgLanguagePairs :many
+SELECT DISTINCT m.tenant_id, ulp.source_lang, ulp.target_lang
+FROM memberships m
+JOIN tenants t ON t.id = m.tenant_id AND t.client_tenant_id = $1
+JOIN users u ON u.id = m.user_id AND u.is_active
+JOIN user_language_pairs ulp ON ulp.user_id = m.user_id AND ulp.tenant_id = m.tenant_id
+WHERE m.tenant_id = ANY($2::bigint[])
+ORDER BY m.tenant_id, ulp.source_lang, ulp.target_lang
+`
+
+type ListVendorOrgLanguagePairsParams struct {
+	ClientTenantID *int64  `json:"client_tenant_id"`
+	VendorIds      []int64 `json:"vendor_ids"`
+}
+
+type ListVendorOrgLanguagePairsRow struct {
+	TenantID   int64  `json:"tenant_id"`
+	SourceLang string `json:"source_lang"`
+	TargetLang string `json:"target_lang"`
+}
+
+// The distinct pairs the active people of several vendor orgs cover, for the
+// client's Vendors list. Only vendor orgs of @client_tenant_id count.
+func (q *Queries) ListVendorOrgLanguagePairs(ctx context.Context, arg ListVendorOrgLanguagePairsParams) ([]ListVendorOrgLanguagePairsRow, error) {
+	rows, err := q.db.Query(ctx, listVendorOrgLanguagePairs, arg.ClientTenantID, arg.VendorIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVendorOrgLanguagePairsRow{}
+	for rows.Next() {
+		var i ListVendorOrgLanguagePairsRow
+		if err := rows.Scan(&i.TenantID, &i.SourceLang, &i.TargetLang); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVendorOrgsForClient = `-- name: ListVendorOrgsForClient :many
+SELECT t.id, t.name, t.created_at,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('user_id', u.id, 'email', u.email, 'disabled', m.disabled_at IS NOT NULL)
+                            ORDER BY u.email)
+    FROM memberships m JOIN users u ON u.id = m.user_id
+    WHERE m.tenant_id = t.id AND m.role = 'admin' AND u.is_active), '[]')::jsonb AS admins,
+  count(*) OVER () AS total
+FROM tenants t
+WHERE t.client_tenant_id = $1 AND t.kind = 'vendor' AND t.status = 'approved'
+  AND ($2::text IS NULL
+       OR strpos(lower(t.name), lower($2::text)) > 0
+       OR EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                  WHERE m.tenant_id = t.id AND m.role = 'admin' AND u.is_active
+                    AND strpos(lower(u.email), lower($2::text)) > 0))
+  AND ($3::text IS NULL AND $4::text IS NULL
+       OR EXISTS (SELECT 1 FROM memberships m
+                  JOIN users u ON u.id = m.user_id AND u.is_active
+                  JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+                  WHERE m.tenant_id = t.id
+                    AND ($3::text IS NULL OR p.source_lang = $3::text)
+                    AND ($4::text IS NULL OR p.target_lang = $4::text)))
+ORDER BY lower(t.name), t.id
+LIMIT $6 OFFSET $5
+`
+
+type ListVendorOrgsForClientParams struct {
+	ClientTenantID *int64  `json:"client_tenant_id"`
+	Q              *string `json:"q"`
+	SourceLang     *string `json:"source_lang"`
+	TargetLang     *string `json:"target_lang"`
+	Off            int32   `json:"off"`
+	Lim            int32   `json:"lim"`
+}
+
+type ListVendorOrgsForClientRow struct {
+	ID        int64              `json:"id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Admins    []byte             `json:"admins"`
+	Total     int64              `json:"total"`
+}
+
+// One page of the vendor orgs a client org invited, for its Members tab:
+// the admins of active accounts, each with whether the vendor disabled their
+// membership for disuse (the client may enable it). q matches the
+// vendor's name or an admin's email as plain text; source and target match a
+// pair one of its active people has (together, one pair). total counts every
+// match. Scoped by the client's tenant id.
+func (q *Queries) ListVendorOrgsForClient(ctx context.Context, arg ListVendorOrgsForClientParams) ([]ListVendorOrgsForClientRow, error) {
+	rows, err := q.db.Query(ctx, listVendorOrgsForClient,
+		arg.ClientTenantID,
+		arg.Q,
+		arg.SourceLang,
+		arg.TargetLang,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVendorOrgsForClientRow{}
+	for rows.Next() {
+		var i ListVendorOrgsForClientRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.Admins,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVendorTenantIDs = `-- name: ListVendorTenantIDs :many
+SELECT id FROM tenants WHERE client_tenant_id = $1 ORDER BY id
+`
+
+// Internal: tenantdelete. The vendor orgs of a client org, deleted before it.
+func (q *Queries) ListVendorTenantIDs(ctx context.Context, clientTenantID *int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listVendorTenantIDs, clientTenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -22576,7 +24401,7 @@ func (q *Queries) LockDemoWorkspace(ctx context.Context, tenantID int64) error {
 }
 
 const lockFileTenant = `-- name: LockFileTenant :one
-SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation FROM files f
+SELECT f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation, f.filter_profile FROM files f
 JOIN projects p ON p.id = f.project_id
 WHERE f.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL
 FOR UPDATE OF f
@@ -22606,6 +24431,7 @@ func (q *Queries) LockFileTenant(ctx context.Context, arg LockFileTenantParams) 
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
@@ -22772,6 +24598,33 @@ func (q *Queries) LockMemberIssue(ctx context.Context, arg LockMemberIssueParams
 		&i.ChatVerification,
 		&i.ChatVerificationNote,
 		&i.ChatVerificationTokenID,
+	)
+	return i, err
+}
+
+const lockPendingInviteForAccept = `-- name: LockPendingInviteForAccept :one
+SELECT id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name FROM invites WHERE id = $1 AND accepted_at IS NULL FOR UPDATE
+`
+
+// Internal: the accept flow, on an invite it already resolved from the
+// invitee's token or verified email. Accepting a vendor-org invite creates an
+// org: the row lock makes two concurrent accepts of one invite create it
+// once. No row = already accepted.
+func (q *Queries) LockPendingInviteForAccept(ctx context.Context, id int64) (Invite, error) {
+	row := q.db.QueryRow(ctx, lockPendingInviteForAccept, id)
+	var i Invite
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.Role,
+		&i.InvitedBy,
+		&i.Token,
+		&i.AcceptedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -23471,6 +25324,19 @@ func (q *Queries) MarkAllNotificationsRead(ctx context.Context, arg MarkAllNotif
 	return err
 }
 
+const markInactivityWarned = `-- name: MarkInactivityWarned :exec
+UPDATE memberships SET inactivity_warned_at = now(), inactivity_warning_claimed_at = NULL
+WHERE id = $1 AND inactivity_warning_claimed_at IS NOT NULL AND inactivity_warned_at IS NULL
+`
+
+// Internal: the warning email went out; its days start now. Only while the
+// claim holds: a use of the org (or an enable) while the email was on its way
+// withdrew it, and their new days count without a warning.
+func (q *Queries) MarkInactivityWarned(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markInactivityWarned, id)
+	return err
+}
+
 const markJobReopened = `-- name: MarkJobReopened :execrows
 UPDATE jobs SET status = 'in_progress', current_step = $1, error_message = NULL,
        updated_at = now()
@@ -23896,8 +25762,9 @@ WHERE locked = false
   AND id IN (
     SELECT t.id FROM translations t
     JOIN segments s ON s.id = t.segment_id
-    WHERE s.file_id = $4
-      AND s.source_text = $5
+    WHERE s.file_id = ANY($4::bigint[])
+      AND md5(s.source_text) = md5($5::text)
+      AND s.source_text = $5::text
       AND t.target_language = $6
       AND t.id != $7
       AND NOT t.locked
@@ -23911,14 +25778,15 @@ type PropagateTranslationParams struct {
 	HumanText      *string `json:"human_text"`
 	HumanRichText  *string `json:"human_rich_text"`
 	ActorID        *int64  `json:"actor_id"`
-	FileID         int64   `json:"file_id"`
+	FileIds        []int64 `json:"file_ids"`
 	SourceText     string  `json:"source_text"`
 	TargetLanguage string  `json:"target_language"`
 	ExcludeID      int64   `json:"exclude_id"`
 }
 
 // Auto-propagation: copy a confirmed translation onto every other segment in
-// the same file + target language whose source matches. Locked rows are left
+// the files of @file_ids (the editor's open files) in the target language
+// whose source matches. Locked rows are left
 // alone: a lock means "don't touch". The check sits on the outer WHERE so a
 // row locked while the statement waits is re-checked and skipped.
 //
@@ -23929,12 +25797,14 @@ type PropagateTranslationParams struct {
 //
 // A sibling a user other than @actor_id holds is skipped, like a locked one.
 // The siblings are locked in id order, the order a counts recount locks them.
+// The md5 test lets idx_segments_file_source_md5 find them; the plain
+// equality keeps the match exact.
 func (q *Queries) PropagateTranslation(ctx context.Context, arg PropagateTranslationParams) ([]Translation, error) {
 	rows, err := q.db.Query(ctx, propagateTranslation,
 		arg.HumanText,
 		arg.HumanRichText,
 		arg.ActorID,
-		arg.FileID,
+		arg.FileIds,
 		arg.SourceText,
 		arg.TargetLanguage,
 		arg.ExcludeID,
@@ -24437,6 +26307,17 @@ func (q *Queries) RejectStepAssignment(ctx context.Context, arg RejectStepAssign
 	return err
 }
 
+const releaseInactivityClaims = `-- name: ReleaseInactivityClaims :exec
+UPDATE memberships SET inactivity_warning_claimed_at = NULL WHERE id = ANY($1::bigint[])
+`
+
+// Internal: claims whose email was not sent (it failed, or the sweep stopped
+// first), so the next sweep tries again without waiting for them to expire.
+func (q *Queries) ReleaseInactivityClaims(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, releaseInactivityClaims, ids)
+	return err
+}
+
 const releaseTabHold = `-- name: ReleaseTabHold :exec
 DELETE FROM translation_holds
 WHERE tenant_id = $1 AND translation_id = $2
@@ -24566,7 +26447,7 @@ const renameFile = `-- name: RenameFile :one
 UPDATE files
 SET name = $2, original_name = COALESCE(original_name, name), updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile
 `
 
 type RenameFileParams struct {
@@ -24590,6 +26471,7 @@ func (q *Queries) RenameFile(ctx context.Context, arg RenameFileParams) (File, e
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
@@ -24598,7 +26480,7 @@ const renameFileTenant = `-- name: RenameFileTenant :one
 UPDATE files
 SET name = $1, original_name = COALESCE(original_name, name), updated_at = now()
 WHERE files.id = $2 AND project_id IN (SELECT projects.id FROM projects WHERE projects.tenant_id = $3 AND projects.deleted_at IS NULL)
-RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation
+RETURNING id, project_id, name, format, storage_path, segment_count, created_at, updated_at, original_name, inline_html, xlsx_layout, segmentation, filter_profile
 `
 
 type RenameFileTenantParams struct {
@@ -24624,6 +26506,7 @@ func (q *Queries) RenameFileTenant(ctx context.Context, arg RenameFileTenantPara
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
@@ -24915,7 +26798,7 @@ func (q *Queries) ReseedWaitingStepAssignments(ctx context.Context, arg ReseedWa
 const resendInvite = `-- name: ResendInvite :one
 UPDATE invites SET token = $1, expires_at = $2
 WHERE id = $3 AND tenant_id = $4 AND token = $5 AND accepted_at IS NULL
-RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at
+RETURNING id, tenant_id, email, role, invited_by, token, accepted_at, expires_at, created_at, kind, vendor_org_name
 `
 
 type ResendInviteParams struct {
@@ -24947,6 +26830,8 @@ func (q *Queries) ResendInvite(ctx context.Context, arg ResendInviteParams) (Inv
 		&i.AcceptedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VendorOrgName,
 	)
 	return i, err
 }
@@ -25507,6 +27392,35 @@ func (q *Queries) SearchTMEntriesCursor(ctx context.Context, arg SearchTMEntries
 	return items, nil
 }
 
+const seedMembershipIdle = `-- name: SeedMembershipIdle :exec
+UPDATE memberships
+SET last_active_at = $1::timestamptz,
+    inactivity_warned_at = $2::timestamptz,
+    disabled_at = $3::timestamptz
+WHERE tenant_id = $4 AND user_id = $5
+`
+
+type SeedMembershipIdleParams struct {
+	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
+	WarnedAt     pgtype.Timestamptz `json:"warned_at"`
+	DisabledAt   pgtype.Timestamptz `json:"disabled_at"`
+	TenantID     int64              `json:"tenant_id"`
+	UserID       int64              `json:"user_id"`
+}
+
+// Internal: the seed. Dates a membership's last use, warning and disable, to
+// show the inactivity rules on demo data.
+func (q *Queries) SeedMembershipIdle(ctx context.Context, arg SeedMembershipIdleParams) error {
+	_, err := q.db.Exec(ctx, seedMembershipIdle,
+		arg.LastActiveAt,
+		arg.WarnedAt,
+		arg.DisabledAt,
+		arg.TenantID,
+		arg.UserID,
+	)
+	return err
+}
+
 const setAnalysisJobIDs = `-- name: SetAnalysisJobIDs :exec
 UPDATE analyses
 SET job_ids = $1
@@ -25593,6 +27507,41 @@ type SetDashboardOwnerParams struct {
 // surface as a unique violation, which the handler turns into a 409.
 func (q *Queries) SetDashboardOwner(ctx context.Context, arg SetDashboardOwnerParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setDashboardOwner, arg.OwnerID, arg.ID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setFilterProfileDefault = `-- name: SetFilterProfileDefault :execrows
+INSERT INTO filter_profile_defaults (tenant_id, format, filter_profile_id, updated_by)
+SELECT $1, $2::text, $3::bigint, $4
+WHERE EXISTS (SELECT 1 FROM filter_builtin_profiles b WHERE b.id = $3::bigint AND b.format = $2::text)
+   OR EXISTS (SELECT 1 FROM filter_profiles o
+              WHERE o.id = $3::bigint AND o.tenant_id = $1 AND o.format = $2::text
+                AND o.deleted_at IS NULL FOR SHARE)
+ON CONFLICT (tenant_id, format) DO UPDATE
+SET filter_profile_id = EXCLUDED.filter_profile_id, updated_by = EXCLUDED.updated_by, updated_at = now()
+`
+
+type SetFilterProfileDefaultParams struct {
+	TenantID        int64  `json:"tenant_id"`
+	Format          string `json:"format"`
+	FilterProfileID int64  `json:"filter_profile_id"`
+	UpdatedBy       *int64 `json:"updated_by"`
+}
+
+// Stores only a built-in or a live profile of the tenant of the format,
+// holding a share lock on the profile row until the caller commits, so a
+// concurrent delete either waits or runs first and this write stores nothing
+// (0 rows).
+func (q *Queries) SetFilterProfileDefault(ctx context.Context, arg SetFilterProfileDefaultParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setFilterProfileDefault,
+		arg.TenantID,
+		arg.Format,
+		arg.FilterProfileID,
+		arg.UpdatedBy,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -25959,6 +27908,33 @@ func (q *Queries) SetQAResultIgnored(ctx context.Context, arg SetQAResultIgnored
 	return i, err
 }
 
+const setSettingsFilterProfile = `-- name: SetSettingsFilterProfile :execrows
+INSERT INTO settings_profile_filter_profiles (settings_profile_id, format, filter_profile_id)
+SELECT $1, $2::text, $3::bigint
+WHERE EXISTS (SELECT 1 FROM filter_builtin_profiles b WHERE b.id = $3::bigint AND b.format = $2::text)
+   OR EXISTS (SELECT 1 FROM filter_profiles o
+              WHERE o.id = $3::bigint AND o.format = $2::text AND o.deleted_at IS NULL FOR SHARE)
+ON CONFLICT (settings_profile_id, format) DO UPDATE SET filter_profile_id = EXCLUDED.filter_profile_id
+`
+
+type SetSettingsFilterProfileParams struct {
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	Format            string `json:"format"`
+	FilterProfileID   int64  `json:"filter_profile_id"`
+}
+
+// Internal: as ListSettingsFilterProfiles. Stores only a built-in or a live
+// org profile of the format, holding a share lock on the profile row until
+// the caller commits, so a concurrent delete either waits or runs first and
+// this write stores nothing (0 rows).
+func (q *Queries) SetSettingsFilterProfile(ctx context.Context, arg SetSettingsFilterProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSettingsFilterProfile, arg.SettingsProfileID, arg.Format, arg.FilterProfileID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setSettingsProfileMTRouter = `-- name: SetSettingsProfileMTRouter :exec
 UPDATE settings_profiles SET mt_router_id = $2, updated_at = now() WHERE id = $1
 `
@@ -25999,7 +27975,7 @@ WHERE sp.id = $1
        OR EXISTS (SELECT 1 FROM segmentation_builtin_profiles b WHERE b.id = $2::bigint)
        OR EXISTS (SELECT 1 FROM segmentation_profiles o
                   WHERE o.id = $2::bigint AND o.deleted_at IS NULL FOR SHARE))
-RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
+RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type SetSettingsProfileSegmentationProfileParams struct {
@@ -26034,7 +28010,6 @@ func (q *Queries) SetSettingsProfileSegmentationProfile(ctx context.Context, arg
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
@@ -26044,7 +28019,7 @@ func (q *Queries) SetSettingsProfileSegmentationProfile(ctx context.Context, arg
 
 const setSettingsProfileTMProfile = `-- name: SetSettingsProfileTMProfile :one
 UPDATE settings_profiles SET tm_profile_id = $2::bigint, updated_at = now()
-WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
+WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type SetSettingsProfileTMProfileParams struct {
@@ -26074,7 +28049,6 @@ func (q *Queries) SetSettingsProfileTMProfile(ctx context.Context, arg SetSettin
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
@@ -26134,7 +28108,7 @@ func (q *Queries) SetTenantDomain(ctx context.Context, arg SetTenantDomainParams
 }
 
 const setTenantStatus = `-- name: SetTenantStatus :one
-UPDATE tenants SET status = $2 WHERE id = $1 AND status <> 'deleting' RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+UPDATE tenants SET status = $2 WHERE id = $1 AND status <> 'deleting' RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type SetTenantStatusParams struct {
@@ -26157,6 +28131,7 @@ func (q *Queries) SetTenantStatus(ctx context.Context, arg SetTenantStatusParams
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -26483,6 +28458,25 @@ type SoftDeleteDashboardChartParams struct {
 // readable to whoever holds the URL.
 func (q *Queries) SoftDeleteDashboardChart(ctx context.Context, arg SoftDeleteDashboardChartParams) (int64, error) {
 	result, err := q.db.Exec(ctx, softDeleteDashboardChart, arg.ID, arg.TenantID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const softDeleteFilterProfile = `-- name: SoftDeleteFilterProfile :execrows
+UPDATE filter_profiles
+SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteFilterProfileParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+func (q *Queries) SoftDeleteFilterProfile(ctx context.Context, arg SoftDeleteFilterProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteFilterProfile, arg.ID, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -26991,6 +28985,34 @@ UPDATE oauth_tokens SET last_used_at = now() WHERE id = $1
 func (q *Queries) TouchOAuthToken(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, touchOAuthToken, id)
 	return err
+}
+
+const touchVendorMembership = `-- name: TouchVendorMembership :one
+WITH cur AS (
+  SELECT c.id, c.disabled_at, c.last_active_at FROM memberships c
+  WHERE c.tenant_id = $1 AND c.user_id = $2
+), touched AS (
+  UPDATE memberships mt SET last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+  FROM cur
+  WHERE mt.id = cur.id AND cur.disabled_at IS NULL AND cur.last_active_at < now() - interval '1 day'
+  RETURNING mt.id
+)
+SELECT (cur.disabled_at IS NOT NULL)::bool AS disabled FROM cur
+`
+
+type TouchVendorMembershipParams struct {
+	TenantID int64 `json:"tenant_id"`
+	UserID   int64 `json:"user_id"`
+}
+
+// The per-request gate of a vendor org: whether the caller's membership is
+// disabled, and, when it is not, records the use at most once a day (which
+// also withdraws a pending inactivity warning). No row: not a member.
+func (q *Queries) TouchVendorMembership(ctx context.Context, arg TouchVendorMembershipParams) (bool, error) {
+	row := q.db.QueryRow(ctx, touchVendorMembership, arg.TenantID, arg.UserID)
+	var disabled bool
+	err := row.Scan(&disabled)
+	return disabled, err
 }
 
 const touchWorkflow = `-- name: TouchWorkflow :exec
@@ -27521,7 +29543,7 @@ UPDATE files f
 SET segmentation = $1::jsonb, updated_at = now()
 FROM projects p
 WHERE f.id = $2 AND p.id = f.project_id AND p.tenant_id = $3 AND p.deleted_at IS NULL
-RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation
+RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation, f.filter_profile
 `
 
 type UpdateFileSegmentationParams struct {
@@ -27549,6 +29571,7 @@ func (q *Queries) UpdateFileSegmentation(ctx context.Context, arg UpdateFileSegm
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
 }
@@ -27558,7 +29581,7 @@ UPDATE files f
 SET xlsx_layout = $1::jsonb, updated_at = now()
 FROM projects p
 WHERE f.id = $2 AND p.id = f.project_id AND p.tenant_id = $3 AND p.deleted_at IS NULL
-RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation
+RETURNING f.id, f.project_id, f.name, f.format, f.storage_path, f.segment_count, f.created_at, f.updated_at, f.original_name, f.inline_html, f.xlsx_layout, f.segmentation, f.filter_profile
 `
 
 type UpdateFileXLSXLayoutParams struct {
@@ -27584,8 +29607,41 @@ func (q *Queries) UpdateFileXLSXLayout(ctx context.Context, arg UpdateFileXLSXLa
 		&i.InlineHtml,
 		&i.XlsxLayout,
 		&i.Segmentation,
+		&i.FilterProfile,
 	)
 	return i, err
+}
+
+const updateFilterProfile = `-- name: UpdateFilterProfile :one
+UPDATE filter_profiles
+SET name = $1, options = $2, updated_at = now()
+WHERE id = $3 AND tenant_id = $4 AND deleted_at IS NULL
+  AND updated_at = $5
+RETURNING id
+`
+
+type UpdateFilterProfileParams struct {
+	Name              string             `json:"name"`
+	Options           []byte             `json:"options"`
+	ID                int64              `json:"id"`
+	TenantID          int64              `json:"tenant_id"`
+	ExpectedUpdatedAt pgtype.Timestamptz `json:"expected_updated_at"`
+}
+
+// Name and options, only while updated_at still equals
+// @expected_updated_at: a mismatch (someone saved in between) returns no
+// row. The format never changes.
+func (q *Queries) UpdateFilterProfile(ctx context.Context, arg UpdateFilterProfileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, updateFilterProfile,
+		arg.Name,
+		arg.Options,
+		arg.ID,
+		arg.TenantID,
+		arg.ExpectedUpdatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateIssueActivity = `-- name: UpdateIssueActivity :one
@@ -28149,10 +30205,9 @@ UPDATE settings_profiles SET fuzzy_threshold = $2, mt_on_upload = $3, tm_on_uplo
   near_exact_penalty_pct  = COALESCE($7::int, near_exact_penalty_pct),
   auto_complete           = COALESCE($8::bool, auto_complete),
   tm_lookup_order         = COALESCE($9::text, tm_lookup_order),
-  inline_html             = COALESCE($10::bool, inline_html),
-  linguist_terms     = COALESCE($11::text, linguist_terms),
+  linguist_terms     = COALESCE($10::text, linguist_terms),
   updated_at = now()
-WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, inline_html, workflow_edited, segmentation_profile_id, linguist_terms
+WHERE id = $1 RETURNING id, tenant_id, fuzzy_threshold, mt_on_upload, qa_profile_id, created_at, updated_at, tm_on_upload, sublanguage_penalty_pct, near_exact_penalty_pct, auto_complete, tm_profile_id, workflow_id, mt_router_id, tm_lookup_order, workflow_edited, segmentation_profile_id, linguist_terms
 `
 
 type UpdateSettingsProfileParams struct {
@@ -28165,7 +30220,6 @@ type UpdateSettingsProfileParams struct {
 	NearExactPenaltyPct   *int32  `json:"near_exact_penalty_pct"`
 	AutoComplete          *bool   `json:"auto_complete"`
 	TmLookupOrder         *string `json:"tm_lookup_order"`
-	InlineHtml            *bool   `json:"inline_html"`
 	LinguistTerms         *string `json:"linguist_terms"`
 }
 
@@ -28177,7 +30231,6 @@ type UpdateSettingsProfileParams struct {
 // its default is TRUE, and `false` is a bool's zero value, so a struct literal
 // that omits it would silently switch auto-completion off.
 // tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
-// inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
 // linguist_terms is nil-keeps-stored like tm_lookup_order.
 func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsProfileParams) (SettingsProfile, error) {
 	row := q.db.QueryRow(ctx, updateSettingsProfile,
@@ -28190,7 +30243,6 @@ func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsP
 		arg.NearExactPenaltyPct,
 		arg.AutoComplete,
 		arg.TmLookupOrder,
-		arg.InlineHtml,
 		arg.LinguistTerms,
 	)
 	var i SettingsProfile
@@ -28210,7 +30262,6 @@ func (q *Queries) UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsP
 		&i.WorkflowID,
 		&i.MtRouterID,
 		&i.TmLookupOrder,
-		&i.InlineHtml,
 		&i.WorkflowEdited,
 		&i.SegmentationProfileID,
 		&i.LinguistTerms,
@@ -28532,7 +30583,7 @@ func (q *Queries) UpdateTenantOpenRegistration(ctx context.Context, arg UpdateTe
 }
 
 const updateTenantProfile = `-- name: UpdateTenantProfile :one
-UPDATE tenants SET name = $2, slug = $3, domain = $4 WHERE id = $1 RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at
+UPDATE tenants SET name = $2, slug = $3, domain = $4 WHERE id = $1 RETURNING id, name, created_at, domain, slug, open_registration, status, kind, demo_version, demo_built_at, client_tenant_id
 `
 
 type UpdateTenantProfileParams struct {
@@ -28561,6 +30612,7 @@ func (q *Queries) UpdateTenantProfile(ctx context.Context, arg UpdateTenantProfi
 		&i.Kind,
 		&i.DemoVersion,
 		&i.DemoBuiltAt,
+		&i.ClientTenantID,
 	)
 	return i, err
 }
@@ -29783,4 +31835,24 @@ func (q *Queries) UpsertUserAppearance(ctx context.Context, arg UpsertUserAppear
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const withdrawUnusableVendorWarnings = `-- name: WithdrawUnusableVendorWarnings :execrows
+UPDATE memberships m SET inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
+WHERE t.id = m.tenant_id AND t.kind = 'vendor'
+  AND (m.inactivity_warned_at IS NOT NULL OR m.inactivity_warning_claimed_at IS NOT NULL) AND m.disabled_at IS NULL
+  AND (t.status <> 'approved' OR c.status IS DISTINCT FROM 'approved')
+`
+
+// Internal: the inactivity sweep. A warning sent to someone whose vendor org
+// or its client is not approved is withdrawn: its days run while the person
+// cannot sign in. They are warned afresh, with full days, once it is usable.
+func (q *Queries) WithdrawUnusableVendorWarnings(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, withdrawUnusableVendorWarnings)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

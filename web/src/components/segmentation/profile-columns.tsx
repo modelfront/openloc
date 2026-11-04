@@ -2,11 +2,9 @@ import type { Table } from '@tanstack/react-table'
 import { Copy, Download } from 'lucide-react'
 import type { ColumnDef } from '@/components/ui/data-table'
 import type { SegmentationProfile } from '@/api'
-import { Button } from '@/components/ui/button'
-import { DeleteButton } from '@/components/ui/delete-button'
 import { EditableTitle } from '@/components/list/EditableTitle'
+import { RowAction, RowDeleteAction } from '@/components/list/RowAction'
 import { LanguageCode } from '@/components/ui/language-code'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { modeLabel, profileLabel } from '@/lib/segmentation'
 
 export interface ProfileTableMeta {
@@ -18,22 +16,6 @@ export interface ProfileTableMeta {
 }
 
 const metaOf = (table: Table<SegmentationProfile>) => table.options.meta as unknown as ProfileTableMeta
-
-function RowAction({ label, onClick, disabled, testId, children }: {
-  label: string; onClick: () => void; disabled?: boolean; testId: string; children: React.ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={
-        <Button variant="ghost" size="icon" aria-label={label} disabled={disabled} data-testid={testId}
-          onClick={e => { e.stopPropagation(); onClick() }} />
-      }>
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
-}
 
 export const PROFILE_COLUMNS: ColumnDef<SegmentationProfile>[] = [
   {
@@ -77,13 +59,8 @@ export const PROFILE_COLUMNS: ColumnDef<SegmentationProfile>[] = [
             <Download />
           </RowAction>
           {m.canWrite && !s.builtin && (
-            <Tooltip>
-              <TooltipTrigger render={
-                <DeleteButton aria-label={`Delete ${s.name}`} disabled={m.busy} data-testid={`segmentation-delete-${s.id}`}
-                  onClick={e => { e.stopPropagation(); m.onDelete(s) }} />
-              } />
-              <TooltipContent>Delete</TooltipContent>
-            </Tooltip>
+            <RowDeleteAction label={`Delete ${s.name}`} disabled={m.busy} testId={`segmentation-delete-${s.id}`}
+              onClick={() => m.onDelete(s)} />
           )}
         </div>
       )

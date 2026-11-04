@@ -456,3 +456,10 @@ WHERE j.id = @job_id
   AND t.segment_id = s.id
   AND t.target_language = j.target_language
   AND t.step_edited;
+
+-- name: GetJobCurrentStepID :one
+-- Internal: the job's step in progress, read inside the step advance's
+-- transaction after LockJobForTaskEdit, so the advance sees the step a
+-- concurrent advance may just have moved. The caller resolved the job
+-- tenant-scoped.
+SELECT current_step_id FROM jobs WHERE id = @job_id;

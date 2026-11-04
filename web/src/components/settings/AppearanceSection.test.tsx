@@ -19,6 +19,13 @@ beforeEach(() => {
 })
 
 describe('AppearanceSection', () => {
+  it('names the theme and its palette in the header, with the palettes shown', () => {
+    render(<AppearanceSection />)
+    const section = screen.getByRole('region', { name: 'Appearance' })
+    expect(within(section).getByText('Dark · True black')).toBeVisible()
+    expect(within(section).getAllByText('True black').length).toBeGreaterThan(0)
+  })
+
   it('renders the built-in palettes for both modes', () => {
     render(<AppearanceSection />)
     expect(screen.getByText('True black')).toBeInTheDocument()

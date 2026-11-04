@@ -187,6 +187,7 @@ func (s *Server) build(t tier) *sdk.Server {
 	registerResources(s, srv, managerTier, b)
 	registerConfig(s, srv, managerTier, b)
 	registerSegmentation(s, srv, managerTier, b)
+	registerFilterProfiles(s, srv, managerTier, b)
 	registerInsights(s, srv, managerTier, b)
 	registerIssues(s, srv, managerTier, b)
 	if t.operator {

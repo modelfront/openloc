@@ -1,8 +1,9 @@
 // Package userpair handles user language-pair qualifications.
 //
-// Tenant isolation is INHERITED via user_id → users.tenant_id. Every query
-// joins through users and filters tenant_id. Trusting user_id from a URL
-// path alone (without the tenant join) would be a cross-tenant leak.
+// A pair belongs to a membership: every query filters
+// user_language_pairs.tenant_id, so each org reads and writes only its own
+// pairs for a person. Trusting user_id from a URL path alone (without the
+// tenant filter) would be a cross-tenant leak.
 //
 // Role gating:
 //   - GET /api/users/{userID}/language-pairs — any authenticated tenant member
@@ -79,7 +80,8 @@ func List(ctx context.Context, q db.Querier, tenantID, userID int64) ([]Pair, er
 // Replace swaps a user's whole pair set in one transaction (DELETE + INSERT,
 // so a mid-way failure leaves the old set) and returns the stored set.
 // Languages are normalized and duplicates keep their first row group. A user
-// outside the tenant is pgx.ErrNoRows.
+// outside the tenant is pgx.ErrNoRows. Only this tenant's pairs for the user
+// change: each org keeps its own.
 func Replace(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID, userID int64, pairs []Pair) ([]Pair, error) {
 	if _, err := q.GetUserInTenant(ctx, db.GetUserInTenantParams{ID: userID, TenantID: tenantID}); err != nil {
 		return nil, err

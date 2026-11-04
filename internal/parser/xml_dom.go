@@ -76,6 +76,9 @@ type xmlKeyCache struct {
 type xmlDoc struct {
 	src  string
 	root *xmlNode
+	// rules say which elements are inline, skipped or cross-references;
+	// nil is the defaults.
+	rules *xmlRules
 	// nodes is how many nodes the document built, and attrs how many
 	// attributes they keep.
 	nodes int
@@ -342,83 +345,25 @@ func (n *xmlNode) hasText(src string) bool {
 	return false
 }
 
-// defaultInlineElements are treated as inline markup wherever they appear —
-// they become tag chips inside a segment rather than splitting it. Unknown
-// vocabularies are handled by the mixed-content heuristic in childrenAreInline
-// instead of by name.
-var defaultInlineElements = map[string]bool{
-	"b":      true,
-	"i":      true,
-	"em":     true,
-	"strong": true,
-	"u":      true,
-	"sup":    true,
-	"sub":    true,
-	"br":     true,
-	"span":   true,
-	"a":      true,
-	"code":   true,
-	"tt":     true,
-	"small":  true,
-	"big":    true,
-}
-
 // childrenAreInline reports whether every element child of n counts as inline
 // markup, which is what makes n a candidate segment container.
 //
 // Two signals, either sufficient per child:
-//   - the child's name is in defaultInlineElements
+//   - the child's name is one of the rules' inline elements
 //   - n has mixed content (its own text alongside elements), which means the
 //     elements are embedded in a sentence — this is what catches <meta-ref>
 //     and any other unknown vocabulary without hardcoding names
-func (n *xmlNode) childrenAreInline(src string) bool {
+func (n *xmlNode) childrenAreInline(src string, rules *xmlRules) bool {
 	if len(n.children) == 0 {
 		return true
 	}
 	mixed := n.hasDirectText(src)
 	for _, c := range n.children {
-		if !mixed && !defaultInlineElements[c.name] {
+		if !mixed && !rules.isInline(c) {
 			return false
 		}
 	}
 	return true
-}
-
-// isTranslatable reports whether n opts out of translation. Mirrors the
-// conventions the HTML and Android parsers already honour.
-func (n *xmlNode) isTranslatable() bool {
-	return n.attr("translate") != "no" && n.attr("translatable") != "false"
-}
-
-// referenceElementNames are cross-reference elements recognised by name, for
-// vocabularies that don't mark them with a link attribute.
-var referenceElementNames = map[string]bool{
-	"meta-ref": true,
-}
-
-// isReferencePlaceholder reports whether n is a cross-reference whose text is
-// generated from another node rather than authored here.
-//
-// ST4's `<meta-ref linkid="datanode_…">Eco</meta-ref>` renders the value of the
-// node it points at — a node that is itself a translatable segment in the same
-// file. The text sitting inside the reference is a cached rendering, so
-// translating it would duplicate the term (and invite the two copies to
-// disagree). The CMS re-resolves it on publish.
-//
-// Such an element becomes a single non-editable placeholder chip: its content
-// stays out of the segment, out of the word count, and out of TM lookup, which
-// is what lets our source text line up with a TM built by a tool that models it
-// the same way (`<ph>` in TMX).
-//
-// Distinct from isTranslatable: `translate="no"` skips the subtree entirely and
-// emits no chip. A reference still needs one — the translator must see that
-// something belongs there, and export needs an anchor to restore it.
-func (n *xmlNode) isReferencePlaceholder() bool {
-	// Attribute first: it generalises past any single vocabulary's element name.
-	if n.attr("linkid") != "" {
-		return true
-	}
-	return referenceElementNames[n.name]
 }
 
 // --- text decoding with an offset map ---

@@ -49,6 +49,12 @@ interface Props {
 const hasDeliverable = (j: Job) => j.counts.total - j.counts.untranslated > 0
 /** A job with segments at all — enough for a bilingual hand-off. */
 const hasSegments = (j: Job) => j.counts.total > 0
+/** The files a translated-file download returns: one per job, except a
+ *  multilingual workbook, whose languages come back together in one file. */
+function deliverableCount(jobs: Job[]): number {
+  const multilingual = new Set(jobs.filter(j => j.file_multilingual).map(j => j.file_id))
+  return jobs.filter(j => !j.file_multilingual).length + multilingual.size
+}
 
 export function DownloadMenu({
   projectId,
@@ -78,7 +84,7 @@ export function DownloadMenu({
   })
 
   const counts: Record<DownloadKind, number> = {
-    source: deliverableJobs.length,
+    source: deliverableCount(deliverableJobs),
     xliff: bilingualJobs.length,
     original: uniqueFileIds.length,
   }

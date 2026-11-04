@@ -94,8 +94,9 @@ test.describe("Appearance palettes", () => {
     expect((await saved).ok()).toBe(true);
 
     // A new custom card appears, is labelled, and its background is applied live.
-    await expect(page.getByText("E2E Custom")).toBeVisible();
-    await expect(page.locator('[data-testid^="palette-custom-"]').first()).toBeVisible();
+    const customCard = page.locator('[data-testid^="palette-custom-"]').first();
+    await expect(customCard).toBeVisible();
+    await expect(customCard).toContainText("E2E Custom");
     await expect
       .poll(() =>
         page.evaluate(() =>

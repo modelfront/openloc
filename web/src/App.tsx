@@ -12,6 +12,7 @@ import ProjectDetail from './pages/ProjectDetail'
 // sees "CATEditor crashed". lazyWithReload forces a one-time reload to pull the
 // fresh bundle instead (see INC entry / lazy-reload.ts).
 const CATEditor = lazyWithReload(() => import('./pages/CATEditor'), 'CATEditor')
+const MultiFileEditor = lazyWithReload(() => import('./pages/MultiFileEditor'), 'MultiFileEditor')
 // Lazy-load the /debug component gallery — hidden dev tool, kept out of the
 // main bundle so it costs production users nothing.
 const DebugPage = lazyWithReload(() => import('./pages/DebugPage'), 'DebugPage')
@@ -75,10 +76,11 @@ import { ChartPage } from './pages/ChartPage'
 import { SharedChartPage } from './pages/SharedChartPage'
 import TasksPage from './pages/TasksPage'
 import LearnPage from './pages/LearnPage'
-import VendorsPage from './pages/org/VendorsPage'
 import SegmentationProfilesPage from './pages/segmentation/SegmentationProfilesPage'
 import SegmentationProfilePage from './pages/segmentation/SegmentationProfilePage'
-import { ORG_VENDORS_PATH } from './pages/org/org-paths'
+import FilterProfilesPage from './pages/filter-profiles/FilterProfilesPage'
+import FilterProfilePage from './pages/filter-profiles/FilterProfilePage'
+import { ORG_MEMBERS_PATH } from './pages/org/org-paths'
 import { ChatPanel } from './components/chat/ChatPanel'
 import { ChatDemoPanel } from './components/chat/ChatDemoPanel'
 import { DemoBanner } from './components/demo/DemoBanner'
@@ -88,12 +90,13 @@ import { tourFromHash, tourPath } from './lib/demo'
 import { SessionBanner, SessionBannerAction } from './components/layout/SessionBanner'
 import { isLoggedIn, checkAuth, getMe } from './api'
 import { queryKeys } from './lib/query-keys'
-import { isAdminRole as isAdmin, isLinguistRole } from './lib/roles'
+import { isAdminRole as isAdmin, isLinguistRole, isVendorOrg } from './lib/roles'
+import { VendorOrgRoutes } from './components/layout/VendorOrgRoutes'
 
 // anonymous: what a visitor without a session sees instead of the sign-in
 // redirect.
 function AuthGuard({ children, anonymous }: {
-  children: (ctx: { role: string; isPlatformAdmin: boolean; impersonating: boolean; demo: boolean }) => React.ReactNode
+  children: (ctx: { role: string; isPlatformAdmin: boolean; impersonating: boolean; demo: boolean; vendor: boolean }) => React.ReactNode
   anonymous?: React.ReactNode
 }) {
   const [status, setStatus] = useState<'checking' | 'ok' | 'no'>(
@@ -110,9 +113,11 @@ function AuthGuard({ children, anonymous }: {
   const [impersonating, setImpersonating] = useState(false)
   // The shared read-only demo organization (the Playground).
   const [demo, setDemo] = useState(false)
+  // A vendor org: a few pages only (VendorOrgRoutes).
+  const [vendor, setVendor] = useState(false)
   // Gate rendering on the initial role fetch so routes/nav don't flash the
   // wrong view for a tick (e.g. a vendor briefly seeing the full nav + a
-  // redirect, or an admin's hard-loaded /org/vendors bouncing to "/"). Set true on
+  // redirect, or an admin's hard-loaded /org/settings bouncing to "/"). Set true on
   // success OR after retries fail (fall back to the default 'member' role
   // rather than hang on the loading screen forever).
   const [roleLoaded, setRoleLoaded] = useState(false)
@@ -137,12 +142,14 @@ function AuthGuard({ children, anonymous }: {
           .then(u => {
             if (cancelled) return
             if (u.needs_org_selection) { setNeedsOrg(true); setRoleLoaded(true); return }
-            if (u.org_pending) { setOrgPending(true); setRoleLoaded(true); return }
+            // A disabled vendor membership is blocked like a pending org.
+            if (u.org_pending || u.membership_disabled) { setOrgPending(true); setRoleLoaded(true); return }
             setRole(u.role ?? 'member')
             // Operator tooling is hidden while impersonating an org.
             setIsPlatformAdmin(!!u.is_platform_admin && !u.impersonating)
             setImpersonating(!!u.impersonating)
             setDemo(!!u.demo)
+            setVendor(isVendorOrg(u))
             setRoleLoaded(true)
             // Advisory: the notice proxy rewrites identity from the session
             // cookie before anything reaches Honeybadger.
@@ -189,7 +196,7 @@ function AuthGuard({ children, anonymous }: {
   if (orgPending) {
     return <Navigate to="/awaiting-approval" replace />
   }
-  return <>{children({ role, isPlatformAdmin, impersonating, demo })}</>
+  return <>{children({ role, isPlatformAdmin, impersonating, demo, vendor })}</>
 }
 
 // Amber banner shown while a platform operator has "Open"-ed an org.
@@ -257,7 +264,7 @@ export default function App() {
         path="/*"
         element={
           <AuthGuard anonymous={<AnonymousRoutes />}>
-            {({ role, isPlatformAdmin, impersonating, demo }) => {
+            {({ role, isPlatformAdmin, impersonating, demo, vendor }) => {
             const linguist = isLinguistRole(role)
             // Linguists land on and are confined to /tasks; the block redirects
             // any route they may not see. Since linguist is the only non-manager
@@ -280,7 +287,7 @@ export default function App() {
                   the authed shell) so it never fetches appearance while logged
                   out — see PaletteProvider. */}
               <PaletteProvider />
-              <NavRail role={role} isPlatformAdmin={isPlatformAdmin} />
+              <NavRail role={role} isPlatformAdmin={isPlatformAdmin} vendorOrg={vendor} />
               <div className="flex-1 flex flex-col min-w-0">
                 {/* Impersonation banner: a platform operator is viewing
                     this org via "Open". Kept prominent so they don't mistake it
@@ -297,8 +304,8 @@ export default function App() {
                   <ThemeToggle />
                   <UserMenu role={role} isPlatformAdmin={isPlatformAdmin} />
                 </header>
-                <main className="flex-1 overflow-y-auto pt-6">
-                {hashTour ? <Navigate to={tourPath(hashTour.tour, hashTour.start)} replace /> : (
+                <main className="flex-1 overflow-y-auto [--scroll-inset-top:--spacing(6)] pt-(--scroll-inset-top)">
+                {hashTour ? <Navigate to={tourPath(hashTour.tour, hashTour.start)} replace /> : vendor ? <VendorOrgRoutes role={role} /> : (
                 <Routes>
                   {/* A saved tour's entry address; it shows no organization's data. */}
                   <Route path="/tour/:name/:step?" element={<TourEntryPage />} />
@@ -325,6 +332,7 @@ export default function App() {
                   {/* CAT editor: allowed for linguists (backend enforces they may
                       only open jobs assigned to them). */}
                   <Route path="/projects/:projectId/jobs/:jobId/edit" element={<ErrorBoundary title="CAT editor crashed"><Suspense fallback={<LoadingPlaceholder continues message="Loading editor…" />}><CATEditor /></Suspense></ErrorBoundary>} />
+                  <Route path="/projects/:projectId/edit" element={<ErrorBoundary title="CAT editor crashed"><Suspense fallback={<LoadingPlaceholder continues message="Loading editor…" />}><MultiFileEditor /></Suspense></ErrorBoundary>} />
                   <Route path="/memories" element={linguistBlock(<TMList />)} />
                   <Route path="/memories/profiles" element={linguistBlock(<TMList />)} />
                   {/* Static segment before /memories/:tmId so a profile id is never read as a TM id. */}
@@ -353,6 +361,9 @@ export default function App() {
                   <Route path="/file-configurations/segmentation-profiles" element={linguistBlock(<SegmentationProfilesPage />)} />
                   <Route path="/file-configurations/segmentation-profiles/new" element={linguistBlock(<SegmentationProfilePage />)} />
                   <Route path="/file-configurations/segmentation-profiles/:profileId" element={linguistBlock(<SegmentationProfilePage />)} />
+                  <Route path="/file-configurations/filter-profiles" element={linguistBlock(<FilterProfilesPage />)} />
+                  <Route path="/file-configurations/filter-profiles/new" element={linguistBlock(<FilterProfilePage />)} />
+                  <Route path="/file-configurations/filter-profiles/:profileId" element={linguistBlock(<FilterProfilePage />)} />
                   <Route path="/labels" element={linguistBlock(<LabelsPage />)} />
                   {/* /customers redirects to /labels so an
                       existing bookmark or link still lands. */}
@@ -373,7 +384,7 @@ export default function App() {
                       so someone who cannot browse dashboards can still open a
                       chart that was sent to them. */}
                   <Route path="/shared/charts/:token" element={<SharedChartPage />} />
-                  <Route path="/vendors" element={<Navigate to={ORG_VENDORS_PATH} replace />} />
+                  <Route path="/vendors" element={<Navigate to={ORG_MEMBERS_PATH} replace />} />
                   <Route path="/templates/new" element={linguistBlock(<TemplateCreate />)} />
                   <Route path="/templates/:templateId" element={linguistBlock(<TemplateDetail />)} />
                   <Route path="/templates/:templateId/workflow" element={linguistBlock(<TemplateDetail />)} />
@@ -383,11 +394,10 @@ export default function App() {
                   <Route path="/workflows/steps" element={linguistBlock(<StepLibrary />)} />
                   <Route path="/workflows/steps/new" element={linguistBlock(<StepLibrary />)} />
                   <Route path="/workflows/:workflowId" element={<WorkflowEditRedirect />} />
-                  {/* Organization: Members and Settings are owner/admin; Vendors is
-                      every manager, so a project manager lands there. */}
-                  <Route path="/org" element={isAdmin(role) ? <OrgMembersPage /> : <Navigate to={linguist ? linguistHome : ORG_VENDORS_PATH} replace />} />
-                  <Route path="/org/vendors" element={linguistBlock(<VendorsPage />)} />
-                  <Route path="/org/settings" element={isAdmin(role) ? <OrgSettingsPage /> : <Navigate to={linguist ? linguistHome : ORG_VENDORS_PATH} replace />} />
+                  {/* Organization: owner/admin only. Vendors are invited on Members. */}
+                  <Route path="/org" element={isAdmin(role) ? <OrgMembersPage /> : <Navigate to="/" replace />} />
+                  <Route path="/org/vendors" element={<Navigate to={ORG_MEMBERS_PATH} replace />} />
+                  <Route path="/org/settings" element={isAdmin(role) ? <OrgSettingsPage /> : <Navigate to="/" replace />} />
                   {/* AI settings: org vendor keys (admin-only, gated inside the
                       page) + the user's own MCP tokens, which every role has
 . Hence no route gate. */}
@@ -420,8 +430,9 @@ export default function App() {
                 {/* The demo organization is read-only and shared, so the
                     assistant (which writes conversations) does not run
                     there; it shows an example conversation instead. */}
-                {demo ? <ChatDemoPanel /> : <ChatPanel />}
-                <TourFromURL />
+                {/* Vendor orgs have no assistant and no tours. */}
+                {vendor ? null : demo ? <ChatDemoPanel /> : <ChatPanel />}
+                {!vendor && <TourFromURL />}
               </div>
             </div>
             } />

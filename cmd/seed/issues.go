@@ -16,13 +16,10 @@ func seedOperator(ctx context.Context, q *db.Queries, acmeID int64) int64 {
 	if acmeID == 0 {
 		return 0
 	}
-	user, err := q.GetUserByEmail(ctx, seedid.OperatorEmail)
+	user, err := ensureSeedUser(ctx, q, seedid.OperatorEmail, seedid.OperatorName)
 	if err != nil {
-		user, err = q.CreateUser(ctx, db.CreateUserParams{Email: seedid.OperatorEmail, Name: seedid.OperatorName})
-		if err != nil {
-			log.Printf("⚠ Failed to create the operator: %v", err)
-			return 0
-		}
+		log.Printf("⚠ Failed to create the operator: %v", err)
+		return 0
 	}
 	if err := q.CreateMembership(ctx, db.CreateMembershipParams{UserID: user.ID, TenantID: acmeID, Role: "admin"}); err != nil {
 		log.Printf("⚠ Failed to create the operator's membership: %v", err)
@@ -40,7 +37,7 @@ func seedDemoIssues(ctx context.Context, q *db.Queries, tenantID, ownerID, opera
 	if operatorID == 0 {
 		return
 	}
-	seedVendorIssue(ctx, q, tenantID)
+	seedLinguistIssue(ctx, q, tenantID)
 	if hasIssues(ctx, q, tenantID, ownerID) {
 		log.Printf("✓ Demo issues exist")
 		return
@@ -93,16 +90,16 @@ func hasIssues(ctx context.Context, q *db.Queries, tenantID, userID int64) bool 
 	return has
 }
 
-// seedVendorIssue files one issue as the seed linguist, so a manager's
+// seedLinguistIssue files one issue as the seed linguist, so a manager's
 // Reported issues shows a colleague's report next to their own.
-func seedVendorIssue(ctx context.Context, q *db.Queries, tenantID int64) {
-	vendor, err := q.GetUserByEmail(ctx, seedid.VendorEmail)
-	if err != nil || hasIssues(ctx, q, tenantID, vendor.ID) {
+func seedLinguistIssue(ctx context.Context, q *db.Queries, tenantID int64) {
+	linguist, err := q.GetUserByEmail(ctx, seedid.LinguistEmail)
+	if err != nil || hasIssues(ctx, q, tenantID, linguist.ID) {
 		return
 	}
 	minor := "minor"
 	if _, err := q.CreateIssue(ctx, db.CreateIssueParams{
-		TenantID: tenantID, ReporterID: vendor.ID, Kind: "bug", Severity: &minor, Area: "qa",
+		TenantID: tenantID, ReporterID: linguist.ID, Kind: "bug", Severity: &minor, Area: "qa",
 		Title:       "QA flags a number that is the same in both languages",
 		Description: "The number check marks 1.5 as missing in the German target, where it is written 1,5.",
 		Context:     []byte(`{"path":"/tasks","role":"linguist","browser":"Firefox 131","os":"Windows","viewport":"1920x1080"}`),
@@ -110,7 +107,7 @@ func seedVendorIssue(ctx context.Context, q *db.Queries, tenantID int64) {
 		log.Printf("⚠ Failed to create a demo issue: %v", err)
 		return
 	}
-	log.Printf("✓ Demo issue: 1 for %s", seedid.VendorEmail)
+	log.Printf("✓ Demo issue: 1 for %s", seedid.LinguistEmail)
 }
 
 // seedSupportFields gives a demo issue the support team's side: an assignee,

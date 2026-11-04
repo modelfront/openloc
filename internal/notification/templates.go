@@ -28,6 +28,8 @@ func Subject(e Event) string {
 		return fmt.Sprintf("Update on your issue: %s", e.IssueTitle)
 	case EventIssueResolved:
 		return fmt.Sprintf("Issue resolved: %s", e.IssueTitle)
+	case EventVendorAdminAdded:
+		return fmt.Sprintf("%s has a new admin: %s", e.VendorOrgName, e.MemberName)
 	default:
 		return "OpenLoc notification"
 	}
@@ -102,6 +104,8 @@ func BodyPreview(e Event) string {
 		return issueUpdateSummary(e)
 	case EventIssueResolved:
 		return "The support team resolved an issue your organization reported."
+	case EventVendorAdminAdded:
+		return fmt.Sprintf("Promoted by %s.", e.ActorName)
 	default:
 		return ""
 	}

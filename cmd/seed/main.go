@@ -58,6 +58,7 @@ func main() {
 	// is an admin (not owner) here, so dev-login lands on the picker with 2 orgs.
 	acmeID := seedSecondOrg(ctx, q, userID)
 	operatorID := seedOperator(ctx, q, acmeID)
+	seedVendorOrg(ctx, q, tenantID)
 
 	healTenantFields(ctx, pool, tenantID)
 
@@ -75,6 +76,8 @@ func main() {
 
 	healSegmentationProfile(ctx, q, pool, tenantID)
 
+	healFilterProfile(ctx, q, pool, tenantID)
+
 	healTemplateAndProject(ctx, q, tenantID, userID)
 
 	healDemoFile(ctx, q, pool, tenantID)
@@ -84,7 +87,7 @@ func main() {
 	healWorkflowLibrary(ctx, q, pool, tenantID)
 
 	// Vendor user + one assigned job for the Tasks/Vendors demo.
-	healVendor(ctx, q, pool, tenantID)
+	healLinguist(ctx, q, pool, tenantID)
 	seedDemoIssues(ctx, q, tenantID, userID, operatorID)
 
 	healNotifications(ctx, q, pool, tenantID)
@@ -102,6 +105,8 @@ func main() {
 	healHistoryDemo(ctx, q, pool, userID)
 	// "Strings contain HTML" off: a template and a plain-text JSON file.
 	healPlainTextDemo(ctx, q, pool, userID)
+	// One project per deadline band, for the project list's Deadline filter.
+	healDeadlineDemo(ctx, q, pool, userID)
 
 	// After every step that writes or backdates history: seeded rows get the
 	// origin event pre-translation writes, and no translation is newer than its
@@ -118,7 +123,9 @@ func main() {
 	log.Println("Sign in with the Dev Login button (or Google). No passwords.")
 	log.Printf("  Identity: %s — owner of %s, admin of Acme Localization", seedid.OwnerEmail, seedid.OrgName)
 	log.Println("            → dev-login lands on the org picker (2 orgs)")
-	log.Printf("  Vendor:   %s — linguist in %s", seedid.VendorEmail, seedid.OrgName)
+	log.Printf("  Linguist: %s — in-house linguist in %s", seedid.LinguistEmail, seedid.OrgName)
+	log.Printf("  Vendor org: %s, vendor of %s — %s (admin), %s (project manager), %s (linguist)",
+		seedid.VendorOrgName, seedid.OrgName, seedid.VendorAdminEmail, seedid.VendorPMEmail, seedid.VendorLinguistEmail)
 }
 
 // seededOrgSlugs are the organizations the seed creates (the demo org repairs
@@ -167,36 +174,21 @@ func ensureDemoOrg(ctx context.Context, pool *pgxpool.Pool) {
 	log.Printf("✓ Demo organization is current (tenant %d)", id)
 }
 
-// healVendor creates a demo vendor user and assigns one job to them so the
-// Tasks page (vendor's home) and the Vendors admin page have data to show.
-func healVendor(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, tenantID int64) {
-	var vendorID int64
-	if v, err := q.GetUserByEmail(ctx, seedid.VendorEmail); err == nil {
-		vendorID = v.ID
-		log.Printf("✓ Vendor identity exists: %s", seedid.VendorEmail)
-	} else {
-		created, cerr := q.CreateUser(ctx, db.CreateUserParams{
-			Email:        seedid.VendorEmail,
-			PasswordHash: nil,
-			Name:         seedid.VendorName,
-		})
-		if cerr != nil {
-			log.Printf("⚠ Failed to create vendor user: %v", cerr)
-			return
-		}
-		vendorID = created.ID
-		log.Printf("✓ Vendor identity created: %s", seedid.VendorEmail)
+// healLinguist creates the in-house demo linguist and assigns one job to them
+// so the Tasks page (a linguist's home) has data to show.
+func healLinguist(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, tenantID int64) {
+	linguist, err := ensureSeedUser(ctx, q, seedid.LinguistEmail, seedid.LinguistName)
+	if err == nil {
+		err = ensureSeedMember(ctx, q, linguist.ID, tenantID, auth.RoleLinguist)
 	}
-	// Linguist membership in the seed org (create-if-missing, then heal role).
-	if err := q.CreateMembership(ctx, db.CreateMembershipParams{UserID: vendorID, TenantID: tenantID, Role: "linguist"}); err != nil {
-		log.Printf("⚠ Failed to create vendor membership: %v", err)
+	if err != nil {
+		log.Printf("⚠ Failed to seed the in-house linguist: %v", err)
 		return
 	}
-	if err := q.UpdateMembershipRole(ctx, db.UpdateMembershipRoleParams{UserID: vendorID, TenantID: tenantID, Role: "linguist"}); err != nil {
-		log.Printf("⚠ Failed to heal vendor role: %v", err)
-	}
+	linguistID := linguist.ID
+	log.Printf("✓ In-house linguist: %s", seedid.LinguistEmail)
 
-	// Assign the current active step of one demo job to the vendor so their
+	// Assign the current active step of one demo job to the linguist so their
 	// Tasks page isn't empty.
 	var currentStepID *int64
 	row := pool.QueryRow(ctx, `
@@ -206,14 +198,14 @@ func healVendor(ctx context.Context, q *db.Queries, pool *pgxpool.Pool, tenantID
 		WHERE p.tenant_id = $1 AND j.current_step_id IS NOT NULL
 		ORDER BY j.id LIMIT 1`, tenantID)
 	if err := row.Scan(&currentStepID); err != nil || currentStepID == nil {
-		log.Printf("  ⚠ No assignable job found for vendor: %v", err)
+		log.Printf("  ⚠ No assignable job found for the linguist: %v", err)
 		return
 	}
-	if err := q.AssignStepToUser(ctx, db.AssignStepToUserParams{ID: *currentStepID, AssignedTo: &vendorID}); err != nil {
-		log.Printf("  ⚠ Failed to assign job to vendor: %v", err)
+	if err := q.AssignStepToUser(ctx, db.AssignStepToUserParams{ID: *currentStepID, AssignedTo: &linguistID}); err != nil {
+		log.Printf("  ⚠ Failed to assign job to the linguist: %v", err)
 		return
 	}
-	log.Printf("  ✓ Assigned one demo job to %s", seedid.VendorEmail)
+	log.Printf("  ✓ Assigned one demo job to %s", seedid.LinguistEmail)
 }
 
 // healLanguages ensures the languages table is populated. If empty, inserts common ISO 639-1 languages.

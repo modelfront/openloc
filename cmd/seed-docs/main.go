@@ -54,7 +54,7 @@ func main() {
 	}
 	opts := demodata.Options{EntryAuthor: ownerName, OmitDemoLabel: true}
 	var vendorID *int64
-	if v, err := q.GetUserByEmail(ctx, seedid.VendorEmail); err == nil {
+	if v, err := q.GetUserByEmail(ctx, seedid.LinguistEmail); err == nil {
 		vendorID = &v.ID
 		opts.LinguistUserID = v.ID
 	}

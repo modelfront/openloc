@@ -26,13 +26,13 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 /**
- * Runs `fn` on each SEGMENT_BULK_MAX chunk of `ids`, one after another (never
- * in parallel: each request may write the same job), and returns the results
- * in order.
+ * Runs `fn` on each chunk of `ids` (SEGMENT_BULK_MAX unless `size` says), one
+ * after another (never in parallel: each request may write the same job), and
+ * returns the results in order.
  */
-export async function mapChunks<T, R>(ids: readonly T[], fn: (part: T[]) => Promise<R>): Promise<R[]> {
+export async function mapChunks<T, R>(ids: readonly T[], fn: (part: T[]) => Promise<R>, size = SEGMENT_BULK_MAX): Promise<R[]> {
   const out: R[] = []
-  for (const part of chunk(ids, SEGMENT_BULK_MAX)) out.push(await fn(part))
+  for (const part of chunk(ids, size)) out.push(await fn(part))
   return out
 }
 

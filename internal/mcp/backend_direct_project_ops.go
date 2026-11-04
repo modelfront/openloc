@@ -75,7 +75,7 @@ func (b *directBackend) GetProjectSettings(ctx context.Context, in ProjectRef) (
 		TMOnUpload:              s.TmOnUpload,
 		MTOnUpload:              s.MtOnUpload,
 		AutoComplete:            s.AutoComplete,
-		InlineHTML:              s.InlineHTML,
+		FilterProfiles:          s.FilterProfiles,
 		LinguistTerms:           s.LinguistTerms,
 		QAProfileID:             s.QaProfileID,
 		SegmentationProfileID:   s.SegmentationProfileID,
@@ -197,6 +197,10 @@ func (b *directBackend) UpdateProjectSettings(ctx context.Context, in UpdateProj
 		return ProjectSettingsOut{}, err
 	}
 	tenantID, _ := scope(ctx)
+	filters, err := filterChoices(ctx, b.q, in.InlineHTML, in.FilterProfileIDs)
+	if err != nil {
+		return ProjectSettingsOut{}, serviceErr(err, "update project settings")
+	}
 	if _, err := ph.UpdateSettings(ctx, tenantID, in.ProjectID, project.SettingsPatch{
 		FuzzyThreshold:        in.FuzzyThreshold,
 		MtOnUpload:            in.MTOnUpload,
@@ -204,7 +208,7 @@ func (b *directBackend) UpdateProjectSettings(ctx context.Context, in UpdateProj
 		SublanguagePenaltyPct: in.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   in.NearExactPenaltyPct,
 		AutoComplete:          in.AutoComplete,
-		InlineHTML:            in.InlineHTML,
+		FilterProfileIDs:      filters,
 		LinguistTerms:         in.LinguistTerms,
 		QAProfileID:           in.QAProfileID,
 		MTRouterID:            in.MTRouterID,

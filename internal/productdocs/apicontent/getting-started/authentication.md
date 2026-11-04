@@ -3,7 +3,7 @@ title: "Authentication"
 summary: "Every request carries an access key. The key acts as you, with your role, in one organization."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-18
+updated_at: 2026-11-02
 sources:
   - internal/auth/middleware.go
   - internal/auth/pat.go
@@ -32,6 +32,8 @@ curl {app_url}/api/v1/projects \
 ## What the key can do
 
 The key acts as you, in the organization where you created it. It has your role, checked on every request, so if your role changes, the key's access changes with it. Each endpoint under **API documentation** lists the roles that may call it.
+
+A key created in a vendor organization cannot use `/api/v1`. Every request returns `403` with the code `vendor_org_restricted`, or `client_inactive` when the client organization the vendor works for is not approved.
 
 A key that has expired or was revoked returns `401`. Create a new one under **AI settings → Access keys**.
 

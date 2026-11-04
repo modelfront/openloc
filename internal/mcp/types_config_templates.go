@@ -1,5 +1,7 @@
 package mcp
 
+import "openloc/internal/filterprofile"
+
 // Template and QA profile payloads for the config tools (types_config.go).
 
 type ListTemplatesIn struct {
@@ -32,23 +34,25 @@ type GetTemplateIn struct {
 // TemplateDetail is a template with the settings a project copies from it.
 type TemplateDetail struct {
 	TemplateSummary
-	FuzzyThreshold        float32  `json:"fuzzy_threshold"`
-	MtOnUpload            bool     `json:"mt_on_upload"`
-	TmOnUpload            bool     `json:"tm_on_upload"`
-	AutoComplete          bool     `json:"auto_complete"`
-	InlineHTML            bool     `json:"inline_html"`
-	LinguistTerms         string   `json:"linguist_terms"`
-	SublanguagePenaltyPct int32    `json:"sublanguage_penalty_pct"`
-	NearExactPenaltyPct   int32    `json:"near_exact_penalty_pct"`
-	QAProfileID           int64    `json:"qa_profile_id,omitempty"`
-	SegmentationProfileID int64    `json:"segmentation_profile_id,omitempty"`
-	MTRouterID            int64    `json:"mt_router_id,omitempty"`
-	MTRouterName          string   `json:"mt_router_name,omitempty"`
-	WorkflowID            int64    `json:"workflow_id,omitempty"`
-	WorkflowName          string   `json:"workflow_name,omitempty"`
-	TMProfileID           int64    `json:"tm_profile_id,omitempty"`
-	TMProfileName         string   `json:"tm_profile_name,omitempty"`
-	WorkflowSteps         []string `json:"workflow_steps"`
+	FuzzyThreshold float32 `json:"fuzzy_threshold"`
+	MtOnUpload     bool    `json:"mt_on_upload"`
+	TmOnUpload     bool    `json:"tm_on_upload"`
+	AutoComplete   bool    `json:"auto_complete"`
+	LinguistTerms  string  `json:"linguist_terms"`
+	// FilterProfiles are the filter profile per format; a format left out
+	// uses its Default.
+	FilterProfiles        []filterprofile.Choice `json:"filter_profiles"`
+	SublanguagePenaltyPct int32                  `json:"sublanguage_penalty_pct"`
+	NearExactPenaltyPct   int32                  `json:"near_exact_penalty_pct"`
+	QAProfileID           int64                  `json:"qa_profile_id,omitempty"`
+	SegmentationProfileID int64                  `json:"segmentation_profile_id,omitempty"`
+	MTRouterID            int64                  `json:"mt_router_id,omitempty"`
+	MTRouterName          string                 `json:"mt_router_name,omitempty"`
+	WorkflowID            int64                  `json:"workflow_id,omitempty"`
+	WorkflowName          string                 `json:"workflow_name,omitempty"`
+	TMProfileID           int64                  `json:"tm_profile_id,omitempty"`
+	TMProfileName         string                 `json:"tm_profile_name,omitempty"`
+	WorkflowSteps         []string               `json:"workflow_steps"`
 	// ProjectsCreated counts projects made from this template. They keep their
 	// own copy of its settings.
 	ProjectsCreated int64 `json:"projects_created"`
@@ -67,13 +71,14 @@ type CreateTemplateIn struct {
 	TMProfileID     int64    `json:"tm_profile_id,omitempty" jsonschema:"TM profile to follow"`
 	// SegmentationProfileID, left out, takes the suggested profile for the
 	// source language.
-	SegmentationProfileID int64    `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile, from openloc_list_segmentation_profiles; default the suggested one for the source language"`
-	MtOnUpload            *bool    `json:"mt_on_upload,omitempty" jsonschema:"machine-translate files on upload; default true"`
-	TmOnUpload            *bool    `json:"tm_on_upload,omitempty" jsonschema:"fill translation memory matches on upload; default true"`
-	AutoComplete          *bool    `json:"auto_complete,omitempty" jsonschema:"complete a job's step when every segment is confirmed; default true"`
-	InlineHTML            *bool    `json:"inline_html,omitempty" jsonschema:"strings in JSON, PO, TXT and Excel files are HTML: their tags become protected tags; default true"`
-	LinguistTerms         *string  `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved; default pending"`
-	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score used, 0 to 1; default 0.75"`
+	SegmentationProfileID int64            `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile, from openloc_list_segmentation_profiles; default the suggested one for the source language"`
+	MtOnUpload            *bool            `json:"mt_on_upload,omitempty" jsonschema:"machine-translate files on upload; default true"`
+	TmOnUpload            *bool            `json:"tm_on_upload,omitempty" jsonschema:"fill translation memory matches on upload; default true"`
+	AutoComplete          *bool            `json:"auto_complete,omitempty" jsonschema:"complete a job's step when every segment is confirmed; default true"`
+	InlineHTML            *bool            `json:"inline_html,omitempty" jsonschema:"older switch for strings in JSON, PO, TXT and Excel files: true picks each format's Default filter profile, false its Plain text strings profile. filter_profile_ids wins per format"`
+	LinguistTerms         *string          `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved; default pending"`
+	FilterProfileIDs      map[string]int64 `json:"filter_profile_ids,omitempty" jsonschema:"filter profile per file format (html, xlsx, json_i18n, po, txt, xml), from openloc_list_filter_profiles; 0 goes back to the format's Default. Applies to files uploaded afterwards"`
+	FuzzyThreshold        *float32         `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score used, 0 to 1; default 0.75"`
 }
 
 type DuplicateTemplateIn struct {
@@ -83,25 +88,26 @@ type DuplicateTemplateIn struct {
 // UpdateTemplateIn is a partial edit: an omitted field keeps its value. For
 // the id fields, 0 clears.
 type UpdateTemplateIn struct {
-	TemplateID            int64    `json:"template_id" jsonschema:"the template to change, from openloc_list_templates"`
-	Name                  *string  `json:"name,omitempty" jsonschema:"a new name"`
-	ProjectName           *string  `json:"project_name,omitempty" jsonschema:"the name a new project starts with; empty clears"`
-	SourceLanguage        *string  `json:"source_language,omitempty" jsonschema:"source language code; empty clears"`
-	TargetLanguages       []string `json:"target_languages,omitempty" jsonschema:"the full list of target language codes; replaces the stored one"`
-	CustomerID            *int64   `json:"customer_id,omitempty" jsonschema:"customer from openloc_list_customers; 0 clears"`
-	Domain                *string  `json:"domain,omitempty" jsonschema:"subject domain; empty clears"`
-	MTRouterID            *int64   `json:"mt_router_id,omitempty" jsonschema:"MT router from openloc_list_mt_routers; 0 clears"`
-	QAProfileID           *int64   `json:"qa_profile_id,omitempty" jsonschema:"QA profile from openloc_list_qa_profiles; 0 clears"`
-	TMProfileID           *int64   `json:"tm_profile_id,omitempty" jsonschema:"TM profile to follow from now on"`
-	SegmentationProfileID *int64   `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile from openloc_list_segmentation_profiles; it must suit the source language. There is no clear"`
-	MtOnUpload            *bool    `json:"mt_on_upload,omitempty"`
-	TmOnUpload            *bool    `json:"tm_on_upload,omitempty"`
-	AutoComplete          *bool    `json:"auto_complete,omitempty"`
-	InlineHTML            *bool    `json:"inline_html,omitempty"`
-	LinguistTerms         *string  `json:"linguist_terms,omitempty"`
-	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"0 to 1; refused while the template follows a TM profile"`
-	SublanguagePenaltyPct *int32   `json:"sublanguage_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
-	NearExactPenaltyPct   *int32   `json:"near_exact_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
+	TemplateID            int64            `json:"template_id" jsonschema:"the template to change, from openloc_list_templates"`
+	Name                  *string          `json:"name,omitempty" jsonschema:"a new name"`
+	ProjectName           *string          `json:"project_name,omitempty" jsonschema:"the name a new project starts with; empty clears"`
+	SourceLanguage        *string          `json:"source_language,omitempty" jsonschema:"source language code; empty clears"`
+	TargetLanguages       []string         `json:"target_languages,omitempty" jsonschema:"the full list of target language codes; replaces the stored one"`
+	CustomerID            *int64           `json:"customer_id,omitempty" jsonschema:"customer from openloc_list_customers; 0 clears"`
+	Domain                *string          `json:"domain,omitempty" jsonschema:"subject domain; empty clears"`
+	MTRouterID            *int64           `json:"mt_router_id,omitempty" jsonschema:"MT router from openloc_list_mt_routers; 0 clears"`
+	QAProfileID           *int64           `json:"qa_profile_id,omitempty" jsonschema:"QA profile from openloc_list_qa_profiles; 0 clears"`
+	TMProfileID           *int64           `json:"tm_profile_id,omitempty" jsonschema:"TM profile to follow from now on"`
+	SegmentationProfileID *int64           `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile from openloc_list_segmentation_profiles; it must suit the source language. There is no clear"`
+	MtOnUpload            *bool            `json:"mt_on_upload,omitempty"`
+	TmOnUpload            *bool            `json:"tm_on_upload,omitempty"`
+	AutoComplete          *bool            `json:"auto_complete,omitempty"`
+	InlineHTML            *bool            `json:"inline_html,omitempty" jsonschema:"older switch for strings in JSON, PO, TXT and Excel files: true picks each format's Default filter profile, false its Plain text strings profile. filter_profile_ids wins per format"`
+	LinguistTerms         *string          `json:"linguist_terms,omitempty"`
+	FilterProfileIDs      map[string]int64 `json:"filter_profile_ids,omitempty" jsonschema:"filter profile per file format (html, xlsx, json_i18n, po, txt, xml), from openloc_list_filter_profiles; 0 goes back to the format's Default. Applies to files uploaded afterwards"`
+	FuzzyThreshold        *float32         `json:"fuzzy_threshold,omitempty" jsonschema:"0 to 1; refused while the template follows a TM profile"`
+	SublanguagePenaltyPct *int32           `json:"sublanguage_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
+	NearExactPenaltyPct   *int32           `json:"near_exact_penalty_pct,omitempty" jsonschema:"refused while the template follows a TM profile"`
 	Confirm
 }
 

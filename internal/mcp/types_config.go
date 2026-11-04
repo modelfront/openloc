@@ -229,7 +229,7 @@ type WorkflowDetail struct {
 
 type PreviewAIPromptIn struct {
 	PromptID       int64    `json:"prompt_id,omitempty" jsonschema:"preview a stored prompt, from openloc_list_ai_prompts. Or omit it and give mode and text for a draft."`
-	Mode           string   `json:"mode,omitempty" jsonschema:"for a draft: mt, qe, ape or qe_ape"`
+	Mode           string   `json:"mode,omitempty" jsonschema:"for a draft: mt, qe, ape, qe_ape or comment"`
 	Text           string   `json:"text,omitempty" jsonschema:"for a draft: the instruction text"`
 	SegmentContext []string `json:"segment_context,omitempty" jsonschema:"for a draft: tm_match and/or terms"`
 	SourceLanguage string   `json:"source_language,omitempty" jsonschema:"optional sample source language code; default a placeholder"`

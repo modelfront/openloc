@@ -10,6 +10,7 @@ import (
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/settings"
 	tmpl "openloc/internal/template"
 	"openloc/internal/wordcount"
@@ -95,11 +96,17 @@ func healPlainTextTemplate(ctx context.Context, q *db.Queries, pool *pgxpool.Poo
 	if err != nil {
 		return db.Template{}, fmt.Errorf("get default workflow: %w", err)
 	}
-	off := false
+	plain, err := plainTextFilterProfile(ctx, q, tenantID)
+	if err != nil {
+		return db.Template{}, err
+	}
 	source := "en"
 	t, _, err := tmpl.Create(ctx, q, pool, tenantID, tmpl.CreateInput{
 		Name: plainTextTemplateName, SourceLanguage: &source, TargetLanguages: []string{"es"},
-		Setup: settings.Setup{InlineHTML: &off, WorkflowID: &wf.ID},
+		Setup: settings.Setup{
+			FilterProfileIDs: map[string]*int64{filterprofile.FormatJSON: &plain},
+			WorkflowID:       &wf.ID,
+		},
 	})
 	if err != nil {
 		return db.Template{}, fmt.Errorf("create template: %w", err)
@@ -146,7 +153,7 @@ func createPlainTextProject(ctx context.Context, q *db.Queries, tx pgx.Tx, tenan
 		ProjectID: project.ID, Name: plainTextFileName, Format: db.FileFormatJsonI18n,
 		StoragePath:  fmt.Sprintf("seed/plain-strings-%d.json", project.ID),
 		SegmentCount: int32(len(plainTextSegments)),
-		InlineHtml:   &profile.InlineHtml,
+		InlineHtml:   &plainTextInlineHTML,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("create file: %w", err)
@@ -177,4 +184,21 @@ func createPlainTextProject(ctx context.Context, q *db.Queries, tx pgx.Tx, tenan
 		return 0, err
 	}
 	return project.ID, nil
+}
+
+// plainTextInlineHTML is the plain-text file's "Strings contain HTML": off.
+var plainTextInlineHTML = false
+
+// plainTextFilterProfile is the id of the JSON "Plain text strings" built-in.
+func plainTextFilterProfile(ctx context.Context, q *db.Queries, tenantID int64) (int64, error) {
+	profiles, err := filterprofile.NewService(q, nil).List(ctx, tenantID, filterprofile.FormatJSON)
+	if err != nil {
+		return 0, fmt.Errorf("list filter profiles: %w", err)
+	}
+	for _, p := range profiles {
+		if p.Builtin && p.Options.InlineHTML != nil && !*p.Options.InlineHTML {
+			return p.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no plain-text JSON filter profile")
 }

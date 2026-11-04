@@ -28,7 +28,7 @@ The frontend runs on `http://localhost:9000` and the API on `http://localhost:90
 
 ## Login
 
-`make fresh` starts the stack with `DEV_AUTO_LOGIN=true`: click "Dev Login" on the login page to sign in as the seed owner, `owner@seed.example.com` (owner of "Example Org"). `make seed` also creates a linguist, `vendor@seed.example.com`. Otherwise sign in with a password or Google/Microsoft sign-in.
+`make fresh` starts the stack with `DEV_AUTO_LOGIN=true`: click "Dev Login" on the login page to sign in as the seed owner, `owner@seed.example.com` (owner of "Example Org"). `make seed` also creates an in-house linguist, `linguist@seed.example.com`, and a vendor org, "Acme Vendors" (the login page's "Vendor login" button signs in as its admin). Otherwise sign in with a password or Google/Microsoft sign-in.
 
 ## Parser sidecar (DOCX/PDF)
 

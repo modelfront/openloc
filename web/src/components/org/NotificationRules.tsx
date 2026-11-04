@@ -18,6 +18,13 @@ const RULE_EVENTS = [
   { key: 'notify_deadline' as const, label: 'Deadline approaching', description: 'Email assigned users when a job deadline is within 24 hours' },
 ]
 
+function ruleSummary(rules: OrgNotificationRules) {
+  const on = RULE_EVENTS.filter(e => rules[e.key])
+  if (on.length === RULE_EVENTS.length) return 'All 4 emails on'
+  if (on.length === 0) return 'All emails off'
+  return `${on.length} of ${RULE_EVENTS.length} emails on · ${on.map(e => e.label).join(', ')}`
+}
+
 // The PUT replaces all four rules, so the toggles render only from rules the
 // server returned: a failed load shows Retry, never editable defaults.
 function OrgNotificationRulesSection() {
@@ -41,7 +48,7 @@ function OrgNotificationRulesSection() {
     <SettingsCard
       title="Notification rules"
       icon={<Mail />}
-      className="mt-6"
+      summary={rulesQuery.data && ruleSummary(rulesQuery.data)}
       description={<>
         Master switches for email notifications. When disabled, no emails are sent for this event type — even if individual users have it enabled.
         Users can still mute enabled notifications from their personal Settings.

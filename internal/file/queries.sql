@@ -3,9 +3,11 @@
 -- not parse a file as plain text. xlsx_layout is NULL for every file but an
 -- Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
 -- the rule set the file was split with (segmentation.Snapshot); NULL means
--- the conservative built-in set.
-INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation)
-VALUES ($1, $2, $3, $4, $5, COALESCE(sqlc.narg('inline_html')::bool, true), sqlc.narg('xlsx_layout')::jsonb, sqlc.narg('segmentation')::jsonb)
+-- the conservative built-in set. filter_profile is the filter profile the
+-- file was imported with (filterprofile.Snapshot); NULL for a format without
+-- filter profiles.
+INSERT INTO files (project_id, name, format, storage_path, segment_count, inline_html, xlsx_layout, segmentation, filter_profile)
+VALUES ($1, $2, $3, $4, $5, COALESCE(sqlc.narg('inline_html')::bool, true), sqlc.narg('xlsx_layout')::jsonb, sqlc.narg('segmentation')::jsonb, sqlc.narg('filter_profile')::jsonb)
 RETURNING *;
 
 -- name: LockFileTenant :one

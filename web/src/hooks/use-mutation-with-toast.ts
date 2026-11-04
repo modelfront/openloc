@@ -22,7 +22,7 @@ interface MutationWithToastOptions<TData, TVariables> {
   invalidateKeys?: readonly (readonly unknown[])[]
   onSuccess?: (data: TData, vars: TVariables) => void
   /** Runs on every failure, whether or not a toast is shown. */
-  onError?: (err: Error) => void
+  onError?: (err: Error, vars: TVariables) => void
 }
 
 /**
@@ -56,8 +56,8 @@ export function useMutationWithToast<TData = unknown, TVariables = void>({
       const message = typeof successMessage === 'function' ? successMessage(data, vars) : successMessage
       if (message) toast.success(message)
     },
-    onError: (err: Error) => {
-      onError?.(err)
+    onError: (err: Error, vars) => {
+      onError?.(err, vars)
       // The demo organization's refusal has one notice, shown by the query
       // client for every mutation (main.tsx).
       const show = typeof errorToast === 'function' ? errorToast(err) : errorToast

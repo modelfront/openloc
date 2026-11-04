@@ -1,6 +1,7 @@
 import type { ProjectSettings } from '../api'
 import type { SettingsValues } from '../components/SettingsEditor'
 import { workflowStepsFromApi } from './workflow-steps'
+import { choicesToMap } from '../hooks/useFilterProfiles'
 
 // Default TM match penalty, mirroring the settings_profiles column defaults
 // (migration 20260826090200). Only used when a payload predates the columns —
@@ -13,8 +14,6 @@ export const DEFAULT_PENALTY_PCT = 1
 // that predates the column — the opposite of the shipped default.
 export const DEFAULT_AUTO_COMPLETE = true
 
-// Mirrors the settings_profiles.inline_html column default: strings are HTML.
-export const DEFAULT_INLINE_HTML = true
 // Whether linguists add terms from the editor, and their terms' status
 // (settings_profiles.linguist_terms). The column default is pending.
 export type LinguistTerms = 'off' | 'pending' | 'approved'
@@ -58,7 +57,7 @@ export function projectSettingsToValues(
     mtOnUpload: project?.mt_on_upload ?? false,
     tmOnUpload: project?.tm_on_upload ?? false,
     autoComplete: project?.auto_complete ?? DEFAULT_AUTO_COMPLETE,
-    inlineHTML: project?.inline_html ?? DEFAULT_INLINE_HTML,
+    filterProfileIds: choicesToMap(project?.filter_profiles),
     linguistTerms: toLinguistTerms(project?.linguist_terms),
     qaProfileId: project?.qa_profile_id ?? null,
     segmentationProfileId: project?.segmentation_profile_id ?? null,

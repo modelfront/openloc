@@ -10,7 +10,7 @@ import (
 // the page line comes after them, so navigating does not invalidate the
 // cached tools + system prefix.
 func TestAnthropicParamsCacheBreakpoints(t *testing.T) {
-	a := &anthropicLLM{model: DefaultModel}
+	a := &anthropicLLM{model: FallbackModel}
 	schema := json.RawMessage(`{"type":"object","properties":{}}`)
 	params := a.buildAnthropicParams(Request{
 		System:         "stable part",

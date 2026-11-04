@@ -28,20 +28,6 @@ import (
 // navigates away.
 const turnTimeout = 120 * time.Second
 
-// keepaliveInterval is the shared stream keepalive. A var, not a const, so the
-// heartbeat integration test can shrink it instead of sleeping 25 real
-// seconds.
-var keepaliveInterval = httputil.SSEKeepalive
-
-// SetKeepaliveIntervalForTest shrinks the ping cadence so the heartbeat
-// integration test doesn't sleep 25 real seconds. Returns a restore func.
-// Test-only by contract; production callers have no reason to touch this.
-func SetKeepaliveIntervalForTest(d time.Duration) (restore func()) {
-	old := keepaliveInterval
-	keepaliveInterval = d
-	return func() { keepaliveInterval = old }
-}
-
 // newLLM builds the model client for a turn. Swapped by tests to avoid the
 // network.
 type newLLM func(provider, apiKey, baseURL, model string) LLM
@@ -99,7 +85,7 @@ func (h *Handler) SetLLMFactory(f func(provider, apiKey, baseURL, model string) 
 type sendRequest struct {
 	ConversationID int64  `json:"conversation_id,omitempty"`
 	Message        string `json:"message"`
-	// Model is optional; empty means DefaultModel. Validated against the
+	// Model is optional; empty means the default (Handler.defaultModel). Validated against the
 	// tenant's fetched catalog + adapter availability — see validateModel.
 	Model string `json:"model,omitempty"`
 	// AllowWrites is the mode picker: the user pre-authorizing this
@@ -261,26 +247,8 @@ func (h *Handler) HandleSend(w http.ResponseWriter, r *http.Request) {
 	// delta. A comment line is invisible to the event parser but keeps bytes
 	// flowing, so the load balancer does not cut an idle stream — the FE also
 	// treats any received chunk as proof of life.
-	stopPing := make(chan struct{})
-	defer close(stopPing)
-	go func() {
-		defer errtrack.Monitor(ctx, "chat", "sse-keepalive")
-		ticker := time.NewTicker(keepaliveInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopPing:
-				return
-			case <-ticker.C:
-				wmu.Lock()
-				err := sse.Comment("ping")
-				wmu.Unlock()
-				if err != nil {
-					return
-				}
-			}
-		}
-	}()
+	stopKeepalive := startKeepalive(ctx, sse, &wmu)
+	defer stopKeepalive()
 
 	loopCtx, cancel := context.WithTimeout(ctx, turnTimeout)
 	defer cancel()

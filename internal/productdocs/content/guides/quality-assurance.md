@@ -3,7 +3,7 @@ title: "Quality assurance"
 summary: "Set up QA profiles, understand each check, run QA on a job and read the results."
 order: 50
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - web/src/pages/QAProfiles.tsx
   - web/src/components/QANumberFormatLanguages.tsx
@@ -142,6 +142,8 @@ The findings of the last run load together with the editor, so the dots and the 
 
 To check only some segments, select them with the checkboxes in the grid's first column and click **Run QA** in the selection bar. Only the selected segments are checked and only their findings are replaced; the rest of the job keeps what it has. The message reads, for example, "QA on 3 segments: 2 issue(s) found", counting open errors and warnings on those segments.
 
+In the [editor with several files open](/docs/guides/cat-editor#work-on-several-files-in-one-editor), **Run QA** checks every open file and the **QA (N)** count covers all of them; each row shows its own dot. Selected rows across files are checked by **Run QA** in the selection bar. If QA could not check a file, a warning names it and asks you to run it again.
+
 ### Read the results
 
 - **One dot on each segment.** A segment with findings shows one dot in the grid's last column, in the colour of its most severe open finding: red for an error, yellow for a warning, blue for info. When every finding is ignored, the dot is a hollow grey ring. Hover the dot to list all the segment's findings, with ignored ones marked.
@@ -180,7 +182,7 @@ Changing a profile does not re-check anything by itself. The findings already on
 
 When a translator confirms a segment (Cmd/Ctrl+Enter), the server runs the enabled checks on the new text. If any check at **Error** severity fails, the confirm is refused and a message appears, for example "Fix QA error before confirming: Missing number(s) in target: 2026". With several errors the message shows the count and one example. The segment stays editable and nothing is lost.
 
-In JSON, PO, plain text and Excel files whose strings are HTML (the **Strings contain HTML** setting, on by default; see [Settings](/docs/reference/settings)), a confirm is also refused when the translation has a tag the source does not have, for example "Fix QA error before confirming: Tag <b> is not in the source". Tags are compared as a browser reads them, so attribute order and quoting do not matter. This check runs with or without a QA profile and cannot be ignored; remove the tag to confirm. A file uploaded with the setting off has no tag check.
+In JSON, PO, plain text and Excel files whose strings are HTML (the **Strings contain HTML** option of the file's [filter profile](/docs/guides/filter-profiles); the built-in "Plain text strings" profiles turn it off), a confirm is also refused when the translation has a tag the source does not have, for example "Fix QA error before confirming: Tag <b> is not in the source". Tags are compared as a browser reads them, so attribute order and quoting do not matter. This check runs with or without a QA profile and cannot be ignored; remove the tag to confirm. A file imported with the option off has no tag check.
 
 Only an open **Error** blocks a confirm. **Warning** and **Info** findings are shown but never stop the translator, and an ignored error does not stop them either. Drafts saved while typing are never blocked — only the confirm is.
 

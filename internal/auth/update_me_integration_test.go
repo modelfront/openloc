@@ -34,6 +34,7 @@ func TestIntegrationUpdateMeRefusesEmailChange(t *testing.T) {
 		t.Fatalf("token: %v", err)
 	}
 	if _, err := q.CreateInvite(ctx, db.CreateInviteParams{
+		Kind:     "member",
 		TenantID: other.ID, Email: "newcomer@other.test", Role: "admin", InvitedBy: otherOwner.ID, Token: token,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	}); err != nil {

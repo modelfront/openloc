@@ -1,5 +1,5 @@
 import type { EditorIndex, Translation } from '../api'
-import type { RepetitionStats } from '../types/editor'
+import type { RepetitionStats, ScopeFile } from '../types/editor'
 import { deriveStatus, type DisplayStatus, type StatusFacts } from './segment-status'
 
 /** Repetition role of a segment: its source text occurs once, it is the first
@@ -31,6 +31,8 @@ export interface IndexRow extends StatusFacts {
   /** The QE note's first six characters: enough for qeChipLabel. */
   qeNoteHead: string
   repetition: RepetitionRole
+  /** Which of the editor's files the row is in: an index into `files`. */
+  fileIdx: number
 }
 
 /** The cached index: its rows in document order, the repetition totals, and
@@ -40,11 +42,17 @@ export interface EditorIndexData {
   rows: IndexRow[]
   repetitionStats: RepetitionStats
   lookup: IndexLookup
+  /** The editor's files in order, each with its job and its rows' range: one
+   *  for a job, several for a multi-file editor. */
+  files: ScopeFile[]
 }
 
 export function toIndexData(idx: EditorIndex): EditorIndexData {
   const rows: IndexRow[] = new Array(idx.segment_ids.length)
+  const files = idx.files ?? []
+  let fileIdx = 0
   for (let i = 0; i < rows.length; i++) {
+    while (fileIdx + 1 < files.length && i >= files[fileIdx + 1].first_row) fileIdx++
     rows[i] = {
       segmentId: idx.segment_ids[i],
       translationId: idx.translation_ids[i] || null,
@@ -63,9 +71,10 @@ export function toIndexData(idx: EditorIndex): EditorIndexData {
       confirmedVia: idx.confirmed_via[i],
       qeNoteHead: idx.qe_note_heads[i],
       repetition: idx.repetition[i] as RepetitionRole,
+      fileIdx,
     }
   }
-  return { rows, repetitionStats: idx.repetition_stats, lookup: indexLookup(rows) }
+  return { rows, repetitionStats: idx.repetition_stats, lookup: indexLookup(rows), files }
 }
 
 /** The number the editor shows for a row: the import number, and the piece of

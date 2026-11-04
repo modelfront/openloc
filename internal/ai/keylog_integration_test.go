@@ -78,7 +78,7 @@ func TestIntegrationFailedKeyCheckLogsMaskedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := ai.NewHandler(q, enc, verdictTester{}, nil)
+	h := ai.NewHandler(q, enc, verdictTester{}, ai.NewCatalog(nil, nil, ai.DefaultModelLimit))
 
 	call := func(method string, fn http.HandlerFunc, params map[string]string, body string) *httptest.ResponseRecorder {
 		t.Helper()

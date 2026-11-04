@@ -87,6 +87,8 @@ func AIStepLabel(mode string) string {
 		return AIStepMarker + " (APE)"
 	case "qe_ape":
 		return AIStepMarker + " (QE+APE)"
+	case "comment":
+		return AIStepMarker + " (Comment only)"
 	}
 	return AIStepMarker
 }

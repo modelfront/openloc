@@ -384,7 +384,7 @@ func TestIntegrationJobTranslationStats_MatchesLiveRecount(t *testing.T) {
 		}
 	}
 	if _, err := q.PropagateTranslation(ctx, db.PropagateTranslationParams{
-		HumanText: strp("Même"), ActorID: &user.ID, FileID: fileA.ID, SourceText: "Same source",
+		HumanText: strp("Même"), ActorID: &user.ID, FileIds: []int64{fileA.ID}, SourceText: "Same source",
 		TargetLanguage: "fr", ExcludeID: fr[9],
 	}); err != nil {
 		t.Fatalf("PropagateTranslation: %v", err)

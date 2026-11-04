@@ -48,6 +48,9 @@ For each segment return "approved" true when the translation is acceptable, "sco
   qe_ape: `You are a <source_lang>→<target_lang> reviewer. Judge the <target_lang> translation of each source segment and correct it when needed.
 
 For each segment return "approved" and "score" for the original translation, "postedit" with your corrected translation or null, "postedit_approved" and "postedit_score" for your postedit or null, and "comment" with a short remark for the human reviewer, or null.`,
+  comment: `You are a <source_lang>→<target_lang> reviewer advising a human linguist. Check the <target_lang> translation of each source segment. You do not change the translation and you do not approve or score it.
+
+For each segment return "comment" with a short, specific remark the linguist can act on, or null when there is nothing worth flagging.`,
 }
 
 // The collapsed disclosure's one line: how many additions, then the languages
@@ -73,7 +76,7 @@ function languagesSummary(rows: LanguageAdditionRow[]) {
 const promptSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   prompt_text: z.string().min(1, 'Prompt text is required'),
-  mode: z.enum(['qe', 'qe_ape', 'ape', 'mt']),
+  mode: z.enum(['qe', 'qe_ape', 'ape', 'comment', 'mt']),
   segment_context: z.array(z.string()),
   // An addition needs a target language plus text. A row left completely alone
   // is someone who changed their mind and is dropped on submit; anything in
@@ -124,7 +127,7 @@ export function PromptForm({
   const isEdit = !!initial && !asCopy
   const [typeChosen, setTypeChosen] = useState(!!initial || purpose === 'mt')
   const modeOptions = useMemo<OutputMode[]>(
-    () => (purpose === 'mt' ? ['mt'] : ['qe', 'qe_ape', 'ape']), [purpose])
+    () => (purpose === 'mt' ? ['mt'] : ['qe', 'qe_ape', 'ape', 'comment']), [purpose])
   const defaultMode: OutputMode = purpose === 'mt' ? 'mt' : 'qe_ape'
   const guide = PROMPT_GUIDE_ANCHORS[purpose]
   const { register, control, getValues, setValue, handleSubmit, formState: { errors, isDirty } } = useForm<PromptFormValues>({

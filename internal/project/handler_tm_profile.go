@@ -42,7 +42,13 @@ func (h *Handler) HandleDetachTMProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.emitSettingsDiff(r, project, tenantID, before, after)
-	httputil.Data(w, h.newProjectSettings(r.Context(), tenantID, project, after))
+	out, err := h.newProjectSettings(r.Context(), tenantID, project, after)
+	if err != nil {
+		logging.Error(r.Context(), err, "build project settings", "project-settings-read-failed", logging.ProjectID(project.ID))
+		httputil.ServerError(w, "get", "project settings")
+		return
+	}
+	httputil.Data(w, out)
 }
 
 // HandleSaveTMProfile creates a TM profile from the project's current TM scope

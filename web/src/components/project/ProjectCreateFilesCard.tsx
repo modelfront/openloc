@@ -4,17 +4,21 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteFile, listFiles } from '../../api'
 import { queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
+import { toast } from 'sonner'
+import { errorText } from '@/lib/error-text'
 import { useUploadQueue } from '../../hooks/useUploadQueue'
+import { useFilterProfiles } from '../../hooks/useFilterProfiles'
 import { Button } from '@/components/ui/button'
 import { CheckboxField } from '@/components/ui/checkbox-field'
 import { DeleteButton } from '@/components/ui/delete-button'
 import { VirtualDataTable } from '@/components/ui/virtual-data-table'
 import type { ColumnDef } from '@/components/ui/data-table'
 import { SOURCE_FILE_ACCEPT } from '@/lib/source-file-formats'
-import type { FileRecord } from '@/api'
+import type { FileRecord, FilterProfileChoice } from '@/api'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditXLSXColumnsDialog } from './files/EditXLSXColumnsDialog'
 import { UploadLayoutQuestion } from './files/XLSXLayoutDialog'
+import { UploadFilterProfilesDialog, asksFilterProfile } from './files/UploadFilterProfilesDialog'
 
 const FILES_PAGE = 100
 const ROW_HEIGHT = 36
@@ -28,6 +32,9 @@ interface Props {
   ensureDraft: () => Promise<number>
   analyze: boolean
   onAnalyzeChange: (v: boolean) => void
+  /** The form's filter profile per format, preselected for each upload; a
+   *  format left out uses its Default. */
+  filterChoices?: FilterProfileChoice[] | null
 }
 
 /**
@@ -36,11 +43,14 @@ interface Props {
  * survive leaving the page; publish creates the jobs. "Run analysis on
  * upload" travels with the publish request instead of the uploads.
  */
-export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyzeChange }: Props) {
+export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyzeChange, filterChoices }: Props) {
   const queryClient = useQueryClient()
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const [columnsTarget, setColumnsTarget] = useState<FileRecord | null>(null)
+  // Files waiting for their filter profiles, with the draft they go to.
+  const [awaitingFilters, setAwaitingFilters] = useState<{ draftId: number; files: File[] } | null>(null)
+  const { byFormat } = useFilterProfiles()
 
   // The server sends the files a page at a time; the list loads the next page
   // as it is scrolled to its end.
@@ -61,10 +71,13 @@ export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyz
   const addFiles = async (incoming: FileList | File[]) => {
     const picked = Array.from(incoming)
     if (picked.length === 0) return
-    // A failed save has already shown its toast.
-    const id = await ensureDraft().catch(() => null)
+    const id = await ensureDraft().catch((err: unknown) => {
+      toast.error(`Draft not saved: ${errorText(err, String(err))}`)
+      return null
+    })
     if (id == null) return
-    start(id, picked)
+    if (asksFilterProfile(picked, byFormat)) setAwaitingFilters({ draftId: id, files: picked })
+    else start(id, picked)
   }
 
   const removeMut = useMutationWithToast({
@@ -185,6 +198,15 @@ export function ProjectCreateFilesCard({ draftId, ensureDraft, analyze, onAnalyz
         </TooltipProvider>
       )}
 
+      <UploadFilterProfilesDialog
+        files={awaitingFilters?.files ?? null}
+        filterChoices={filterChoices}
+        onCancel={() => setAwaitingFilters(null)}
+        onConfirm={filterProfiles => {
+          setAwaitingFilters(null)
+          if (awaitingFilters) start(awaitingFilters.draftId, awaitingFilters.files, { filterProfiles })
+        }}
+      />
       <UploadLayoutQuestion question={layoutQuestion} onAnswer={answerLayout} />
       {columnsTarget && draftId != null && (
         <EditXLSXColumnsDialog

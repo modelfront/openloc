@@ -109,12 +109,9 @@ func (s *Service) loadRunTerms(ctx context.Context, js jobScope) (*termIndex, er
 	return newTermIndex(rows), nil
 }
 
-// runJobPages checks every row of the job, one page at a time.
-func (s *Service) runJobPages(ctx context.Context, job db.Job, js jobScope) (JobRunResult, error) {
-	terms, err := s.loadRunTerms(ctx, js)
-	if err != nil {
-		return JobRunResult{}, err
-	}
+// runJobPages checks every row of the job, one page at a time, with the
+// run's terms (loadRunTerms).
+func (s *Service) runJobPages(ctx context.Context, job db.Job, js jobScope, terms *termIndex) (JobRunResult, error) {
 	var result JobRunResult
 	afterPos, afterSub, afterSeg := int32(math.MinInt32), int32(0), int64(0)
 	for {

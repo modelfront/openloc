@@ -1,0 +1,155 @@
+[
+  {
+    "Key": "seg:1",
+    "Text": "A page about import options.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 0,
+    "Context": "meta:description"
+  },
+  {
+    "Key": "seg:2",
+    "Text": "Options page",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 1,
+    "Context": ""
+  },
+  {
+    "Key": "seg:3",
+    "Text": "Settings FAQ",
+    "RichText": "Settings \u003cg id=\"1\" ctype=\"x-html-abbr\" original_markup=\"\u0026lt;abbr title=\u0026quot;frequently asked questions\u0026quot;\u0026gt;\"\u003eFAQ\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 2,
+    "Context": ""
+  },
+  {
+    "Key": "seg:3.1",
+    "Text": "frequently asked questions",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 3,
+    "Context": "abbr:title"
+  },
+  {
+    "Key": "seg:4",
+    "Text": "Pick a photo  and continue.",
+    "RichText": "Pick a photo \u003cx id=\"1\" ctype=\"x-html-img\" original_markup=\"\u0026lt;img src=\u0026quot;cat.png\u0026quot; alt=\u0026quot;A sleeping cat\u0026quot; title=\u0026quot;Cat\u0026quot;\u0026gt;\"/\u003e and \u003cg id=\"2\" ctype=\"x-html-a\" original_markup=\"\u0026lt;a href=\u0026quot;/more\u0026quot; title=\u0026quot;Read more\u0026quot;\u0026gt;\"\u003econtinue\u003c/g\u003e.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 4,
+    "Context": ""
+  },
+  {
+    "Key": "seg:4.1",
+    "Text": "A sleeping cat",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 5,
+    "Context": "img:alt"
+  },
+  {
+    "Key": "seg:4.2",
+    "Text": "Cat",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 6,
+    "Context": "img:title"
+  },
+  {
+    "Key": "seg:4.3",
+    "Text": "Read more",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 7,
+    "Context": "a:title"
+  },
+  {
+    "Key": "seg:4.4",
+    "Text": "  X Saved Widget text",
+    "RichText": "\u003cx id=\"1\" ctype=\"x-html-input\" original_markup=\"\u0026lt;input type=\u0026quot;text\u0026quot; value=\u0026quot;Your name\u0026quot; placeholder=\u0026quot;Type here\u0026quot; title=\u0026quot;Name\u0026quot;\u0026gt;\"/\u003e \u003cx id=\"2\" ctype=\"x-html-input\" original_markup=\"\u0026lt;input type=\u0026quot;hidden\u0026quot; value=\u0026quot;secret-token\u0026quot;\u0026gt;\"/\u003e \u003cg id=\"3\" ctype=\"x-html-button\" original_markup=\"\u0026lt;button aria-label=\u0026quot;Close the dialog\u0026quot;\u0026gt;\"\u003eX\u003c/g\u003e \u003cg id=\"4\" ctype=\"x-html-span\" original_markup=\"\u0026lt;span data-tooltip=\u0026quot;Saved just now\u0026quot;\u0026gt;\"\u003eSaved\u003c/g\u003e \u003cg id=\"5\" ctype=\"x-html-my-widget\" original_markup=\"\u0026lt;my-widget label=\u0026quot;Custom label\u0026quot;\u0026gt;\"\u003eWidget text\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 8,
+    "Context": ""
+  },
+  {
+    "Key": "seg:4.5",
+    "Text": "Your name",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 9,
+    "Context": "input:value"
+  },
+  {
+    "Key": "seg:4.6",
+    "Text": "Type here",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 10,
+    "Context": "input:placeholder"
+  },
+  {
+    "Key": "seg:4.7",
+    "Text": "Name",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 11,
+    "Context": "input:title"
+  },
+  {
+    "Key": "seg:5",
+    "Text": "Quantity",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 12,
+    "Context": ""
+  },
+  {
+    "Key": "seg:5.1",
+    "Text": "Qty",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 13,
+    "Context": "th:abbr"
+  },
+  {
+    "Key": "seg:6",
+    "Text": "10 items",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 14,
+    "Context": ""
+  },
+  {
+    "Key": "seg:6.1",
+    "Text": "Ten",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 15,
+    "Context": "td:abbr"
+  },
+  {
+    "Key": "seg:7",
+    "Text": "Last paragraph.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 16,
+    "Context": ""
+  }
+]

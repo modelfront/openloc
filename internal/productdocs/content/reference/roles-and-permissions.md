@@ -3,14 +3,18 @@ title: "Roles and permissions"
 summary: "The four roles — owner, admin, project manager, linguist — and what each one can see and do."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - internal/auth/roles.go
   - internal/auth/ownership.go
+  - internal/auth/vendororg.go
+  - internal/auth/member_enable.go
   - internal/issues/service.go
   - internal/translation/find_replace.go
   - internal/invite/service.go
   - internal/taskedit/decide.go
+  - internal/editor/scope.go
+  - internal/scopecomplete/scopecomplete.go
   - internal/job/handler_rerun.go
   - internal/job/handler_skip_ai_step.go
   - web/src/lib/roles.ts
@@ -23,6 +27,7 @@ sources:
   - internal/api/api.go
   - internal/publicapi/register.go
   - internal/segmentationapi/handler.go
+  - internal/filterprofile/handler.go
   - internal/segmentedit/service.go
 related:
   - guides/customers-and-vendors
@@ -30,6 +35,7 @@ related:
   - guides/projects-and-files
   - reference/settings
   - getting-started/interface-tour
+  - guides/filter-profiles
 ---
 
 Every member of an organization has one of four roles: **Owner**, **Admin**, **Project manager** or **Linguist**. The role decides which pages appear in the left menu and which actions the server accepts. Owners and admins change roles on the **Members** tab of the **Organization** page (open the account menu at the top right, then **Organization settings**).
@@ -56,9 +62,11 @@ The API follows the same table: a request made with your access key may do only 
 | Capability | Owner | Admin | Project manager | Linguist |
 |---|---|---|---|---|
 | See **Projects**, **Translation memories**, **Terminology**, **Labels**, **Templates**, **Workflows**, **MT**, **AI**, **Integrations**, **QA profiles**, **File configurations**, **Dashboards** | ✓ | ✓ | ✓ | — |
-| Open the **Organization** page (account menu → **Organization settings**) | ✓ all tabs | ✓ all tabs | ✓ **Vendors** tab only | — |
+| Open the **Organization** page (account menu → **Organization settings**) | ✓ | ✓ | — | — |
+| Open the **Organization** page of a vendor organization (**Members** only) | — | ✓ | — | — |
 | See **Tasks** in the left menu | ✓ (all tasks in the organization) | ✓ (all tasks in the organization) | ✓ (own tasks) | ✓ (own tasks) |
 | Open a job in the CAT editor | ✓ any job | ✓ any job | ✓ any job | ✓ only jobs assigned to them |
+| Open several jobs of one project and one target language together in the CAT editor (up to 500) | ✓ | ✓ | ✓ | ✓ only when every job is assigned to them; otherwise the whole set is refused |
 | See **Learn** (guided tours, in the account menu, when the Playground is on) | ✓ | ✓ | ✓ | ✓ |
 | See **Docs** (in-app documentation) | ✓ | ✓ | ✓ | ✓ |
 | See **API** (API guides and endpoint list, in the account menu) | ✓ | ✓ | ✓ | ✓ |
@@ -94,7 +102,7 @@ The API follows the same table: a request made with your access key may do only 
 | Replace text in locked segments with find and replace (**Include locked**), which unlocks them | ✓ | ✓ | — | — |
 | Change a locked segment with spell check (**All segments (includes locked)**, **In all segments**), which unlocks them | ✓ | ✓ | — | — |
 
-\* A step is completed or rejected by the person assigned to it. Owners, admins and project managers can also complete or send back any step, assigned or not. A linguist who is not the assignee cannot.
+\* A step is completed or rejected by the person assigned to it. Owners, admins and project managers can also complete or send back any step, assigned or not. A linguist who is not the assignee cannot. In an editor with several files open, editing and completing apply this rule to each file separately: a file whose step you may not edit or complete keeps its segments and is reported, and the others go ahead.
 
 A linguist's access is per target language. When a file has jobs in several languages, a linguist reaches only the languages whose job is assigned to them: translations, comments, QA, history, propagation and the translated-file and bilingual XLIFF downloads of another language's job are refused. The file's source text and the source download stay open to any linguist who has a job in that file.
 
@@ -111,6 +119,8 @@ A task that shows an error takes no edits from any role until it is re-run, its 
 | Create, edit and delete workflows and steps in the workflow library (**Workflows** page) | ✓ | ✓ | ✓ | — |
 | Create, copy, edit and delete segmentation profiles, import SRX (**File configurations** → **Segmentation profiles**) | ✓ | ✓ | ✓ | — |
 | Read segmentation profiles, preview them and download them as SRX (a linguist through the API or an AI tool; **File configurations** is not shown to linguists) | ✓ | ✓ | ✓ | ✓ |
+| Create, edit and delete filter profiles, and set the organization's default per format (**File configurations** → **Filter profiles**) | ✓ | ✓ | ✓ | — |
+| Read filter profiles (a linguist through the API or an AI tool; **File configurations** is not shown to linguists) | ✓ | ✓ | ✓ | ✓ |
 | View AI routers, AI engines and prompts (**AI** page) | ✓ | ✓ | ✓ | — |
 | Create, edit and delete AI routers, AI engines and prompts | ✓ | ✓ | — | — |
 | Manage the organization's AI provider keys (**Providers** on the AI settings page) | ✓ | ✓ | — | — |
@@ -129,11 +139,12 @@ A task that shows an error takes no edits from any role until it is re-run, its 
 |---|---|---|---|---|
 | Create and edit customers | ✓ | ✓ | ✓ | — |
 | Delete a customer | ✓ | — | — | — |
-| Invite a vendor (creates a linguist account) | ✓ | ✓ | ✓ | — |
+| Invite a vendor organization (**Invite vendor**) | ✓ | ✓ | — | — |
 | Invite an admin or project manager | ✓ | ✓ | — | — |
-| See, **Resend** or **Revoke** a pending invitation | ✓ | ✓ except an invitation to join as owner | ✓ only vendor invitations | — |
+| See, **Resend** or **Revoke** a pending invitation | ✓ | ✓ except an invitation to join as owner | ✓ only linguist invitations | — |
 | Change a member's role or remove a member | ✓ | ✓ | — | — |
 | Remove another owner | ✓ | — | — | — |
+| **Enable** an admin of one of your vendor organizations whose access was disabled | ✓ | ✓ | — | — |
 | Edit language pairs of a member | ✓ | ✓ | — | — |
 | **Settings** tab of the **Organization** page: open registration, notification rules, analysis weights | ✓ | ✓ | — | — |
 
@@ -152,13 +163,27 @@ A linguist's left menu has one entry: **Tasks**. Every management page redirects
 
 From **Tasks** a linguist opens a job in the CAT editor. There they can translate, confirm segments, apply translation memory or machine translation, clear translations, stop a run that is still going with **Stop**, re-run a pre-translation that failed with **Re-run**, run QA and spell check, ignore a QA finding that does not apply, search the concordance, add a term to the term base (when the project allows it), download their own files and complete or reject their step. They cannot edit a completed task, open a project page, browse a translation memory or see other people's jobs.
 
-## Vendors are linguists
+## Vendor organizations
 
-A **vendor** is not a fifth role. It is an external translator you invite from the **Vendors** tab of the **Organization** page with **Send invitation**. The account that is created has the **Linguist** role. The **Vendors** tab lists pending invitations and the linguists who have joined. See [Labels and vendors](/docs/guides/customers-and-vendors).
+A **vendor** is not a fifth role. It is its own organization, linked to the one client organization that invited it. Owners and admins of the client invite it from the **Members** tab → **Invite vendor** with the vendor's name and its admin's email. The invitee becomes the vendor organization's **Admin** and does not become a member of the client. See [Labels and vendors](/docs/guides/customers-and-vendors).
+
+A vendor organization has no owner. Its people have one of three roles, and nobody there creates projects, translation memories, term bases or other resources. It has no AI settings, assistant, connected AI tools or API access, and it works only while its client organization is active.
+
+| Role in a vendor organization | Sees | Can do |
+|---|---|---|
+| **Admin** | **Projects**, **Tasks**, and **Members** on the **Organization** page | Invite project managers and linguists, change roles, set language pairs, remove members, **Enable** a member whose access was disabled |
+| **Project manager** | **Projects** and **Tasks** | Read the project list and their tasks |
+| **Linguist** | **Tasks** | Work on their own tasks |
+
+Access to a vendor organization ends after 90 days without use; see [Labels and vendors](/docs/guides/customers-and-vendors).
+
+In-house translators of a client are **Linguists** invited with **Invite member**.
 
 ## Inviting and changing roles
 
-- Owners and admins invite from the **Members** tab of the **Organization** page → **Invite member** and choose **Admin** or **Project manager**. Nobody can invite an owner; ownership is given by changing an existing member's role.
-- Project managers can invite only linguists, from the **Vendors** tab.
-- Roles are changed with the dropdown next to each member on the **Members** tab. Changing someone to **Linguist** asks for confirmation, because they lose access to every management page.
+- Owners and admins invite from the **Members** tab of the **Organization** page → **Invite member** and choose **Admin**, **Project manager** or **Linguist**. Nobody can invite an owner; ownership is given by changing an existing member's role.
+- Owners and admins invite vendor organizations from the same tab → **Invite vendor**.
+- Project managers can invite only linguists, through the API or a connected AI tool.
+- An admin of a vendor organization invites project managers and linguists; an admin there is made by changing a member's role.
+- Roles are changed in the member's dialog: click their row on the **Members** tab. Changing someone to **Linguist** asks for confirmation, because they lose access to every management page.
 - The last active owner or admin cannot be removed.

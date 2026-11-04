@@ -47,6 +47,9 @@ const (
 	ModeQE    = "qe"
 	ModeAPE   = "ape"
 	ModeQEAPE = "qe_ape"
+	// ModeComment advises only: the model returns a comment per segment and
+	// never a verdict, a score or a corrected translation.
+	ModeComment = "comment"
 )
 
 // PromptPreview is one prompt, resolved the way a run would resolve it.

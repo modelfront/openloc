@@ -3,9 +3,10 @@ title: "The AI assistant"
 summary: "Ask the built-in assistant about your projects, get charts, and let it act for you in write mode."
 order: 120
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-11-02
+updated_at: 2026-11-03
 sources:
   - internal/mcp/register_issues.go
+  - web/src/api/chat.ts
   - web/src/components/chat/**
   - web/src/components/charts/**
   - web/src/pages/AISettingsPage.tsx
@@ -57,7 +58,7 @@ Every role can also ask the assistant to read an attached file, for example "Sum
 
 ## Choose a model
 
-The model picker sits at the bottom of the message box. It lists the Claude and OpenAI models your organization's keys can reach, newest first, up to eight per provider, so what you see follows the keys rather than a fixed list. Your choice is remembered. The default model is Sonnet 5.
+The model picker sits at the bottom of the message box. It lists the Claude and OpenAI models your organization's keys can reach, newest first, up to eight per provider, so what you see follows the keys rather than a fixed list. The list updates as soon as a key is added, changed or removed. Your choice is remembered. The default model is the newest Sonnet your organization's Claude key lists, or Sonnet 5 when the list has none.
 
 A provider your organization has no key for adds nothing to the list. When the list is empty it says which case you are in: **Loading models…** while it is still fetching, **Couldn't load models** if the fetch failed, or **No AI provider connected**. An owner or admin connects a key under **AI settings** → **Providers**, which you find in your avatar menu; with no key at all, the panel itself says so and links there.
 
@@ -152,7 +153,8 @@ Before it creates something, the assistant asks for the details it is missing an
 - **Reopen a completed step**, whatever your role. A manager reopens one by [editing a segment in the editor](/docs/guides/workflows-and-tasks#reopen-a-completed-task).
 - **Delete a project or a file.**
 - **Handle keys.** It cannot add or change an AI provider key, an access key or any other secret. An owner or admin connects providers under **AI settings** → **Providers**.
-- **Reach another organization.** It only works inside the organization you are signed in to.
+- **Invite a vendor organization.** It can invite a person as a member and list pending invites, each marked as a member invite or as a vendor organization's setup invite with that organization's name. A vendor organization is set up only with **Invite vendor** on the **Members** tab of the **Organization** page.
+- **Reach another organization.** It only works inside the organization you are signed in to. A vendor organization has no assistant.
 
 ## If something goes wrong
 

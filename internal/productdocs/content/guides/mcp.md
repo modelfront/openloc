@@ -3,7 +3,7 @@ title: "Connect external AI tools"
 summary: "Connect Claude, ChatGPT, Claude Code, Codex or another AI tool that supports MCP: paste one address and approve. Access keys are the fallback."
 order: 130
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - internal/mcp/register_issues.go
   - web/src/pages/AISettingsPage.tsx
@@ -14,6 +14,7 @@ sources:
   - internal/mcp/**
   - internal/oauthserver/**
   - internal/auth/ratelimit.go
+  - internal/auth/vendororg.go
   - internal/taskedit/decide.go
 limitations:
   - oauth-app-link-redirects
@@ -21,8 +22,9 @@ related:
   - guides/ai-assistant
   - reference/roles-and-permissions
   - reference/settings
+  - guides/filter-profiles
 ---
-You can use OpenLoc from an AI tool that supports MCP, such as Claude, Claude Desktop, ChatGPT, Claude Code or Codex. The tool connects through MCP (Model Context Protocol), signs in as you, and gets the same actions as the built-in assistant, with your role, in one organization.
+You can use OpenLoc from an AI tool that supports MCP, such as Claude, Claude Desktop, ChatGPT, Claude Code or Codex. The tool connects through MCP (Model Context Protocol), signs in as you, and gets the same actions as the built-in assistant, with your role, in one organization. A [vendor organization](/docs/guides/customers-and-vendors) cannot connect AI tools: it has no **AI settings** or **Connected apps**, and MCP and access keys are refused.
 
 ## Connect Claude or ChatGPT
 
@@ -104,6 +106,7 @@ A key belongs to you and to the organization you created it in. The same key wor
 | **writes require user confirmation or a token with write access** | The access key is **Read only**. Create a **Read and write** key and give it to the tool. |
 | The tool cannot connect with an access key, or Claude Code shows **Failed to connect** | The key is wrong, expired or revoked. Check its status under **AI settings** → **Access keys**, and create a new key if needed. |
 | The tool shows another organization's work | Disconnect it and connect again, picking the right organization. An access key works only in the organization where you created it. |
+| **Vendor organizations can’t use this.** | The organization you are in is a vendor organization, which cannot use MCP or access keys. Connect while working in another organization. |
 | **too many requests for this key — slow down and retry** | The tool sent too many requests at once. Wait a few seconds and try again. |
 
 ## Review and revoke access
@@ -126,10 +129,12 @@ The tools follow your role.
 
 | Role | Read |
 |---|---|
-| Owner, admin, project manager | **Projects:** projects (with their MT router and the engine each target language goes to), files, jobs and their steps, segments and their history, comments, analyses, progress and project history. **Resources:** memories and their entries and imports, TM search and matches, term bases, terms and concepts, TM profiles. **Setup:** MT engines, MT routers, AI prompts, engines and routers, provider connections, steps, workflows, templates, QA profiles, segmentation profiles, labels and customers. **Team and analytics:** members, invites (project managers see only linguist invites), productivity, what needs attention, analytics metrics, dashboards and saved analyses. **Files:** download links for source files, translated files, TMX and term exports. **Reported issues:** your organization's, with their conversations. **You:** your profile, notifications and theme. **Docs pages.** |
-| Linguist | Your tasks; a job's details, steps, analysis and TM leverage; segments and their history; comments; TM search and matches; term lookup; QA report; a machine translation preview; segmentation profiles, a preview of how one splits a text, and their SRX export; download links for the source and translated file; the issues you reported, with their conversations; your profile, notifications and theme; docs pages. |
+| Owner, admin, project manager | **Projects:** projects (with their MT router and the engine each target language goes to), files, jobs and their steps, segments and their history, comments, analyses, progress and project history. **Resources:** memories and their entries and imports, TM search and matches, term bases, terms and concepts, TM profiles. **Setup:** MT engines, MT routers, AI prompts, engines and routers, provider connections, steps, workflows, templates, QA profiles, segmentation profiles, filter profiles, labels and customers. **Team and analytics:** members, invites (project managers see only linguist invites), productivity, what needs attention, analytics metrics, dashboards and saved analyses. **Files:** download links for source files, translated files, TMX and term exports. **Reported issues:** your organization's, with their conversations. **You:** your profile, notifications and theme. **Docs pages.** |
+| Linguist | Your tasks; a job's details, steps, analysis and TM leverage; segments and their history; comments; TM search and matches; term lookup; QA report; a machine translation preview; segmentation profiles, a preview of how one splits a text, and their SRX export; filter profiles; download links for the source and translated file; the issues you reported, with their conversations; your profile, notifications and theme; docs pages. |
 
 With write access (an access key with **Read and write**, or a connected app approved with write access), a connected tool makes the same changes as the built-in assistant in write mode, with the same split by role — see [the list](/docs/guides/ai-assistant#let-it-make-changes-write-mode).
+
+Each invite in the list shows its **kind**: an invite into this organization, or an invite to set up a vendor organization, with the vendor's name. A tool can revoke either, but it only invites members. A vendor organization is set up with **Invite vendor** on the **Members** tab of the **Organization** page.
 
 Long lists come in pages. **List project files** (`openloc_list_files`, newest first) and **List members** (`openloc_list_members`, by name) return up to 200 entries (50 by default) and, when there are more, `has_more` set to true and a `next_cursor`. The tool passes it back as `cursor` to get the next page.
 
@@ -145,7 +150,7 @@ Every role can also report an issue to the support team, even with read access o
 
 ### Changes that need a second call
 
-A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, an invite to the organization, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile, segmentation profile or a member's role) take two calls:
+A delete, a clear, a confirm, a find and replace, an XLIFF re-import, a chart edit, a change to a project's workflow, an invite to the organization, and an edit to settings other things use (an engine, router, workflow, step, template, QA profile, TM profile, segmentation profile, filter profile or a member's role) take two calls:
 
 1. The first call changes nothing. It returns a preview of what would happen, with knock-on effects such as how many projects use the thing, and a `confirm_token`.
 2. The tool shows you the preview. Only after you approve does it call again with the `confirm_token` and the same arguments. That call makes the change.
@@ -158,18 +163,22 @@ Find and replace leaves locked segments out by default. With `include_locked` se
 
 A connected tool can build the AI configuration a project runs on, in the order the app uses: a system prompt, an AI engine that binds it to a provider connection, a router that decides which engine each target language reaches, and then either a workflow step (for a review engine) or a project (for a translation engine). An engine is never used directly — a router always sits in between:
 
-- **To review or post-edit:** the engine goes into an **AI router**, the router goes on a Hybrid or AI workflow step, and the step goes into a workflow.
+- **To review, post-edit or comment:** the engine goes into an **AI router**, the router goes on a Hybrid or AI workflow step, and the step goes into a workflow.
 - **To machine-translate:** the engine goes into an **MT router**, and the project is pointed at that router. That last step is what makes the engine translate; the project follows exactly one router.
 
 Ask for what you want and the tool lists what already exists before creating anything — the built-in prompt templates and the standard **Translation** and **Review** steps are usually enough to build on.
 
 Creating and editing prompts, and creating, editing and deleting AI engines and AI routers, is owner or admin only, matching the [AI engines and prompts](/docs/guides/ai-engines-and-prompts) page. A project manager can build, edit and delete MT engines, MT routers, steps and workflows, but not prompts, AI engines or AI routers, and gets a message saying so.
 
+When a tool creates or previews a prompt, it picks the type: `mt`, `qe`, `ape`, `qe_ape` or `comment`. A `comment` prompt (**Comment only**) leaves a remark for the linguist and never changes a segment. The prompt list filter `qe_ape` returns every review prompt, comment-only ones included. When a tool runs an AI step again (`openloc_rerun_ai_step`), the result counts the segments left with a comment in `commented`, next to `auto_approved` and `needs_review`.
+
 A tool can edit a prompt you already have: its instructions, what each segment carries with it, and the rules for particular languages. It cannot change the prompt's type — engines are built on it — and it cannot touch the built-in templates, which stay read-only. The context and the language rules are replaced rather than added to, so a tool that changes one of them sends the whole set back.
 
 A connected tool never adds a provider connection, because that means handling an API key — add it once under AI settings, and the tool picks it from the connections that already exist. Pointing a project at an MT router replaces whatever router the project followed before.
 
 A tool can also set a QA profile's [number format by language](/docs/guides/quality-assurance#number-format-by-language) and what the [**Placeables** check](/docs/guides/quality-assurance#the-checks) compares. It sends the whole setting of that check back, because that replaces the stored one.
+
+Every role can list and read filter profiles, the named import options for one file format. An owner, admin or project manager's tool creates (from options, or as a copy of another profile; copy a built-in to change it), renames, edits and deletes the organization's own; the built-in ones are read-only. An edit replaces the profile's whole options. Project settings and templates take `filter_profile_ids`, a map from format (`html`, `xlsx`, `json_i18n`, `po`, `txt`, `xml`) to a profile id, where 0 goes back to the format's Default, and return the choice per format as `filter_profiles`. The older `inline_html` input still works: true picks each string format's Default, false its **Plain text strings** profile, and `filter_profile_ids` wins per format. A choice or a profile change reaches only files uploaded afterwards. Deleting a profile sends the projects that use it back to the format's Default, and a profile a template uses cannot be deleted.
 
 Running QA from a tool works exactly like the button in the app, ignored findings included — see [The AI assistant](/docs/guides/ai-assistant#let-it-make-changes-write-mode).
 

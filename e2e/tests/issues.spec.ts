@@ -8,7 +8,7 @@
 
 import type { Browser, Locator, Page } from "@playwright/test";
 import { apiAs, authHeaders, expect, login, pageAs, pickComboboxValue, test } from "./helpers";
-import { SEED_OPERATOR_EMAIL, SEED_OPERATOR_NAME, SEED_ORG_NAME, SEED_VENDOR_EMAIL } from "../seed-identity";
+import { SEED_OPERATOR_EMAIL, SEED_OPERATOR_NAME, SEED_ORG_NAME, SEED_LINGUIST_EMAIL } from "../seed-identity";
 
 // A 1×1 PNG, enough for the browser to show and the server to accept.
 const PNG = Buffer.from(
@@ -103,7 +103,7 @@ test("a manager sees every member's issues; a linguist only their own", async ({
   await expect(page).toHaveURL(/\/issues$/);
   await expect(page.getByTestId(`issue-row-${issueId}`)).toBeVisible();
   const colleague = page.getByRole("row").filter({ hasText: linguistIssue });
-  await expect(colleague.getByTestId("issue-reporter")).toContainText(SEED_VENDOR_EMAIL);
+  await expect(colleague.getByTestId("issue-reporter")).toContainText(SEED_LINGUIST_EMAIL);
 
   // Newest report first. The Updated heading sorts newest update first, then
   // oldest first, then goes back to the default. The order is checked against
@@ -137,7 +137,7 @@ test("a manager sees every member's issues; a linguist only their own", async ({
   await expect(page).not.toHaveURL(/sort=/);
   await expect(updated).not.toHaveAttribute("aria-sort");
 
-  const linguist = await pageAs(browser, SEED_VENDOR_EMAIL);
+  const linguist = await pageAs(browser, SEED_LINGUIST_EMAIL);
   await linguist.goto("/issues?status=");
   await expect(linguist.getByRole("row").filter({ hasText: linguistIssue })).toBeVisible();
   await expect(linguist.getByTestId(`issue-row-${issueId}`)).toHaveCount(0);
@@ -364,7 +364,7 @@ test("the reporter's answer puts the issue back in the operator's queue as Open"
 // Send report is on screen without scrolling, and the description box grows
 // with its text instead of scrolling on its own.
 test("a long description keeps Send report on screen", async ({ browser }) => {
-  const page = await pageAs(browser, SEED_VENDOR_EMAIL);
+  const page = await pageAs(browser, SEED_LINGUIST_EMAIL);
   await page.goto("/issues");
   await page.getByTestId("issues-report").click();
   const description = page.getByTestId("report-issue-description");

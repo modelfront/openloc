@@ -3,7 +3,7 @@ title: "Glossary of terms"
 summary: "Short definitions of the words the TMS uses: segment, job, leverage, band, context match and more."
 order: 60
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-29
+updated_at: 2026-11-02
 sources:
   - docs/architecture.md
   - internal/mtrouter/**
@@ -39,6 +39,7 @@ The words you meet in the product, in alphabetical order.
 | **Deadline** | The due date of a workflow step on a job. New files inherit the step's default. |
 | **File** | A document you upload to a project. It becomes one job per target language. See [Projects and files](/docs/guides/projects-and-files). |
 | **Forbidden term** | A translation marked **Forbidden** in a term base. The editor warns when it appears and QA reports it. |
+| **Internal match** | A segment already confirmed in the files open in the editor (in the file itself, when one file is open) whose source is like the current one, shown in the **Internal matches** section of the Resources panel. Its percent is scored like a TM match. Clicking it inserts its translation. See [the CAT editor](/docs/guides/cat-editor). |
 | **Job** | One file in one target language, with a workflow, assignees, a deadline and a progress bar. |
 | **Leverage** | How much of a job the translation memory already covers. High leverage means little new work. |
 | **Locale (language variant)** | A language plus a region, such as `pt-BR`. A match from another variant is filled in but not confirmed. |
@@ -55,7 +56,7 @@ The words you meet in the product, in alphabetical order.
 | **QA check** | One automatic test on a segment, for example **Empty target** or **Terminology**. See [Quality assurance](/docs/guides/quality-assurance). |
 | **QA profile** | A named set of QA checks with a severity for each. A project or template uses one profile. |
 | **Quality estimation (QE)** | A check that decides whether a translation is good enough to approve without a person reading it. Any AI engine whose output is QE or QE+APE can do it, from any connected provider that reviews translations. Good segments become **Auto-approved**. See [Quality estimation](/docs/concepts/quality-estimation). |
-| **Repetition** | A source text that appears more than once in a file. Confirming the first copies the translation to the others. |
+| **Repetition** | A source text that appears more than once in a file, or across the files open together in the editor. Confirming the first copies the translation to the others. |
 | **Roles** | **Owner**, **Admin**, **Project manager** and **Linguist**. Owners and admins run the organization, project managers run projects, linguists work on assigned tasks. See [Roles and permissions](/docs/reference/roles-and-permissions). |
 | **Segment** | One unit of text in a file, usually a sentence or a paragraph. Translation happens segment by segment. |
 | **Source and target language** | The source language is the language of the uploaded file. Target languages are the ones you translate into. |
@@ -70,7 +71,7 @@ The words you meet in the product, in alphabetical order.
 | **TM profile** | A saved set of memory assignments that several projects follow. See [Translation memory](/docs/guides/translation-memory#share-a-setup-with-tm-profiles). |
 | **TMX** | The exchange format for translation memories. See [Import and export TMX](/docs/guides/translation-memory#import-and-export-tmx). |
 | **Translation memory (TM)** | A store of past source and target pairs, reused when the same or similar text appears again. See [Translation memory](/docs/guides/translation-memory). |
-| **Vendor** | An external linguist or agency invited to work on your jobs. Vendors have the linguist role. |
+| **Vendor** | An agency or translator that works for your organization through its own linked vendor organization, with its own admin, project managers and linguists. See [Labels and vendors](/docs/guides/customers-and-vendors#invite-a-vendor-owner-or-admin). |
 | **Weighted words** | A word count where each band counts at a different rate, so a 100% match counts less than a new word. Used to measure effort. |
 | **Workflow and workflow step** | The ordered steps a job goes through, for example Translation then Review. **Complete step** moves the job on. See [Workflows and tasks](/docs/guides/workflows-and-tasks). |
 | **XLIFF** | The exchange format for bilingual files. You can upload it, download any job as one, and re-import an edited copy. See [Supported file formats](/docs/reference/file-formats). |

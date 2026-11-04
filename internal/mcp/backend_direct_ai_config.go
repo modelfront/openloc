@@ -68,7 +68,7 @@ func (b *directBackend) ListAIPrompts(ctx context.Context, in ListAIPromptsIn) (
 	for _, p := range rows {
 		mode := aiprompt.Mode(p)
 		// "mt" selects MT prompts; anything else selects the review family, so
-		// a caller filtering for qe_ape gets qe, ape and qe_ape alike.
+		// a caller filtering for qe_ape gets qe, ape, qe_ape and comment alike.
 		if want == "mt" && mode != "mt" {
 			continue
 		}
@@ -283,7 +283,7 @@ func (b *directBackend) CreateAIPrompt(ctx context.Context, in CreateAIPromptIn)
 	tenantID, _ := scope(ctx)
 	flags, ok := aiprompt.FlagsForMode(in.Mode)
 	if !ok {
-		return CreateAIPromptResult{}, invalidf("mode must be one of: mt, qe, ape, qe_ape")
+		return CreateAIPromptResult{}, invalidf("mode must be one of: mt, qe, ape, qe_ape, comment")
 	}
 	flags.Name = in.Name
 	flags.PromptText = in.Text

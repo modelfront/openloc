@@ -27,6 +27,7 @@ func seedInvite(t *testing.T, q db.Querier, tenantID, invitedBy int64, email, ro
 		t.Fatalf("token: %v", err)
 	}
 	inv, err := q.CreateInvite(context.Background(), db.CreateInviteParams{
+		Kind:      "member",
 		TenantID:  tenantID,
 		Email:     email,
 		Role:      role,

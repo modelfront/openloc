@@ -4,15 +4,15 @@ import { render, screen, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SpellCheckDialog from './SpellCheckDialog'
 
+// Called as the single-file editor's job endpoint is: (job, ids, signal, opts).
 const mockCheck = vi.fn()
-vi.mock('../api', () => ({ checkJobSpelling: (...args: unknown[]) => mockCheck(...args) }))
 
 function renderDialog(extra: Partial<ComponentProps<typeof SpellCheckDialog>> = {}) {
   return render(
     <SpellCheckDialog
       open
       onClose={vi.fn()}
-      jobId={1}
+      check={(ids, signal, opts) => mockCheck(1, ids, signal, opts)}
       segmentIds={[10]}
       filteredIndices={[0]}
       translationBySegment={new Map([[10, { id: 100, status: 'draft' }]])}

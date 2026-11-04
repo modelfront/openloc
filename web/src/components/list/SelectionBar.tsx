@@ -6,6 +6,8 @@ import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { useStuck } from '@/hooks/useStuck'
+import { cn } from '@/lib/utils'
 
 interface Props {
   /** "3 tasks selected" — the caller words it; the bar only shows it. */
@@ -15,30 +17,43 @@ interface Props {
   busy?: boolean
   /** Test ids are `<prefix>-actions-bar`, `-selected-count`, `-clear-selection`. */
   testIdPrefix?: string
+  /** Spacing around the bar (`mb-2`). Pass it here, never on a wrapper: a
+   *  sticky element cannot leave its parent, so a wrapper stops it sticking. */
+  className?: string
   children: ReactNode
 }
 
-export function SelectionBar({ label, onClear, busy = false, testIdPrefix = 'bulk', children }: Props) {
+export function SelectionBar({ label, onClear, busy = false, testIdPrefix = 'bulk', className, children }: Props) {
+  // A sticky element sticks below its scroll area's top padding. The app
+  // shell's <main> declares that padding as `--scroll-inset-top`, and the bar
+  // sticks that far up, flush under the header, so no rows show in a strip
+  // above it; elsewhere it sticks at the edge. The outer layer is the page
+  // colour and the tint sits on it, so rows never show through. Pinned, the
+  // bar's top corners are square.
+  const [ref, stuck] = useStuck<HTMLDivElement>()
+  const corners = stuck ? 'rounded-b-lg' : 'rounded-lg'
   return (
-    <div
-      data-testid={`${testIdPrefix}-actions-bar`}
-      className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 backdrop-blur"
-    >
-      <span className="text-sm font-medium text-primary" data-testid={`${testIdPrefix}-selected-count`}>
-        {label}
-      </span>
-      <Button variant="ghost" size="icon-xs"
-        onClick={onClear}
-        disabled={busy}
-        title="Clear selection"
-        aria-label="Clear selection"
-        className="text-primary hover:text-primary"
-        data-testid={`${testIdPrefix}-clear-selection`}
+    <div ref={ref} className={cn('sticky top-[calc(var(--scroll-inset-top,0px)*-1)] z-10 bg-background', corners, className)}>
+      <div
+        data-testid={`${testIdPrefix}-actions-bar`}
+        className={cn('flex flex-wrap items-center gap-2 border border-primary/40 bg-primary/10 px-3 py-2', corners)}
       >
-        <X className="size-3.5" />
-      </Button>
-      <SelectionBarDivider />
-      {children}
+        <span className="text-sm font-medium text-primary" data-testid={`${testIdPrefix}-selected-count`}>
+          {label}
+        </span>
+        <Button variant="ghost" size="icon-xs"
+          onClick={onClear}
+          disabled={busy}
+          title="Clear selection"
+          aria-label="Clear selection"
+          className="text-primary hover:text-primary"
+          data-testid={`${testIdPrefix}-clear-selection`}
+        >
+          <X className="size-3.5" />
+        </Button>
+        <SelectionBarDivider />
+        {children}
+      </div>
     </div>
   )
 }

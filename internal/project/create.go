@@ -13,6 +13,7 @@ import (
 	"openloc/internal/auth"
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/label"
 	"openloc/internal/langcode"
 	"openloc/internal/logging"
@@ -63,6 +64,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tenantID, use
 	write := func(_ pgx.Tx, q db.Querier) error {
 		var err error
 		if project, err = createCore(ctx, q, tenantID, userID, p); err != nil {
+			return err
+		}
+		// No template: every format starts with the org's default.
+		defaults, err := filterprofile.WithOrgDefaults(ctx, q, tenantID, nil)
+		if err != nil {
+			return err
+		}
+		if err := filterprofile.SetChoices(ctx, q, tenantID, project.SettingsProfileID, defaults); err != nil {
 			return err
 		}
 		if err := requireSteps(ctx, q, project); err != nil {
@@ -358,17 +367,19 @@ func ApplyTemplate(ctx context.Context, pool database.TxBeginner, q db.Querier, 
 		TmOnUpload:     tmplProfile.TmOnUpload,
 		QaProfileID:    tmplProfile.QaProfileID,
 		// Explicit, not nil-keeps-stored: applying a template must carry ITS
-		// penalties, lookup order, auto-complete, inline-HTML and term-adding choices, not leave the project's defaults
-		// in place.
+		// penalties, lookup order, auto-complete and term-adding choices, not leave
+		// the project's defaults in place.
 		SublanguagePenaltyPct: &tmplProfile.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   &tmplProfile.NearExactPenaltyPct,
 		AutoComplete:          &tmplProfile.AutoComplete,
-		InlineHtml:            &tmplProfile.InlineHtml,
 		LinguistTerms:         &tmplProfile.LinguistTerms,
 		TmLookupOrder:         &tmplProfile.TmLookupOrder,
 	})
 	if err != nil {
 		return zero, zeroProfile, fmt.Errorf("copy template settings: %w", err)
+	}
+	if err := filterprofile.CopyChoices(ctx, txq, tmpl.SettingsProfileID, project.SettingsProfileID); err != nil {
+		return zero, zeroProfile, err
 	}
 	// The template's segmentation profile, while it suits the project's
 	// language; else the suggested one for that language. A template without a

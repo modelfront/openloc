@@ -73,7 +73,7 @@ type xmlContent struct {
 
 // buildXMLContent renders src[rng.Start:rng.End] as segment content, treating
 // every element of node's subtree that falls inside rng as inline markup.
-func buildXMLContent(src string, rng TextRange, node *xmlNode, refs referenceIndex) xmlContent {
+func buildXMLContent(src string, rng TextRange, node *xmlNode, refs referenceIndex, rules *xmlRules) xmlContent {
 	c := xmlContent{}
 	var plain, rich strings.Builder
 	tagID := 0
@@ -144,7 +144,8 @@ func buildXMLContent(src string, rng TextRange, node *xmlNode, refs referenceInd
 			// A resolvable cross-reference records WHICH segment supplies its
 			// text, so the editor can show the translated term and export can
 			// write it into the element.
-			if key := refs.referenceKey(child); key != "" {
+			placeholder := rules.isReferencePlaceholder(child)
+			if key := refs.referenceKey(child); key != "" && placeholder {
 				origin += ` ref_key="` + xmlEscapeAttr(key) + `"`
 			}
 
@@ -152,7 +153,7 @@ func buildXMLContent(src string, rng TextRange, node *xmlNode, refs referenceInd
 			// self-closing form and NOT walking into it is what keeps its
 			// generated text out of the segment — and therefore out of the
 			// word count, TM lookup and QA.
-			if child.isEmpty() || child.isReferencePlaceholder() {
+			if child.isEmpty() || placeholder {
 				fmt.Fprintf(&rich, `<x id="%d" ctype="%s"%s/>`, id, ctype, origin)
 				if child.name == "br" {
 					emitSynthetic("\n", childOwner)

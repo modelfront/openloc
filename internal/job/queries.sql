@@ -39,7 +39,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = $1
@@ -55,7 +55,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = @project_id AND j.id = ANY(@job_ids::bigint[])
@@ -71,7 +71,7 @@ SELECT j.id, j.file_id, j.target_language, j.word_count, j.status, j.current_ste
        f.name AS file_name, f.format AS file_format, f.inline_html AS file_inline_html,
        COALESCE((SELECT sum(st.segments) FROM job_translation_stats st
                  WHERE st.file_id = j.file_id AND st.target_language = j.target_language), 0)::int AS segment_count,
-       f.created_at AS file_created_at
+       f.created_at AS file_created_at, f.xlsx_layout AS file_xlsx_layout
 FROM jobs j
 JOIN files f ON f.id = j.file_id
 WHERE f.project_id = @project_id AND j.id > @cursor
@@ -434,6 +434,13 @@ SELECT EXISTS (
     SELECT 1 FROM job_step_assignments
     WHERE job_id = @job_id AND assigned_to = @user_id
 );
+
+-- name: CountJobsAssignedToUser :one
+-- Vendor access gate for a set of jobs: how many of @job_ids have a step
+-- assigned to the user. Every job is assigned when it equals their number.
+-- Internal: the caller resolved @job_ids tenant-scoped (editor.ResolveScope).
+SELECT COUNT(DISTINCT job_id)::int FROM job_step_assignments
+WHERE job_id = ANY(@job_ids::bigint[]) AND assigned_to = @user_id;
 
 -- name: IsUserAssignedToFile :one
 -- Vendor access gate for the file's language-neutral routes (source segments,

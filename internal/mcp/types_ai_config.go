@@ -5,7 +5,7 @@ package mcp
 // runs the engine, then a workflow that orders the steps.
 
 type ListAIPromptsIn struct {
-	Purpose string `json:"purpose,omitempty" jsonschema:"optional filter: mt for machine-translation prompts, qe_ape for quality-estimation and post-editing prompts"`
+	Purpose string `json:"purpose,omitempty" jsonschema:"optional filter: mt for machine-translation prompts, qe_ape for review prompts (quality estimation, post-editing and comment-only)"`
 }
 
 // AIPrompt is one system prompt. PromptText is truncated — a caller picking a
@@ -121,7 +121,7 @@ type WorkflowList struct {
 
 type CreateAIPromptIn struct {
 	Name string `json:"name" jsonschema:"a short name for the prompt, unique in the organization"`
-	Mode string `json:"mode" jsonschema:"what the model returns: mt (a translation), qe (a verdict and score), ape (a corrected translation), or qe_ape (both)"`
+	Mode string `json:"mode" jsonschema:"what the model returns: mt (a translation), qe (a verdict and score), ape (a corrected translation), qe_ape (both), or comment (a remark for the linguist only; the segment is never changed)"`
 	// The shape of the reply is the platform's and is appended at send time; what
 	// each field MEANS is instruction text, so it belongs here. A prompt written
 	// without it still parses — the field names reach the model from the schema —

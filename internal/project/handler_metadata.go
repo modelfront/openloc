@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -73,6 +74,12 @@ var invalidStatusMessage = func() string {
 	return "invalid status (must be " + strings.Join(names, " / ") + ")"
 }()
 
+// deadlineBands are the project list's ?deadline= values, the deadline chip's
+// bands (ListProjectsFiltered says where each one starts and ends).
+var deadlineBands = []string{"overdue", "approaching", "soon", "far", "none"}
+
+var invalidDeadlineMessage = "invalid deadline (must be " + strings.Join(deadlineBands, " / ") + ")"
+
 // projectListMaxLimit caps the project list page size. It is also
 // the default when no ?limit is sent. Bounded to prevent OOM from a runaway client.
 const projectListMaxLimit int32 = 10000
@@ -122,6 +129,8 @@ type ListFilters struct {
 	Target     string
 	CreatedBy  int64
 	Q          string
+	// Deadline keeps the projects in any of these deadline bands.
+	Deadline []string
 }
 
 // ListParams builds the project list query from filters, validating the status
@@ -157,15 +166,28 @@ func ListParams(tenantID int64, page httputil.CursorParams, f ListFilters) (db.L
 	if qs := strings.TrimSpace(f.Q); qs != "" {
 		params.Q = &qs
 	}
+	for _, b := range f.Deadline {
+		b = strings.TrimSpace(b)
+		if !slices.Contains(deadlineBands, b) {
+			return params, errors.New(invalidDeadlineMessage)
+		}
+		if !slices.Contains(params.DeadlineBands, b) {
+			params.DeadlineBands = append(params.DeadlineBands, b)
+		}
+	}
 	return params, nil
 }
 
 // ListFilterParams reads the project list's optional filters (status,
-// customer_id, source, target, created_by, q) from the query string into
-// ListParams. The error is a user-facing 400 message.
+// customer_id, source, target, created_by, q, and deadline as a
+// comma-separated list of bands) from the query string into ListParams. The
+// error is a user-facing 400 message.
 func ListFilterParams(r *http.Request, tenantID int64, page httputil.CursorParams) (db.ListProjectsFilteredParams, error) {
 	q := r.URL.Query()
 	f := ListFilters{Status: q.Get("status"), Source: q.Get("source"), Target: q.Get("target"), Q: q.Get("q")}
+	if d := strings.TrimSpace(q.Get("deadline")); d != "" {
+		f.Deadline = strings.Split(d, ",")
+	}
 	var err error
 	if f.CustomerID, err = positiveID(q.Get("customer_id"), "customer_id"); err != nil {
 		return db.ListProjectsFilteredParams{}, err

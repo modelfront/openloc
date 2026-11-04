@@ -152,8 +152,13 @@ export default function ProjectDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAnalysis.v2(pid) })
     setPollUntil(Date.now() + 10000)
   })
-  const startUpload = useCallback((files: File[], analyze = false, layouts?: ReadonlyMap<File, LayoutAnswer>) => {
-    startQueue(pid, files, { analyze, layouts })
+  const startUpload = useCallback((
+    files: File[],
+    analyze = false,
+    layouts?: ReadonlyMap<File, LayoutAnswer>,
+    filterProfiles?: ReadonlyMap<File, number>,
+  ) => {
+    startQueue(pid, files, { analyze, layouts, filterProfiles })
   }, [pid, startQueue])
 
   // Completed projects must not accept new files. The button is
@@ -419,11 +424,12 @@ export default function ProjectDetail() {
         <UploadConfirmDialog
           projectId={pid}
           files={pendingFiles}
+          filterChoices={projectSettings?.project.filter_profiles}
           onOpenChange={(next) => { if (!next) setPendingFiles(null) }}
-          onConfirm={(analyze, layouts) => {
+          onConfirm={(analyze, layouts, filterProfiles) => {
             const files = pendingFiles
             setPendingFiles(null)
-            if (files) startUpload(files, analyze, layouts)
+            if (files) startUpload(files, analyze, layouts, filterProfiles)
           }}
         />
       )}

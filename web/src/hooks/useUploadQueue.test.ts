@@ -234,5 +234,18 @@ describe('useUploadQueue', () => {
       await waitFor(() => expect(api.uploadFile).toHaveBeenCalledOnce())
       expect(hook.current.layoutQuestion).toBeNull()
     })
+
+    it('reads and uploads a file with the filter profile picked for it, and only that file', async () => {
+      const picked = xlsx('picked.xlsx')
+      api.inspectXLSX.mockResolvedValue({ ...inspection, bilingual: true, suggested_layout: undefined })
+      api.uploadFile.mockResolvedValue(result('x'))
+      const { result: hook } = renderHook(() => useUploadQueue())
+
+      act(() => { hook.current.start(7, [picked, xlsx('other.xlsx')], { filterProfiles: new Map([[picked, 60]]) }) })
+      await waitFor(() => expect(api.uploadFile).toHaveBeenCalledTimes(2))
+      expect(api.inspectXLSX.mock.calls.map(c => c[2])).toEqual([60, undefined])
+      expect(api.uploadFile.mock.calls[0][3]).toMatchObject({ filterProfileId: 60 })
+      expect(api.uploadFile.mock.calls[1][3].filterProfileId).toBeUndefined()
+    })
   })
 })

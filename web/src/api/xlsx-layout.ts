@@ -1,10 +1,12 @@
 import { request } from './request'
 import type { FileRecord } from './projects'
+import type { XLSXTargetColumn } from './filter-profiles'
 
 /**
  * The column layout of an Excel workbook without language codes in row 1:
  * the sheets to translate and, per sheet, the columns that hold the text.
- * Translations go back into their own cells. Mirrors
+ * Translations go back into their own cells, or into each language's column
+ * on a sheet with target columns. Mirrors
  * `internal/parser/xlsx_layout.go`.
  */
 export interface XLSXSheetLayout {
@@ -13,6 +15,8 @@ export interface XLSXSheetLayout {
   header_row?: boolean
   /** Letters of the columns to translate; absent or empty for every text cell of the sheet. */
   columns?: string[]
+  /** Each target language's column; with them, `columns` holds the one source column. */
+  target_columns?: XLSXTargetColumn[]
 }
 
 export interface XLSXLayout {
@@ -39,9 +43,11 @@ export interface XLSXInspection {
   suggested_layout?: XLSXLayout
 }
 
-/** Reads an .xlsx without storing it. */
-export const inspectXLSX = (projectId: number, file: File) => {
+/** Reads an .xlsx without storing it. With a filter profile, the suggestion
+ *  starts from that profile's Excel rules instead of the project's. */
+export const inspectXLSX = (projectId: number, file: File, filterProfileId?: number) => {
   const form = new FormData()
+  if (filterProfileId !== undefined) form.append('filter_profile_id', String(filterProfileId))
   form.append('file', file)
   return request<{ data: XLSXInspection }>(`/projects/${projectId}/files/inspect`, { method: 'POST', body: form })
     .then(r => r.data)

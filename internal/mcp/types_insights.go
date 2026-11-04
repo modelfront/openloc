@@ -227,16 +227,19 @@ type MeProfile struct {
 type ListInvitesIn struct{}
 
 // InviteView is an invite without its secret link token. Status is pending,
-// accepted or expired.
+// accepted or expired. Kind vendor_org is an invite to set up a vendor org,
+// named VendorOrgName, as its admin; member is an invite into this org.
 type InviteView struct {
-	ID            int64  `json:"id"`
-	Email         string `json:"email"`
-	Role          string `json:"role"`
-	Status        string `json:"status"`
-	InvitedByName string `json:"invited_by_name"`
-	CreatedAt     string `json:"created_at"`
-	ExpiresAt     string `json:"expires_at"`
-	AcceptedAt    string `json:"accepted_at"`
+	ID            int64   `json:"id"`
+	Email         string  `json:"email"`
+	Role          string  `json:"role"`
+	Kind          string  `json:"kind"`
+	VendorOrgName *string `json:"vendor_org_name,omitempty"`
+	Status        string  `json:"status"`
+	InvitedByName string  `json:"invited_by_name"`
+	CreatedAt     string  `json:"created_at"`
+	ExpiresAt     string  `json:"expires_at"`
+	AcceptedAt    string  `json:"accepted_at"`
 }
 
 type InviteList struct {

@@ -37,3 +37,20 @@ describe('loadedVersion', () => {
     expect(loadedVersion(qc, 8, 11)).toBeUndefined()
   })
 })
+
+describe('joinRefusal in a multi-file editor', () => {
+  it('refuses rows of two files', () => {
+    const scopeRows = [{ joinsNext: true, fileIdx: 0 }, { joinsNext: false, fileIdx: 0 }, { joinsNext: false, fileIdx: 1 }]
+    expect(joinRefusal(scopeRows, [1, 2])).toBe('Only rows of one file can be joined.')
+    expect(joinRefusal(scopeRows, [0, 1])).toBeNull()
+  })
+})
+
+describe('loadedVersion for a multi-file editor id', () => {
+  it('reads the scope\'s row cache', () => {
+    const qc = new QueryClient()
+    qc.setQueryData([...queryKeys.job.editorRows('5:7,8'), 0, 1], [{ segment: { id: 1 }, translation: { id: 10, updated_at: 'v1' } }])
+    expect(loadedVersion(qc, '5:7,8', 10)).toBe('v1')
+    expect(loadedVersion(qc, 7, 10)).toBeUndefined()
+  })
+})

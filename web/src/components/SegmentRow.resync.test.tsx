@@ -35,6 +35,7 @@ vi.mock('sonner', () => ({
 import { ApiError } from '../api/request'
 import { editorText, renderSegmentRow, rowTranslation } from '../test/segment-row'
 import type { Translation } from '../api'
+import { queryKeys } from '../lib/query-keys'
 
 const v1 = rowTranslation({ id: 701, active_text: 'first approval', status: 'approved', updated_at: '2026-10-01T10:00:00Z' })
 const theirs = { ...v1, active_text: 'their text', updated_at: '2026-10-01T10:00:09Z' }
@@ -169,12 +170,16 @@ describe('SegmentRow — a server change while the row is active', () => {
     const cleared = { ...v1, active_text: null, status: 'needs_review' as const, edited_by: null, updated_at: '2026-10-01T10:00:07Z' }
     mockClear.mockResolvedValue({ translation: cleared, taskReopened: false })
     const row = renderSegmentRow({ translation: v1, inClearWindow: true })
+    const rowsKey = queryKeys.job.editorRows(7)
+    row.queryClient.setQueryData(rowsKey, [{ translation: v1 }])
     await waitFor(() => expect(editorText()).toBe('first approval'))
 
     act(() => row.insertRef.current.replaceAll!(''))
     await act(() => row.flushDraftRef.current())
     expect(mockClear).toHaveBeenCalledTimes(1)
     expect(mockSaveDraft).not.toHaveBeenCalled()
+    // The cached row is the cleared one at once, not after the job refetch.
+    expect(row.queryClient.getQueryData<{ translation: Translation }[]>(rowsKey)?.[0].translation.active_text).toBeNull()
 
     act(() => row.insertRef.current.replaceAll!('neu'))
     await waitFor(() => expect(editorText()).toBe('neu'))

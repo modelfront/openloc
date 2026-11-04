@@ -31,6 +31,9 @@ export interface UploadBatchOptions {
   analyze?: boolean
   /** Answers already given for some of the files: those are not asked. */
   layouts?: ReadonlyMap<File, LayoutAnswer>
+  /** The filter profile picked for some of the files, instead of the
+   *  project's for their format: their .xlsx is read, and they upload, with it. */
+  filterProfiles?: ReadonlyMap<File, number>
 }
 
 /**
@@ -50,6 +53,7 @@ export function useUploadQueue(onUploaded?: (projectId: number, file: File, resu
   const [layoutQuestion, setLayoutQuestion] = useState<LayoutQuestion | null>(null)
   const answerRef = useRef<((answer: LayoutAnswer) => void) | null>(null)
   const answeredRef = useRef(new Map<File, LayoutAnswer>())
+  const filterRef = useRef(new Map<File, number>())
   const onUploadedRef = useRef(onUploaded)
   useEffect(() => {
     onUploadedRef.current = onUploaded
@@ -58,7 +62,7 @@ export function useUploadQueue(onUploaded?: (projectId: number, file: File, resu
   // A workbook the server refuses is left to the upload, which reports the
   // problem in its own toast. Any other failed read is tried again, then the
   // file is skipped: it never uploads without the uploader's columns.
-  const askLayout = useCallback(async (projectId: number, file: File): Promise<LayoutAnswer> => {
+  const askLayout = useCallback(async (projectId: number, file: File, filterProfileId: number | undefined): Promise<LayoutAnswer> => {
     if (!isXLSXFile(file)) return null
     const given = answeredRef.current.get(file)
     if (given !== undefined) {
@@ -68,7 +72,7 @@ export function useUploadQueue(onUploaded?: (projectId: number, file: File, resu
     let inspection: XLSXInspection | undefined
     for (let attempt = 0; inspection === undefined; attempt++) {
       try {
-        inspection = await inspectXLSX(projectId, file)
+        inspection = await inspectXLSX(projectId, file, filterProfileId)
       } catch (err) {
         if (inspectRefused(err)) return null
         if (attempt >= INSPECT_RETRIES) {
@@ -105,11 +109,13 @@ export function useUploadQueue(onUploaded?: (projectId: number, file: File, resu
       const projectId = projectIdRef.current
       setProgress(prev => prev ? { ...prev, current: prev.current + 1, pct: 0, fileName: file.name } : null)
       try {
-        const answer = await askLayout(projectId, file)
+        const filterProfileId = filterRef.current.get(file)
+        filterRef.current.delete(file)
+        const answer = await askLayout(projectId, file, filterProfileId)
         if (answer === 'skip') continue
         const result = await uploadFile(projectId, file, pct => {
           setProgress(prev => prev ? { ...prev, pct } : null)
-        }, { analyze: optionsRef.current.analyze, xlsxLayout: answer ?? undefined })
+        }, { analyze: optionsRef.current.analyze, xlsxLayout: answer ?? undefined, filterProfileId })
         onUploadedRef.current?.(projectId, file, result)
         toast.success(`Uploaded ${file.name}`)
         for (const w of result.warnings ?? []) {
@@ -128,6 +134,7 @@ export function useUploadQueue(onUploaded?: (projectId: number, file: File, resu
     projectIdRef.current = projectId
     optionsRef.current = options
     options.layouts?.forEach((answer, file) => answeredRef.current.set(file, answer))
+    options.filterProfiles?.forEach((id, file) => filterRef.current.set(file, id))
     queueRef.current.push(...files)
     if (running) {
       setProgress(prev => prev ? { ...prev, total: prev.total + files.length } : null)

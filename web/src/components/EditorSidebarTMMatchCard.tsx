@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ComponentProps } from 'react'
 import type { TMMatch } from '../api'
 import type { PanelInsert } from '../lib/panel-insert'
 import { tmPenaltyLineText, tmScoreBreakdown, type TMScoreBreakdown } from '../lib/tm-penalties'
@@ -29,8 +29,6 @@ export function EditorSidebarTMMatchCard({ match: m, index: i, stale, sourceText
   const [focused, setFocused] = useState(false)
   const descriptionId = useId()
   const pct = m.percent
-  // Same colour as the grid's Match chip: exact is green, fuzzy yellow.
-  const color = historyKindColor('tm', pct)
   const breakdown = tmScoreBreakdown(m)
   const stamps = tmEntryStamps(m)
   const description = [
@@ -39,16 +37,10 @@ export function EditorSidebarTMMatchCard({ match: m, index: i, stale, sourceText
   ].join('; ')
 
   return (
-    // eslint-disable-next-line no-restricted-syntax -- whole-card target, not an action button
-    <button
-      type="button"
+    <MatchCardButton
+      percent={pct}
+      stale={stale}
       data-testid="tm-match-card"
-      className={cn(
-        'block w-full text-left rounded border px-2 py-1.5',
-        chipSurfaceClass(color),
-        chipTextClass(color),
-        stale ? 'cursor-default' : ['cursor-pointer hover:ring-1 hover:ring-ring', chipSurfaceHoverClass(color)],
-      )}
       aria-describedby={descriptionId}
       // Insert the match itself (not its text) so the editor can parse
       // tags into chips and remap them onto the current source.
@@ -71,16 +63,55 @@ export function EditorSidebarTMMatchCard({ match: m, index: i, stale, sourceText
         <span className="text-[9px] text-gray-400 ml-auto shrink-0 truncate max-w-[80px]">{m.tm_name}</span>
       </span>
       <span id={descriptionId} hidden>{description}</span>
-      <span className={`block text-[11px] text-gray-500 dark:text-gray-400 ${fullText ? 'whitespace-pre-wrap break-words' : 'truncate'}`}>
+      <MatchCardTexts match={m} stale={stale} sourceText={sourceText} fullText={fullText} />
+      <MatchStamps stamps={stamps} open={focused} />
+    </MatchCardButton>
+  )
+}
+
+/**
+ * A match card's button in the Resources panel (TM and internal matches): in
+ * the colour of the grid's Match chip for its percent (exact green, fuzzy
+ * yellow), dimmed and inert while it describes another segment.
+ */
+export function MatchCardButton({ percent, stale, className, ...props }: ComponentProps<'button'> & { percent: number; stale: boolean }) {
+  const color = historyKindColor('tm', percent)
+  return (
+    // eslint-disable-next-line no-restricted-syntax -- whole-card target, not an action button
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        'block w-full text-left rounded border px-2 py-1.5',
+        chipSurfaceClass(color),
+        chipTextClass(color),
+        stale ? 'cursor-default' : ['cursor-pointer hover:ring-1 hover:ring-ring', chipSurfaceHoverClass(color)],
+        className,
+      )}
+    />
+  )
+}
+
+/** A match's source line, its difference with the segment's source marked,
+ *  and its target line; one line each unless `fullText`. */
+export function MatchCardTexts({ match: m, stale, sourceText, fullText = false }: {
+  match: { source_text: string; source_rich_text?: string | null; target_text: string; target_rich_text?: string | null }
+  stale: boolean
+  sourceText: string
+  fullText?: boolean
+}) {
+  const wrap = fullText ? 'whitespace-pre-wrap break-words' : 'truncate'
+  return (
+    <>
+      <span className={`block text-[11px] text-gray-500 dark:text-gray-400 ${wrap}`}>
         {/* Stale rows describe another segment, so there is nothing
             meaningful to diff them against. */}
         <SegmentText text={m.source_text} richText={m.source_rich_text} diffAgainst={stale ? null : sourceText} />
       </span>
-      <span className={`block text-[11px] font-medium ${fullText ? 'whitespace-pre-wrap break-words' : 'truncate'}`}>
+      <span className={`block text-[11px] font-medium ${wrap}`}>
         <SegmentText text={m.target_text} richText={m.target_rich_text} />
       </span>
-      <MatchStamps stamps={stamps} open={focused} />
-    </button>
+    </>
   )
 }
 

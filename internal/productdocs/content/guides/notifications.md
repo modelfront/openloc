@@ -3,7 +3,7 @@ title: "Notifications"
 summary: "The bell, real-time updates, email notifications and how to mute what you do not need."
 order: 110
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-11-02
 sources:
   - web/src/components/NotificationBell.tsx
   - web/src/hooks/useNotificationStream.ts
@@ -15,6 +15,7 @@ sources:
   - web/src/components/project/BulkJobActionsBar.tsx
   - web/src/components/project/task-matrix/**
   - internal/issues/notify.go
+  - internal/api/vendor_admin_notice.go
 related:
   - guides/workflows-and-tasks
   - reference/settings
@@ -68,6 +69,8 @@ When the support team replies to or changes the status of an issue you reported,
 
 When the support team resolves an issue, the organization's owners, admins and project managers also get an **Issue resolved** notification, with the issue title. It appears only under the bell: no email is sent, and neither **Notification rules** nor your own Settings can switch it off. The person who reported the issue gets the **Issue updates** notification and email instead, not both.
 
+When one of your vendor organizations makes someone an admin, your owners and admins get a notification with the vendor's name and the new admin's name and email. Clicking it opens the **Vendors** list on the **Members** tab. Like **Issue resolved**, it appears only under the bell and cannot be switched off.
+
 ## Get notifications by email
 
 Every workflow event above is also sent as an email to the address shown in your personal Settings, unless you or your organization switched it off (see the next two sections). The email subject is the project name, for example "[OpenLoc] Spring catalog", so all emails about one project stay in one conversation in your inbox. The file, the language and what happened are in the email itself. Emails about an issue, to you as the reporter or to the support team, all use the subject "Issue #<id>: <title>", so your mail app keeps one issue's emails in one conversation. The bell keeps its own wording, such as "Workflow completed: brochure.docx (de)" or "Update on your issue: …".
@@ -97,6 +100,8 @@ Owners and admins can turn off a notification type for everyone. This is a maste
 4. The change is saved right away and applies to every member. If the current rules cannot be loaded, the card shows **Retry** instead of the checkboxes.
 
 Members can still mute their own emails for the events you leave on. They cannot turn on an event you switched off here. **Issue updates** are not on this list: they concern each member's own reports.
+
+A vendor organization has no **Settings** tab, so it has no notification rules: all four events are always on there, and each member mutes their own emails in their personal Settings.
 
 ## Stop deadline reminders for one job
 

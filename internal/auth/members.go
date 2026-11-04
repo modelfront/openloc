@@ -36,6 +36,29 @@ var assignableRoles = map[string]bool{
 	RoleOwner: true, RoleAdmin: true, RoleProjectManager: true, RoleLinguist: true,
 }
 
+// vendorAssignableRoles is assignableRoles without owner: a vendor org has none.
+var vendorAssignableRoles = map[string]bool{
+	RoleAdmin: true, RoleProjectManager: true, RoleLinguist: true,
+}
+
+// checkAssignableRole reports whether role exists in the org's kind.
+func checkAssignableRole(ctx context.Context, q db.Querier, tenantID int64, role string) error {
+	tenant, err := q.GetTenant(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("get tenant: %w", err)
+	}
+	if tenant.Kind == TenantKindVendor {
+		if !vendorAssignableRoles[role] {
+			return MemberRuleError{http.StatusBadRequest, "invalid role: a vendor organization has admins, project managers and linguists"}
+		}
+		return nil
+	}
+	if !assignableRoles[role] {
+		return MemberRuleError{http.StatusBadRequest, "invalid role"}
+	}
+	return nil
+}
+
 // MemberActor is who asks for a membership change.
 type MemberActor struct {
 	TenantID int64
@@ -56,8 +79,8 @@ func CheckRoleChange(ctx context.Context, q db.Querier, actor MemberActor, userI
 	if err != nil {
 		return db.Membership{}, err
 	}
-	if !assignableRoles[role] {
-		return db.Membership{}, MemberRuleError{http.StatusBadRequest, "invalid role"}
+	if err := checkAssignableRole(ctx, q, actor.TenantID, role); err != nil {
+		return db.Membership{}, err
 	}
 	// Nobody grants a role above their own or touches a member who outranks
 	// them: owner-only capabilities could otherwise be laundered through a

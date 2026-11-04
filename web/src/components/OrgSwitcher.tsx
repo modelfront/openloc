@@ -7,6 +7,7 @@ import { demoLeaveLabel, goToDemo, leavePlayground } from '../lib/demo'
 import { queryKeys } from '../lib/query-keys'
 import { useAppConfig } from '../pages/docs/DocsHost'
 import { headerControlHover } from './layout/header-styles'
+import { VendorOrgChip } from './ui/chip-presets'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,6 +66,7 @@ export function OrgSwitcher() {
     <>
       <Building2 className="w-4 h-4 shrink-0" />
       <span className="max-md:min-w-0 max-w-[12rem] truncate">{name}</span>
+      {me?.tenant_kind === 'vendor' && <VendorOrgChip />}
     </>
   )
 
@@ -98,6 +100,7 @@ export function OrgSwitcher() {
           >
             <Building2 className="w-4 h-4" />
             <span className="flex-1">{org.tenant_name}</span>
+            {org.tenant_kind === 'vendor' && <VendorOrgChip />}
             {org.tenant_id === currentId && <Check className="w-4 h-4 text-gray-500" />}
           </DropdownMenuItem>
         ))}

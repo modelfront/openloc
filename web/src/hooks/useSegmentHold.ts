@@ -5,7 +5,9 @@ import { ApiError } from '../api/request'
 import { queryKeys } from '../lib/query-keys'
 import { isSegmentHeldError } from '../lib/save-conflict'
 import { applyAcquiredRow } from '../lib/segment-save'
+import type { EditorId } from '../lib/editor-scope'
 import { useHoldStream } from './useHoldStream'
+import { useLatestRef } from './useLatestRef'
 
 /** Renewal interval; well inside the server's 90 s hold lifetime. */
 export const HOLD_RENEW_MS = 20_000
@@ -58,7 +60,11 @@ function holderName(err: unknown): string {
  * `streamLive` is true while the hold stream is connected.
  */
 export function useSegmentHold(args: {
+  /** The job of the row a hold is taken on. */
   jobId: number
+  /** Whose holds the editor shows: the job's, or a multi-file editor's
+   *  (lib/editor-scope). Defaults to jobId. */
+  editorId?: EditorId
   /** The active row's translation; null when no row is active. */
   translationId: number | null
   /** The user may edit this row now: an editable task and not locked. */
@@ -67,6 +73,11 @@ export function useSegmentHold(args: {
   onIdle: () => void
 }): { heldByOthers: Map<number, string>; streamLive: boolean } {
   const { jobId, translationId, canHold, currentUserId, onIdle } = args
+  const editorId = args.editorId ?? jobId
+  // Read at call time: in a multi-file editor the open row's job changes with
+  // the row, and the callbacks below must stay the same, or the unmount
+  // cleanup runs on every file switch and the new row is held a renewal late.
+  const jobIdRef = useLatestRef(jobId)
   const queryClient = useQueryClient()
   const [tabId] = useState(newTabId)
   const wanted = canHold ? translationId : null
@@ -89,8 +100,8 @@ export function useSegmentHold(args: {
   const syncRef = useRef<() => Promise<void>>(async () => {})
 
   const release = useCallback((id: number, opts?: { keepalive: boolean }) =>
-    (opts ? releaseHold(jobId, id, tabId, opts) : releaseHold(jobId, id, tabId))
-      .catch(err => console.warn('segment hold release failed:', err)), [jobId, tabId])
+    (opts ? releaseHold(jobIdRef.current, id, tabId, opts) : releaseHold(jobIdRef.current, id, tabId))
+      .catch(err => console.warn('segment hold release failed:', err)), [jobIdRef, tabId])
 
   const sync = useCallback(async () => {
     if (busyRef.current) {
@@ -104,7 +115,7 @@ export function useSegmentHold(args: {
         const want = suspendedRef.current ? null : wantedRef.current
         if (want != null) {
           try {
-            const got = await acquireHold(jobId, want, tabId)
+            const got = await acquireHold(jobIdRef.current, want, tabId)
             if (suspendedRef.current) {
               await release(want, { keepalive: true })
               continue
@@ -112,7 +123,7 @@ export function useSegmentHold(args: {
             heldRef.current = want
             retryDelayRef.current = HOLD_RETRY_MS
             setBlocked(b => (b ? null : b))
-            applyAcquiredRow(queryClient, jobId, got.translation)
+            applyAcquiredRow(queryClient, jobIdRef.current, got.translation)
           } catch (err) {
             if (isTransient(err)) {
               // The server may still hold the tab's segment, so a close still
@@ -143,7 +154,7 @@ export function useSegmentHold(args: {
     } finally {
       busyRef.current = false
     }
-  }, [jobId, tabId, queryClient, release])
+  }, [jobIdRef, tabId, queryClient, release])
 
   useEffect(() => { syncRef.current = sync }, [sync])
 
@@ -210,12 +221,12 @@ export function useSegmentHold(args: {
     }
   }, [release])
 
-  const streamLive = useHoldStream(jobId)
+  const streamLive = useHoldStream(editorId)
   const { data: holds, dataUpdatedAt } = useQuery({
-    queryKey: queryKeys.job.holds(jobId),
-    queryFn: () => listHolds(jobId),
+    queryKey: queryKeys.job.holds(editorId),
+    queryFn: () => listHolds(editorId),
     refetchInterval: streamLive ? HOLD_POLL_LIVE_MS : HOLD_POLL_MS,
-    enabled: jobId > 0,
+    enabled: editorId !== 0,
   })
 
   // Blocked, and a new poll no longer shows anyone else on that segment: take

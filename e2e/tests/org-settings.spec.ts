@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { authHeaders, inviteMember, login, pickComboboxValue, signInWithToken } from "./helpers";
+import { authHeaders, inviteMember, login, openInviteDialog, pickComboboxValue, signInWithToken } from "./helpers";
 import { emailedLink } from "./outbox";
 
 const API = "";
@@ -9,7 +9,13 @@ test.describe("Org Settings", () => {
   // afterEach rather than the test's finally: the hook has its own time
   // budget, so a slow test body cannot leave the member behind.
   let createdMember: { userId: number; ownerHeaders: Record<string, string> } | undefined;
+  // An invite a test created, revoked after it the same way.
+  let createdInvite: { id: number; headers: Record<string, string> } | undefined;
   test.afterEach(async ({ request }) => {
+    if (createdInvite) {
+      await request.delete(`${API}/api/invites/${createdInvite.id}`, { headers: createdInvite.headers }).catch(() => {});
+      createdInvite = undefined;
+    }
     if (!createdMember) return;
     await request.delete(`${API}/api/members/${createdMember.userId}`, { headers: createdMember.ownerHeaders }).catch(() => {});
     createdMember = undefined;
@@ -63,20 +69,20 @@ test.describe("Org Settings", () => {
     }
   });
 
-  // Owners and admins get all three tabs; a project manager reaches only
-  // Vendors — from the same account-menu entry — and is sent there from the
-  // other two addresses.
-  test("the Organization page has Members, Settings and Vendors tabs", async ({ page }) => {
+  // Owners and admins invite team members and vendors from the Members tab.
+  test("the Organization page has Members and Settings tabs", async ({ page }) => {
     const tabs = page.getByRole("navigation", { name: "Section" });
-    await expect(tabs.getByRole("link")).toHaveText(["Members", "Settings", "Vendors"]);
+    await expect(tabs.getByRole("link")).toHaveText(["Members", "Settings"]);
     await expect(page).toHaveURL(/\/org$/);
-    await tabs.getByRole("link", { name: "Vendors" }).click();
-    await expect(page).toHaveURL(/\/org\/vendors$/);
+    await openInviteDialog(page, "member-invite");
+    await expect(page.getByTestId("member-invite-email")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await openInviteDialog(page, "vendor-invite");
     await expect(page.getByTestId("vendor-invite-email")).toBeVisible();
   });
 
-  test("a project manager sees only the Vendors tab", async ({ page }) => {
-    // Six full page loads — sign-in, then each redirect checked from a fresh
+  test("a project manager has no Organization page", async ({ page }) => {
+    // Five full page loads — sign-in, then each redirect checked from a fresh
     // load — which is more than the default budget under a busy run.
     test.slow();
     const email = `pm-org-${Date.now()}@test.com`;
@@ -84,33 +90,30 @@ test.describe("Org Settings", () => {
     const pm = await inviteMember(page, email);
     createdMember = { userId: pm.userId, ownerHeaders };
     await signInWithToken(page, pm.token);
-    await page.goto("/");
+    await page.goto("/projects");
     await page.getByRole("button", { name: /account/i }).click();
-    await page.getByText(/organization settings/i).click();
-    await expect(page).toHaveURL(/\/org\/vendors$/);
-    await expect(page.getByRole("heading", { name: "Organization" })).toBeVisible();
-    await expect(page.getByTestId("vendor-invite-email")).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Section" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.getByText(/organization settings/i)).toHaveCount(0);
 
-    for (const path of ["/org", "/org/settings", "/vendors"]) {
+    for (const path of ["/org", "/org/settings", "/org/vendors", "/vendors"]) {
       await page.goto(path);
-      await expect(page, `${path} sends a project manager to Vendors`).toHaveURL(/\/org\/vendors$/);
+      await expect(page, `${path} sends a project manager to Projects`).toHaveURL(/\/projects$/);
     }
   });
 
-  test("members list shows role dropdown", async ({ page }) => {
-    await expect(page.getByText(/members/i).first()).toBeVisible();
+  test("a member row opens the member dialog with the role picker", async ({ page }) => {
+    // The row only shows the role; it is changed in the dialog.
+    const ownerRow = page.locator('[data-testid^="member-row-"]').first();
+    await expect(ownerRow).toBeVisible();
+    await expect(ownerRow.locator('[data-slot="combobox-trigger"]')).toHaveCount(0);
 
-    // Should have at least one member with a role picker (combobox).
-    const roleTrigger = page
-      .locator("section")
-      .filter({ hasText: /members/i })
-      .locator('[data-slot="combobox-trigger"]')
-      .first();
-    await expect(roleTrigger).toBeVisible();
+    await ownerRow.click();
+    const dialog = page.getByTestId("member-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("pair-row-0")).toBeVisible();
 
-    // Opening it reveals the four role options.
-    await roleTrigger.click();
+    // Opening the picker reveals the four role options.
+    await dialog.getByTestId("member-role").click();
     const popover = page.locator('[data-slot="popover-content"]');
     await expect(popover.getByRole("option")).toHaveCount(4); // owner, admin, project_manager, linguist
   });
@@ -131,6 +134,8 @@ test.describe("Org Settings", () => {
     await page.getByRole("button", { name: /account/i }).click();
     await page.getByText(/organization settings/i).click();
 
+    // The list is paged, so find the new member by email first.
+    await page.getByTestId("member-search").fill(memberEmail);
     // Scope by the new member's row testid: a text-filtered ancestor also
     // contains the owner's row, and changing the owner's role is rejected.
     const newMemberRow = page.getByTestId(`member-row-${memberUserId}`);
@@ -138,25 +143,30 @@ test.describe("Org Settings", () => {
       newMemberRow,
       "newly invited member row should be visible",
     ).toBeVisible({ timeout: 5000 });
-    const roleTrigger = newMemberRow.getByTestId(`member-role-${memberUserId}`);
-    await expect(roleTrigger, "role picker for new member").toBeVisible({ timeout: 3000 });
+    const roleChip = newMemberRow.getByTestId(`member-role-${memberUserId}`);
+    await expect(roleChip, "role chip for new member").toHaveText("Project manager");
 
-    // Invite created them as project_manager; switch to linguist (label
-    // "Linguist" so the toContainText check below matches the value).
+    // Invite created them as project_manager; switch to linguist in the dialog.
     const newRole = "linguist";
-
-    await pickComboboxValue(page, `member-role-${memberUserId}`, newRole);
+    await newMemberRow.click();
+    const dialog = page.getByTestId("member-dialog");
+    await expect(dialog).toBeVisible();
+    await pickComboboxValue(page, "member-role", newRole);
+    await dialog.getByTestId("member-save").click();
 
     // Downgrading an existing member to linguist prompts a confirmation that
     // explains they'll be added to the Vendors list. Confirm to proceed.
     const confirm = page.locator('[data-slot="alert-dialog-content"]');
     await expect(confirm).toBeVisible({ timeout: 3000 });
-    await expect(confirm).toContainText(/vendors list/i);
+    await expect(confirm).toContainText(/only the tasks assigned to them/i);
+    const saved = page.waitForResponse(r => r.url().includes(`/api/members/${memberUserId}/role`) && r.request().method() === "PUT");
     await confirm.getByRole("button", { name: /change to linguist/i }).click();
+    expect((await saved).ok(), "role change request should succeed").toBe(true);
 
-    // OBSERVABLE OUTCOME: toast confirms the role change AND the picker reflects it
+    // OBSERVABLE OUTCOME: toast confirms the role change, the dialog closes and the row's chip reflects it
     await expect(page.getByText(/is now/i).first()).toBeVisible({ timeout: 5000 });
-    await expect(roleTrigger, `picker should show new role "${newRole}"`).toContainText(new RegExp(newRole, "i"));
+    await expect(dialog).toHaveCount(0);
+    await expect(roleChip, `row should show new role "${newRole}"`).toHaveText("Linguist");
 
     // Round-trip via API to confirm the change actually persisted, not just the UI.
     const verifyRes = await page.request.get(`${API}/api/members`, { headers: ownerHeaders });
@@ -171,27 +181,29 @@ test.describe("Org Settings", () => {
   test("Resend emails a new invite link from the pending invites list", async ({ page }) => {
     const headers = await authHeaders(page);
     const email = `org-resend-${Date.now()}@test.com`;
-    let inviteId: number | undefined;
 
-    try {
-      const res = await page.request.post(`${API}/api/invites`, {
-        headers,
-        data: { email, role: "project_manager" },
-      });
-      expect(res.status(), `invite: ${await res.text()}`).toBe(201);
-      inviteId = (await res.json()).data.id;
-      const firstLink = await emailedLink(page, email, "/invite/");
+    const res = await page.request.post(`${API}/api/invites`, {
+      headers,
+      data: { email, role: "project_manager" },
+    });
+    expect(res.status(), `invite: ${await res.text()}`).toBe(201);
+    const inviteId: number = (await res.json()).data.id;
+    createdInvite = { id: inviteId, headers };
+    const firstLink = await emailedLink(page, email, "/invite/");
 
-      await page.goto("/org");
-      const resendPromise = page.waitForResponse(
-        (r) => r.url().endsWith(`/api/invites/${inviteId}/resend`) && r.request().method() === "POST",
-      );
-      await page.getByTestId(`org-invite-resend-${inviteId}`).click();
-      expect((await resendPromise).status()).toBe(200);
-      await expect(page.getByText(`Invite sent again to ${email}`)).toBeVisible();
-      expect(await emailedLink(page, email, "/invite/"), "resend must email a new link").not.toBe(firstLink);
-    } finally {
-      if (inviteId) await page.request.delete(`${API}/api/invites/${inviteId}`, { headers }).catch(() => {});
-    }
+    await page.goto("/org");
+    const resendPromise = page.waitForResponse(
+      (r) => r.url().endsWith(`/api/invites/${inviteId}/resend`) && r.request().method() === "POST",
+    );
+    await page.getByTestId(`org-invite-resend-${inviteId}`).click();
+    expect((await resendPromise).status()).toBe(200);
+    await expect(page.getByText(`Invite sent again to ${email}`)).toBeVisible();
+
+    const secondLink = await emailedLink(page, email, "/invite/");
+    expect(secondLink, "resend must email a new link").not.toBe(firstLink);
+    const lookup = async (link: string) =>
+      (await page.request.get(`${API}/api/invites/lookup/${link.split("/").pop()}`)).status();
+    expect(await lookup(firstLink), "the old link must stop working").toBe(404);
+    expect(await lookup(secondLink), "the new link must work").toBe(200);
   });
 });

@@ -7,7 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
 	"openloc/internal/mtrouter"
@@ -31,7 +33,6 @@ type SettingsPatch struct {
 	SublanguagePenaltyPct *int32
 	NearExactPenaltyPct   *int32
 	AutoComplete          *bool
-	InlineHTML            *bool
 	LinguistTerms         *string
 	TMLookupOrder         *string
 	// QAProfileID, MTRouterID: 0 clears, a positive id sets.
@@ -43,6 +44,9 @@ type SettingsPatch struct {
 	// SegmentationProfileID picks the profile new uploads are split with; it
 	// must fit the project's source language. There is no clear.
 	SegmentationProfileID *int64
+	// FilterProfileIDs picks the filter profile per format: a nil id goes
+	// back to the format's Default, a format left out keeps its choice.
+	FilterProfileIDs map[string]*int64
 }
 
 // SettingsDetail is a project's settings with every assignment list — what
@@ -78,8 +82,12 @@ func (h *Handler) Settings(ctx context.Context, tenantID, id int64) (SettingsDet
 	if err != nil {
 		return SettingsDetail{}, err
 	}
+	ps, err := h.newProjectSettings(ctx, tenantID, project, scope.Effective(profile))
+	if err != nil {
+		return SettingsDetail{}, err
+	}
 	return SettingsDetail{
-		Project:         h.newProjectSettings(ctx, tenantID, project, scope.Effective(profile)),
+		Project:         ps,
 		TMAssignments:   scope.TMAssignments,
 		TMProfile:       scope.Linked,
 		TermAssignments: terms,
@@ -132,6 +140,9 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 			return ProjectSettings{}, err
 		}
 	}
+	if err := filterprofile.ValidateChoices(ctx, h.queries, tenantID, p.FilterProfileIDs); err != nil {
+		return ProjectSettings{}, err
+	}
 	linking := p.TMProfileID != nil
 	// Match scoring belongs to the profile while linked.
 	if err := settings.GuardTMScoringEdit(profile.TmProfileID != nil || linking, p.FuzzyThreshold, p.SublanguagePenaltyPct, p.NearExactPenaltyPct, p.TMLookupOrder); err != nil {
@@ -146,47 +157,74 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 			return ProjectSettings{}, err
 		}
 	}
-	updated, err := h.queries.UpdateSettingsProfile(ctx, db.UpdateSettingsProfileParams{
-		ID:                    project.SettingsProfileID,
-		FuzzyThreshold:        deref(p.FuzzyThreshold, profile.FuzzyThreshold),
-		MtOnUpload:            deref(p.MtOnUpload, profile.MtOnUpload),
-		TmOnUpload:            deref(p.TmOnUpload, profile.TmOnUpload),
-		QaProfileID:           qaProfileID,
-		SublanguagePenaltyPct: settings.ClampPctPtr(p.SublanguagePenaltyPct),
-		NearExactPenaltyPct:   settings.ClampPctPtr(p.NearExactPenaltyPct),
-		AutoComplete:          p.AutoComplete,
-		InlineHtml:            p.InlineHTML,
-		LinguistTerms:         p.LinguistTerms,
-		TmLookupOrder:         p.TMLookupOrder,
+	// One transaction: a refused pick (a profile deleted since the checks
+	// above) saves nothing, and no event is written for half a patch.
+	var updated db.SettingsProfile
+	var filtersBefore, filtersAfter []filterprofile.Choice
+	err = database.InTx(ctx, h.pool, func(tx pgx.Tx, q db.Querier) error {
+		var err error
+		updated, err = q.UpdateSettingsProfile(ctx, db.UpdateSettingsProfileParams{
+			ID:                    project.SettingsProfileID,
+			FuzzyThreshold:        deref(p.FuzzyThreshold, profile.FuzzyThreshold),
+			MtOnUpload:            deref(p.MtOnUpload, profile.MtOnUpload),
+			TmOnUpload:            deref(p.TmOnUpload, profile.TmOnUpload),
+			QaProfileID:           qaProfileID,
+			SublanguagePenaltyPct: settings.ClampPctPtr(p.SublanguagePenaltyPct),
+			NearExactPenaltyPct:   settings.ClampPctPtr(p.NearExactPenaltyPct),
+			AutoComplete:          p.AutoComplete,
+			LinguistTerms:         p.LinguistTerms,
+			TmLookupOrder:         p.TMLookupOrder,
+		})
+		if err != nil {
+			return fmt.Errorf("update settings profile: %w", err)
+		}
+		if p.MTRouterID != nil {
+			if err := q.SetSettingsProfileMTRouter(ctx, db.SetSettingsProfileMTRouterParams{ID: project.SettingsProfileID, MtRouterID: mtRouter}); err != nil {
+				return fmt.Errorf("set MT router: %w", err)
+			}
+			updated.MtRouterID = mtRouter
+		}
+		if linking {
+			// A savepoint inside this transaction.
+			if updated, err = settings.LinkTMProfileTx(ctx, tx, tenantID, project.SettingsProfileID, *p.TMProfileID); err != nil {
+				return err
+			}
+		}
+		if p.SegmentationProfileID != nil {
+			updated, err = q.SetSettingsProfileSegmentationProfile(ctx, db.SetSettingsProfileSegmentationProfileParams{
+				ID: project.SettingsProfileID, SegmentationProfileID: p.SegmentationProfileID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return segmentationapi.ErrProfileNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("set segmentation profile: %w", err)
+			}
+		}
+		if filtersBefore, err = filterprofile.Choices(ctx, q, project.SettingsProfileID); err != nil {
+			return err
+		}
+		if err := filterprofile.SetChoices(ctx, q, tenantID, project.SettingsProfileID, p.FilterProfileIDs); err != nil {
+			return err
+		}
+		filtersAfter, err = filterprofile.Choices(ctx, q, project.SettingsProfileID)
+		return err
 	})
 	if err != nil {
-		return ProjectSettings{}, fmt.Errorf("update settings profile: %w", err)
-	}
-	if p.MTRouterID != nil {
-		if err := h.queries.SetSettingsProfileMTRouter(ctx, db.SetSettingsProfileMTRouterParams{ID: project.SettingsProfileID, MtRouterID: mtRouter}); err != nil {
-			return ProjectSettings{}, fmt.Errorf("set MT router: %w", err)
-		}
-		updated.MtRouterID = mtRouter
-	}
-	if linking {
-		updated, err = settings.LinkTMProfileTx(ctx, h.pool, tenantID, project.SettingsProfileID, *p.TMProfileID)
-		if err != nil {
-			return ProjectSettings{}, err
-		}
-	}
-	if p.SegmentationProfileID != nil {
-		updated, err = h.queries.SetSettingsProfileSegmentationProfile(ctx, db.SetSettingsProfileSegmentationProfileParams{
-			ID: project.SettingsProfileID, SegmentationProfileID: p.SegmentationProfileID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ProjectSettings{}, segmentationapi.ErrProfileNotFound
-		}
-		if err != nil {
-			return ProjectSettings{}, fmt.Errorf("set segmentation profile: %w", err)
-		}
+		return ProjectSettings{}, err
 	}
 
-	if changes := projectevents.Diff(settingsMap(profile), settingsMap(updated)); changes != nil {
+	changes := projectevents.Diff(settingsMap(profile), settingsMap(updated))
+	from, to := filterNames(filtersBefore), filterNames(filtersAfter)
+	for _, format := range filterprofile.Formats {
+		if from[format] != to[format] {
+			if changes == nil {
+				changes = map[string]projectevents.Change{}
+			}
+			changes["filter_profile_"+format] = projectevents.Change{From: from[format], To: to[format]}
+		}
+	}
+	if changes != nil {
 		if ch, ok := changes["qa_profile_id"]; ok {
 			changes["qa_profile_name"] = projectevents.Change{
 				From: qaProfileName(ctx, h.queries, tenantID, idFromChange(ch.From)),
@@ -221,7 +259,7 @@ func (h *Handler) UpdateSettings(ctx context.Context, tenantID, id int64, p Sett
 	if err != nil {
 		return ProjectSettings{}, err
 	}
-	return h.newProjectSettings(ctx, tenantID, project, scope.Effective(updated)), nil
+	return h.newProjectSettings(ctx, tenantID, project, scope.Effective(updated))
 }
 
 // SetTMAssignments replaces the project's TM list in one transaction. Refused
@@ -283,4 +321,17 @@ func deref[T any](p *T, fallback T) T {
 		return fallback
 	}
 	return *p
+}
+
+// filterNames is a project's filter profile name per format, for the
+// settings event; a format without a pick is its Default.
+func filterNames(choices []filterprofile.Choice) map[string]string {
+	out := make(map[string]string, len(filterprofile.Formats))
+	for _, f := range filterprofile.Formats {
+		out[f] = "Default"
+	}
+	for _, c := range choices {
+		out[c.Format] = c.Name
+	}
+	return out
 }

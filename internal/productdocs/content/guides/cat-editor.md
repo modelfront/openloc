@@ -3,8 +3,11 @@ title: "The CAT editor"
 summary: "Translate, confirm and review segments; use the TM and terminology sidebar, tags, find and replace, and spell check."
 order: 20
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
+  - web/src/pages/MultiFileEditor.tsx
+  - web/src/components/EditorSidebarFuzzySection.tsx
+  - internal/editor/fuzzy.go
   - internal/segmentedit/**
   - web/src/components/SegmentRowAction.tsx
   - web/src/hooks/useSegmentSplitJoin.ts
@@ -12,6 +15,7 @@ sources:
   - web/src/lib/segment-edit.ts
   - web/src/lib/editor-index.ts
   - web/src/pages/CATEditor.tsx
+  - web/src/components/editor/**
   - web/src/hooks/usePipelineEditorRefresh.ts
   - web/src/components/TaskControls.tsx
   - web/src/components/CompleteStepDialog.tsx
@@ -57,6 +61,7 @@ sources:
   - web/src/lib/tm-diff.ts
   - web/src/lib/text-diff.ts
   - web/src/lib/track-changes.ts
+  - web/src/lib/tiptap-track-changes.ts
   - web/src/lib/text-ranges.ts
   - web/src/lib/segment-decorations.tsx
   - web/src/lib/sidebar-sections.ts
@@ -133,6 +138,21 @@ The CAT editor is where you translate. It shows the source text and your transla
 6. The **Resources** sidebar on the right holds the memory matches, terms and findings for the open segment. If it is closed, click the vertical **Resources** tab.
 7. To give the grid more room, click the panel button at the right end of the left menu's top row, which shrinks the menu to a strip of icons — see [The left menu](/docs/getting-started/interface-tour#the-left-menu).
 
+## Work on several files in one editor
+
+Tick the files on a project's **Tasks** tab (or on **Tasks** in the left menu, see [Work from the Tasks page](/docs/guides/workflows-and-tasks#work-from-the-tasks-page)) and click **Open in editor**. The files must be of one project and one target language, and at most 500 open together; a linguist can open together only files assigned to them. The editor opens with the files one after the other in one grid, and the breadcrumb reads, for example, **3 files**.
+
+1. A header above each file's rows shows its name, its current step, **Read only** when its step cannot be edited right now (point at it for the reason), and how many of its segments are approved, for example **12/40 approved**. Segment numbers start again for each file.
+2. A segment repeated in another open file is marked as a repetition, and **Ctrl+Enter** fills the same source in every open file, not only the open one — see [Confirm a segment](#confirm-a-segment). A file you cannot edit keeps its segments, and a message says how many.
+3. **Internal matches** in the [Resources sidebar](#use-the-sidebar) draw on every open file; each match names its file. The sidebar follows the file the open segment belongs to.
+4. Selecting segments offers **Confirm**, **Lock**, **Unlock**, **Join**, **Run QA**, **Spell check** and **Find & replace** across the files. Segments of a file you cannot edit are left as they are, and a message says so.
+5. **Complete step** lists every open file you can complete — see [Complete a step](/docs/guides/workflows-and-tasks#complete-a-step).
+
+6. **Find & replace** (**Ctrl+H**), **Run QA** and its report, **Spell check** with its fix menu, and split and join work as in a single file, on the rows they apply to. Each sends the work to the file each row belongs to. A file whose step cannot be edited right now is named, and the other files still go ahead. **Join** on the [selection bar](#select-several-segments-and-act-on-them) refuses rows of two files: **Only rows of one file can be joined.**
+7. **Track changes** shows when any open file has a finished step; each row is marked against its own file's previous step.
+
+**Pre-translate**, **Clear**, **Jump to segment**, **Import XLIFF** and the leverage bar are in the editor of a single file. Open the file on its own to use them.
+
 ## Move between segments
 
 1. Click a row to open it. A click in the translation puts the cursor where you clicked, and text you drag across in the translation opens selected. To copy from the source, drag across it: the row stays closed.
@@ -170,7 +190,7 @@ A segment cannot be split or joined while it is locked, while someone else has i
 
 1. Press **Ctrl+Enter** (Cmd+Enter). To confirm several segments at once, see [Select several segments](#select-several-segments-and-act-on-them).
 2. The status becomes **Approved**, the translation is written to the translation memory (a **TM updated** toast appears), QA re-runs, and the editor moves to the next segment.
-3. Every segment with exactly the same source text, in this file and this target language, gets your translation and becomes **Approved** too. The copy replaces whatever was there — including rows that were already approved, but never a locked one — and clears their QA findings. A message says how many rows were updated. The first such row shows **→R**, or its memory percentage with an arrow, such as **98%→**, when its translation came from the memory; the copies show **⇢R** ([chips](/docs/reference/segment-statuses#origins-and-other-marks)).
+3. Every segment with exactly the same source text, in this file and this target language — in every open file when [several files are open](#work-on-several-files-in-one-editor) — gets your translation and becomes **Approved** too. The copy replaces whatever was there — including rows that were already approved, but never a locked one — and clears their QA findings. A message says how many rows were updated. The first such row shows **→R**, or its memory percentage with an arrow, such as **98%→**, when its translation came from the memory; the copies show **⇢R** ([chips](/docs/reference/segment-statuses#origins-and-other-marks)).
 4. If the segment breaks a rule that the project's QA profile sets to **Error**, the confirm is refused with **Fix QA error before confirming: …**, or **Fix N QA errors before confirming (e.g. …)** when more than one rule fails. Warnings never block, and neither do findings you have ignored.
 5. Ctrl+Enter pressed again while the segment is still saving does nothing. If you have moved to another segment before the save finishes, the editor stays where you are instead of jumping to the next row.
 
@@ -180,16 +200,17 @@ A segment the [AI assistant](/docs/guides/ai-assistant#segments-the-assistant-co
 
 ## Use the sidebar
 
-![The Resources sidebar: TM matches, MT suggestion, Terminology, History, QA findings and Comments](assets/editor-sidebar.png)
+![The Resources sidebar: TM matches, Internal matches, MT suggestion, Terminology, History, QA findings and Comments](assets/editor-sidebar.png)
 
 1. **TM matches** lists up to ten translation memory hits for the open segment, in the order set by the project's [TM lookup order](/docs/concepts/tm-matching#several-memories), each with the percentage the grid's **Match** column uses (100% and 101% green, anything lower yellow) and the TM name. Click a hit to insert it, or press **Ctrl+1** to **Ctrl+5** (Cmd on Mac) for the first five; its tags are matched to your current source. An insert is saved as a **Draft** at once (a confirmed segment drops back to **Draft**), and **Match** shows the hit's percentage, as after pre-translation; later edits keep it. An exact match (the same source text, with no penalty) is also approved, as **Ctrl+Enter** does, but the segment stays open. A hit that only rounds to 100% is not. A source shorter than three characters is not looked up. The expand icon in the header shows hits in full.
    A hit that lost points to a [penalty](/docs/concepts/tm-matching#penalties) shows its text match crossed out before its percentage, for example ~~100%~~ **99%**. Point at the percentages, or move to the card with the keyboard, to see the breakdown: the text match, then one line per deduction, such as **−1% Penalty set on this TM**. A penalty set to 0% is not listed.
    The last line of a hit says when its memory entry last changed and who changed it: the person who last confirmed or edited it in OpenLoc, or the user recorded in an imported TMX file. Owners, admins and project managers also see that person's email. Point at that line, or move to the card with the keyboard, to see when the entry was created too, and by whom for an imported entry.
    When a hit is not a 100% match, what it says that your segment does not is highlighted in yellow, and what your segment says that the hit does not is highlighted the same way in the **Source** column. The **Source** column compares against the best hit; point at another card, or move to it with the keyboard, to compare against that one instead.
-2. **MT suggestion** shows the machine translation the pipeline already produced for this segment; a segment that has none is translated on demand. Click to insert; it is saved and shown in **Match** as **MT**, like a TM insert.
-3. **Terminology** lists glossary terms found in the source as **source → target**, with a status icon and the domain; point at the icon to read the status (approved, pending or forbidden). An applied term shows a check in place of its status icon — see [Terminology while translating](/docs/guides/terminology#terminology-while-translating). Matching words are underlined in the source: red while the approved target term is missing from your translation, green once it is there. Click a term to insert it, or select a word in the editor first to replace only that word. A forbidden term in your translation shows a red warning. The **+** in the section's header adds a term — see [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating).
-4. **References** appears when the segment has a cross-reference chip. Click an entry to jump to the segment that defines it.
-5. **QA findings** lists every quality check that fired on the open segment, with the full message next to **Error**, **Warning** or **Info**. The header counts them, for example **2 + 1 ignored**. With no segment open it reads **Select a segment**; on a clean segment, **No issues**.
+2. **Internal matches** lists up to five segments already approved in this file, or in the open files when there are several, whose source is like the open segment's, best first. A match has a percentage coloured like a TM match's, scored the same way and held to the project's fuzzy threshold; identical sources are repetitions and are not listed. Click one to insert its translation, with differences from your source highlighted as in a TM hit. The insert is saved as your own edit and nothing is written to a memory. With no match the section reads **No matches in the open files**.
+3. **MT suggestion** shows the machine translation the pipeline already produced for this segment; a segment that has none is translated on demand. Click to insert; it is saved and shown in **Match** as **MT**, like a TM insert.
+4. **Terminology** lists glossary terms found in the source as **source → target**, with a status icon and the domain; point at the icon to read the status (approved, pending or forbidden). An applied term shows a check in place of its status icon — see [Terminology while translating](/docs/guides/terminology#terminology-while-translating). Matching words are underlined in the source: red while the approved target term is missing from your translation, green once it is there. Click a term to insert it, or select a word in the editor first to replace only that word. A forbidden term in your translation shows a red warning. The **+** in the section's header adds a term — see [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating).
+5. **References** appears when the segment has a cross-reference chip. Click an entry to jump to the segment that defines it.
+6. **QA findings** lists every quality check that fired on the open segment, with the full message next to **Error**, **Warning** or **Info**. The header counts them, for example **2 + 1 ignored**. With no segment open it reads **Select a segment**; on a clean segment, **No issues**.
 
 To arrange the sidebar, click **Customize panel** (the sliders icon next to **Resources**). Drag a section by its grip to move it, or untick it to hide it; one section always stays on.
 
@@ -210,7 +231,7 @@ Drag the sidebar's left edge to make it wider or narrower; the grid takes whatev
 
 ## Track changes since the previous step
 
-Click **Track changes** (the icon next to **¶** in the search and filter row) to mark, in the **Translation** cells you are not editing, what changed since the previous workflow step ended. Removed words are struck through and added words are highlighted, as in [History](#see-a-segments-history). It is a view only: there is nothing to accept or reject. Anyone who can open the task can use it, and the setting is remembered in this browser.
+Click **Track changes** (the icon next to **¶** in the search and filter row) to mark, in the **Translation** cells, what changed since the previous workflow step ended. Removed words are struck through and added words are highlighted, as in [History](#see-a-segments-history). The segment you are editing keeps its marks, and they follow your typing; removed words are shown only, never saved. It is a view only: there is nothing to accept or reject. Anyone who can open the task can use it, and the setting is remembered in this browser.
 
 On a first step the button is greyed out: **Track changes: available once a workflow step is finished**. After a reject, the reopened step is compared with the text the rejected step left.
 
@@ -236,7 +257,7 @@ A term is missing until your translation uses its target terms, any of them, as 
 
 ## Format text
 
-The small toolbar on the border of the open segment's editor has **Bold** (Ctrl+B), **Italic** (Ctrl+I), **Superscript** and **Subscript**. HTML files keep this formatting on download; every other format, generic XML included, drops it (the file's own tags still come back as they were). An Android resource string keeps a tag only when its source string has that exact tag, so bold or italic you add to a string that had none comes out as literal text such as `<b>`. Formatting from the file itself appears as tag chips instead. In a JSON, PO, TXT or Excel file uploaded with **Strings contain HTML** off, segments have no tags: text such as `<b>` shows and saves exactly as typed, and the formatting buttons save nothing ([Settings](/docs/reference/settings)).
+The small toolbar on the border of the open segment's editor has **Bold** (Ctrl+B), **Italic** (Ctrl+I), **Superscript** and **Subscript**. HTML files keep this formatting on download; every other format, generic XML included, drops it (the file's own tags still come back as they were). An Android resource string keeps a tag only when its source string has that exact tag, so bold or italic you add to a string that had none comes out as literal text such as `<b>`. Formatting from the file itself appears as tag chips instead. In a JSON, PO, TXT or Excel file whose filter profile treats strings as plain text (the built-in **Plain text strings**, for example), segments have no tags: text such as `<b>` shows and saves exactly as typed, and the formatting buttons save nothing ([Filter profiles](/docs/guides/filter-profiles)).
 
 ## Filter segments
 
@@ -276,6 +297,8 @@ The small toolbar on the border of the open segment's editor has **Bold** (Ctrl+
 1. Open a segment and find **Comments** in the sidebar.
 2. Type in **Add a comment...** and click **Add**. A comment count appears in the row; the **Commented** filter finds all commented segments.
 3. Click the trash icon (**Delete comment**) to delete your own comments or comments written by **AI** (an AI review step can leave notes).
+
+An AI comment shows **AI** as its author, and the **Commented** filter lists the segments that carry one. A comment is not added when the segment already has a live AI comment with exactly the same wording; after you delete one, the AI can make the same remark again.
 
 ## Check spelling
 

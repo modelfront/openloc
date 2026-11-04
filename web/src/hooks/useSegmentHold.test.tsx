@@ -59,6 +59,25 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('useSegmentHold', () => {
+  // In a multi-file editor the open row's job changes with the row: the new
+  // row is held at once, on its own job, not a renewal later.
+  it('holds a row of another job at once when the open row moves there', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    const { rerender } = renderHook(
+      (p: { jobId: number; translationId: number }) => useSegmentHold({
+        jobId: p.jobId, editorId: '3:7,8', translationId: p.translationId, canHold: true, currentUserId: ME, onIdle: vi.fn(),
+      }),
+      { wrapper, initialProps: { jobId: 7, translationId: 11 } },
+    )
+    await flush()
+    expect(mockAcquire).toHaveBeenLastCalledWith(7, 11, expect.any(String))
+
+    rerender({ jobId: 8, translationId: 21 })
+    await flush()
+    expect(mockAcquire).toHaveBeenLastCalledWith(8, 21, expect.any(String))
+  })
+
   it('holds the active segment, moves with it, and releases on close', async () => {
     const { rerender } = setup({ translationId: 11 })
     await flush()

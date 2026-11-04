@@ -66,11 +66,11 @@ export default function LoginPage() {
     navigate(result.needs_org_selection ? '/select-org' : '/')
   }
 
-  const handleDevLogin = async (email?: string) => {
+  const handleDevLogin = async (who?: Parameters<typeof devLogin>[0]) => {
     setServerError('')
     setLoading(true)
     try {
-      finishLogin(await devLogin(email))
+      finishLogin(await devLogin(who))
     } catch (err) {
       setServerError(errorText(err, 'Dev login failed'))
     } finally {
@@ -155,20 +155,32 @@ export default function LoginPage() {
 
             {showDevLogin && (
               <>
-                <Button
-                  onClick={() => handleDevLogin()}
-                  disabled={loading}
-                  variant="outline"
-                  className="w-full"
-                >
-                  {loading ? 'Signing in...' : 'Dev Login'}
-                </Button>
+                {/* Dev Login is the usual one: three quarters of the row. */}
+                <div className="grid grid-cols-4 gap-2">
+                  <Button
+                    onClick={() => handleDevLogin()}
+                    disabled={loading}
+                    variant="outline"
+                    className="col-span-3"
+                  >
+                    {loading ? 'Signing in...' : 'Dev Login'}
+                  </Button>
+                  {/* The seed vendor org's admin: lands in the vendor org. */}
+                  <Button
+                    onClick={() => handleDevLogin({ as: 'vendor' })}
+                    disabled={loading}
+                    variant="outline"
+                    aria-label="Vendor login"
+                  >
+                    Vendor
+                  </Button>
+                </div>
 
                 {/* Dev-only: log in as any identity (created on the fly). Lets
                     you exercise multi-org / self-serve signup flows without the
                     console. Hidden in prod (dev-login is disabled there). */}
                 <form
-                  onSubmit={(e) => { e.preventDefault(); if (devEmail.trim()) handleDevLogin(devEmail.trim()) }}
+                  onSubmit={(e) => { e.preventDefault(); if (devEmail.trim()) handleDevLogin({ email: devEmail.trim() }) }}
                   className="flex gap-2 pt-2 border-t border-gray-100 dark:border-gray-800"
                 >
                   <Input

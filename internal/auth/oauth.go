@@ -293,9 +293,20 @@ func (h *Handler) HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email      string `json:"email"`
 		TenantName string `json:"tenant_name"`
+		// Identity names a seed person instead of an email: "vendor" is the
+		// seed vendor org's admin (the login page's Vendor login button).
+		Identity string `json:"identity"`
 	}
 	_ = httputil.Decode(r, &req) // body optional
 	email := normalizeEmail(req.Email)
+	switch req.Identity {
+	case "":
+	case "vendor":
+		email = seedid.VendorAdminEmail
+	default:
+		httputil.BadRequest(w, "unknown dev-login identity")
+		return
+	}
 	if email == "" {
 		email = seedid.OwnerEmail
 	}

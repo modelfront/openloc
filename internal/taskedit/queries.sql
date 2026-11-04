@@ -42,7 +42,8 @@ LEFT JOIN LATERAL (
 ) lc ON true
 WHERE t.id = @translation_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
 
--- name: GetTaskEditState :one
+-- name: ListTaskEditStates :many
+-- The jobs of @job_ids, one row each; a job outside the tenant is left out.
 SELECT j.id AS job_id, j.status AS job_status, j.current_step AS job_current_step,
        j.target_language, f.id AS file_id, f.name AS file_name, f.project_id,
        EXISTS (SELECT 1 FROM job_step_assignments x WHERE x.job_id = j.id)::bool AS has_workflow,
@@ -74,7 +75,7 @@ LEFT JOIN LATERAL (
     ORDER BY ws.step_order DESC
     LIMIT 1
 ) lc ON true
-WHERE j.id = @job_id AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
+WHERE j.id = ANY(@job_ids::bigint[]) AND p.tenant_id = @tenant_id AND p.deleted_at IS NULL;
 
 -- name: LockJobForTaskEdit :one
 -- Serialises reopen-by-edit on one job: concurrent first edits on a completed

@@ -559,6 +559,20 @@ describe('ProjectTasksTab', () => {
     expect(screen.queryByTestId('task-filter-status')).not.toBeInTheDocument()
   })
 
+  // A file row is the name plus its upload date, not plain text, so the search
+  // matches it on the file name.
+  it('the File filter\'s search finds a file by name', async () => {
+    await renderPage()
+    await userEvent.click(screen.getByTestId('task-filter-menu'))
+    const popup = await screen.findByTestId('task-filter-menu-popup')
+    await userEvent.click(within(popup).getByTestId('task-filter-menu-option-file'))
+    await userEvent.type(within(popup).getByTestId('task-filter-menu-search'), 'guide')
+
+    expect(within(popup).getByRole('button', { name: /guide\.docx/ })).toBeInTheDocument()
+    expect(within(popup).queryByRole('button', { name: /api\.md/ })).not.toBeInTheDocument()
+    expect(within(popup).queryByText('No matches')).not.toBeInTheDocument()
+  })
+
   it('clearing a filter — its × or "All" — takes its chip off the bar', async () => {
     // Nothing is fr and failed, so the page starts empty; the chips still show.
     renderTab('/projects/42?target=fr&task_status=error')
