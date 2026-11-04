@@ -40,31 +40,35 @@ func (f *Feed) ListenOn(l *pglisten.Listener) {
 	l.Handle(NotifyChannel, receiver{f})
 }
 
-// Subscribe returns a channel that receives a value when the job's holds may
-// have changed, and one that closes when the feed stops receiving; no change
-// reaches the first after that. Wake-ups coalesce: one not yet read absorbs
-// the next. ok is false while the feed is not receiving. The first channel
-// closes when ctx ends.
-func (f *Feed) Subscribe(ctx context.Context, jobID int64) (changes, down <-chan struct{}, ok bool) {
+// Subscribe returns a channel that receives a value when the holds of any of
+// jobIDs may have changed, and one that closes when the feed stops receiving;
+// no change reaches the first after that. Wake-ups coalesce: one not yet read
+// absorbs the next. ok is false while the feed is not receiving. The first
+// channel closes when ctx ends.
+func (f *Feed) Subscribe(ctx context.Context, jobIDs []int64) (changes, down <-chan struct{}, ok bool) {
 	f.mu.Lock()
 	if f.down == nil {
 		f.mu.Unlock()
 		return nil, nil, false
 	}
 	ch := make(chan struct{}, 1)
-	if f.subs[jobID] == nil {
-		f.subs[jobID] = map[chan struct{}]struct{}{}
+	for _, jobID := range jobIDs {
+		if f.subs[jobID] == nil {
+			f.subs[jobID] = map[chan struct{}]struct{}{}
+		}
+		f.subs[jobID][ch] = struct{}{}
 	}
-	f.subs[jobID][ch] = struct{}{}
 	down = f.down
 	f.mu.Unlock()
 
 	go func() {
 		<-ctx.Done()
 		f.mu.Lock()
-		delete(f.subs[jobID], ch)
-		if len(f.subs[jobID]) == 0 {
-			delete(f.subs, jobID)
+		for _, jobID := range jobIDs {
+			delete(f.subs[jobID], ch)
+			if len(f.subs[jobID]) == 0 {
+				delete(f.subs, jobID)
+			}
 		}
 		f.mu.Unlock()
 		close(ch)

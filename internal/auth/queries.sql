@@ -21,6 +21,16 @@ VALUES ($1, $2, $3, 'approved')
 ON CONFLICT (slug) DO NOTHING
 RETURNING *;
 
+-- name: CreateVendorTenant :one
+-- A vendor organization, created when its admin accepts the client's
+-- vendor-org invite. The client is already approved, so the vendor org is
+-- too. No domain: domain sign-up and auto-join never reach a vendor org.
+-- A taken slug returns no row, as in CreatePendingTenant.
+INSERT INTO tenants (name, slug, domain, status, kind, client_tenant_id)
+VALUES (@name, @slug, NULL, 'approved', 'vendor', sqlc.arg(client_tenant_id)::bigint)
+ON CONFLICT (slug) DO NOTHING
+RETURNING *;
+
 -- name: GetTenant :one
 SELECT * FROM tenants WHERE id = $1;
 
@@ -43,11 +53,25 @@ SELECT * FROM tenants WHERE domain = $1 AND open_registration = true AND status 
 SELECT * FROM tenants WHERE domain = $1;
 
 -- name: GetTenantStatus :one
--- Per-request pending-gate. auth.Middleware calls this so approval
--- takes effect on the next request without a re-login (a JWT claim would go
--- stale for the token's 24h lifetime).
--- Also returns kind: the demo organization is read-only.
+-- The org's status and kind. The per-request gate reads GetTenantGate.
 SELECT status, kind FROM tenants WHERE id = $1;
+
+-- name: GetTenantGate :one
+-- Per-request tenant gate: the org's own status and kind, plus its client's
+-- status for a vendor org (NULL otherwise). A vendor org works only while
+-- its client does.
+SELECT t.status, t.kind, c.status AS client_status
+FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
+WHERE t.id = @tenant_id;
+
+-- name: GetTenantProfile :one
+-- The selected org as /api/auth/me shows it. client_org_name and
+-- client_status are a vendor org's client's, NULL for any other kind.
+SELECT t.id, t.name, t.slug, t.status, t.kind AS tenant_kind, c.name AS client_org_name, c.status AS client_status
+FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
+WHERE t.id = @tenant_id;
 
 -- name: SetTenantStatus :one
 -- An organization being deleted keeps its status: its delete is under way.
@@ -70,9 +94,10 @@ LIMIT 1;
 -- Operator org list: every organization with its status + owner,
 -- pending first (they need action), then newest. LEFT JOIN owner so an org
 -- without one still appears (owner_email/name are then NULL).
-SELECT t.id AS tenant_id, t.name, t.slug, t.domain, t.status, t.created_at,
-       u.email AS owner_email, u.name AS owner_name
+SELECT t.id AS tenant_id, t.name, t.slug, t.domain, t.status, t.kind, t.created_at,
+       u.email AS owner_email, u.name AS owner_name, c.name AS client_org_name
 FROM tenants t
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
 LEFT JOIN LATERAL (
     SELECT m.user_id FROM memberships m
     WHERE m.tenant_id = t.id AND m.role = 'owner'
@@ -81,7 +106,8 @@ LEFT JOIN LATERAL (
 ) owner ON true
 LEFT JOIN users u ON u.id = owner.user_id
 -- The demo organization is built and rebuilt by the server, not managed here.
-WHERE t.kind = 'customer' AND t.status <> 'deleting'
+-- A vendor org has no owner and lists with its client's name.
+WHERE t.kind IN ('customer', 'vendor') AND t.status <> 'deleting'
 ORDER BY (t.status = 'pending') DESC, t.created_at DESC;
 
 -- name: UpdateTenantOpenRegistration :exec
@@ -116,9 +142,13 @@ SELECT * FROM memberships WHERE user_id = $1 AND tenant_id = $2;
 -- name: ListMembershipsWithTenant :many
 -- The org picker: every org this identity can enter, with the user's role. An
 -- organization being deleted is gone for its members already.
-SELECT m.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug, m.role
+-- client_org_name names a vendor org's client, NULL for any other kind;
+-- disabled_at is set when a vendor org disabled the membership for disuse.
+SELECT m.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug, m.role,
+       t.kind AS tenant_kind, c.name AS client_org_name, m.disabled_at
 FROM memberships m
 JOIN tenants t ON t.id = m.tenant_id
+LEFT JOIN tenants c ON c.id = t.client_tenant_id
 WHERE m.user_id = $1 AND t.status <> 'deleting'
 ORDER BY t.name;
 
@@ -126,6 +156,39 @@ ORDER BY t.name;
 -- Remove a user from ONE org (per-org "remove member"), leaving the global
 -- identity and any other memberships intact.
 DELETE FROM memberships WHERE user_id = $1 AND tenant_id = $2;
+
+-- name: TouchVendorMembership :one
+-- The per-request gate of a vendor org: whether the caller's membership is
+-- disabled, and, when it is not, records the use at most once a day (which
+-- also withdraws a pending inactivity warning). No row: not a member.
+WITH cur AS (
+  SELECT c.id, c.disabled_at, c.last_active_at FROM memberships c
+  WHERE c.tenant_id = @tenant_id AND c.user_id = @user_id
+), touched AS (
+  UPDATE memberships mt SET last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+  FROM cur
+  WHERE mt.id = cur.id AND cur.disabled_at IS NULL AND cur.last_active_at < now() - interval '1 day'
+  RETURNING mt.id
+)
+SELECT (cur.disabled_at IS NOT NULL)::bool AS disabled FROM cur;
+
+-- name: EnableMembership :one
+-- An admin enables a member their org disabled for disuse. The clock starts
+-- again from now. ErrNoRows: no such disabled membership in this org.
+UPDATE memberships SET disabled_at = NULL, last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+WHERE tenant_id = @tenant_id AND user_id = @user_id AND disabled_at IS NOT NULL
+RETURNING *;
+
+-- name: EnableVendorAdmin :one
+-- A client org enables an admin one of its own vendor orgs disabled for
+-- disuse. Scoped by the client's tenant id through the vendor's link.
+-- ErrNoRows: not a disabled admin of a vendor of this client.
+UPDATE memberships m SET disabled_at = NULL, last_active_at = now(), inactivity_warned_at = NULL, inactivity_warning_claimed_at = NULL
+FROM tenants t
+WHERE t.id = m.tenant_id AND t.kind = 'vendor' AND t.client_tenant_id = @client_tenant_id
+  AND m.tenant_id = @vendor_tenant_id AND m.user_id = @user_id
+  AND m.role = 'admin' AND m.disabled_at IS NOT NULL
+RETURNING m.*;
 
 -- name: UpdateMembershipRole :exec
 UPDATE memberships SET role = $3 WHERE user_id = $1 AND tenant_id = $2;
@@ -154,6 +217,14 @@ UPDATE users SET is_active = true, deactivated_at = NULL WHERE id = $1 RETURNING
 -- The email is not a profile field: nothing may change it.
 UPDATE users SET name = $2 WHERE id = $1 RETURNING *;
 
+-- name: ListTenantAdminIDs :many
+-- The org's active owners and admins: who hears that one of its vendor orgs
+-- has a new admin.
+SELECT m.user_id FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = @tenant_id AND u.is_active = true AND m.role IN ('admin', 'owner')
+ORDER BY m.user_id;
+
 -- name: CountAdminsInTenant :one
 -- Counts ACTIVE admins/owners in the org (membership-based). Last-admin
 -- guard must not count deactivated users (otherwise demoting/deactivating the
@@ -173,6 +244,30 @@ WHERE m.tenant_id = $1
   AND (sqlc.arg(include_inactive)::bool OR u.is_active = true)
 ORDER BY u.created_at;
 
+-- name: ListMembersPage :many
+-- The Members tab, one page of the org's active members: the most powerful
+-- role first, then name, then id. q matches name or email as plain text (no
+-- wildcards); role is one role; source and target together match one pair.
+-- total counts every match, for the page heading. disabled_at marks a vendor
+-- org member disabled for disuse; they stay listed so an admin can enable them.
+SELECT u.id, u.email, u.name, m.role, u.created_at, m.disabled_at, count(*) OVER () AS total
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = @tenant_id
+  AND u.is_active = true
+  AND (sqlc.narg('q')::text IS NULL
+       OR strpos(lower(u.name), lower(sqlc.narg('q')::text)) > 0
+       OR strpos(lower(u.email), lower(sqlc.narg('q')::text)) > 0)
+  AND (sqlc.narg('role')::text IS NULL OR m.role = sqlc.narg('role')::text)
+  AND (sqlc.narg('source_lang')::text IS NULL AND sqlc.narg('target_lang')::text IS NULL
+       OR EXISTS (SELECT 1 FROM user_language_pairs p
+                  WHERE p.user_id = u.id AND p.tenant_id = m.tenant_id
+                    AND (sqlc.narg('source_lang')::text IS NULL OR p.source_lang = sqlc.narg('source_lang')::text)
+                    AND (sqlc.narg('target_lang')::text IS NULL OR p.target_lang = sqlc.narg('target_lang')::text)))
+ORDER BY CASE m.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'project_manager' THEN 3 WHEN 'linguist' THEN 4 ELSE 5 END,
+         lower(u.name), u.id
+LIMIT @lim OFFSET @off;
+
 -- name: DeleteTenant :exec
 -- Hard delete — the last step of an organization's delete (tenantdelete).
 -- Cascades through every FK with ON DELETE CASCADE.
@@ -187,6 +282,99 @@ UPDATE tenants SET status = 'deleting', domain = NULL WHERE id = $1;
 -- name: ListDeletingTenants :many
 -- Internal: the tenant-delete sweep.
 SELECT id FROM tenants WHERE status = 'deleting' ORDER BY id;
+
+-- name: ListVendorOrgsForClient :many
+-- One page of the vendor orgs a client org invited, for its Members tab:
+-- the admins of active accounts, each with whether the vendor disabled their
+-- membership for disuse (the client may enable it). q matches the
+-- vendor's name or an admin's email as plain text; source and target match a
+-- pair one of its active people has (together, one pair). total counts every
+-- match. Scoped by the client's tenant id.
+SELECT t.id, t.name, t.created_at,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('user_id', u.id, 'email', u.email, 'disabled', m.disabled_at IS NOT NULL)
+                            ORDER BY u.email)
+    FROM memberships m JOIN users u ON u.id = m.user_id
+    WHERE m.tenant_id = t.id AND m.role = 'admin' AND u.is_active), '[]')::jsonb AS admins,
+  count(*) OVER () AS total
+FROM tenants t
+WHERE t.client_tenant_id = @client_tenant_id AND t.kind = 'vendor' AND t.status = 'approved'
+  AND (sqlc.narg('q')::text IS NULL
+       OR strpos(lower(t.name), lower(sqlc.narg('q')::text)) > 0
+       OR EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                  WHERE m.tenant_id = t.id AND m.role = 'admin' AND u.is_active
+                    AND strpos(lower(u.email), lower(sqlc.narg('q')::text)) > 0))
+  AND (sqlc.narg('source_lang')::text IS NULL AND sqlc.narg('target_lang')::text IS NULL
+       OR EXISTS (SELECT 1 FROM memberships m
+                  JOIN users u ON u.id = m.user_id AND u.is_active
+                  JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+                  WHERE m.tenant_id = t.id
+                    AND (sqlc.narg('source_lang')::text IS NULL OR p.source_lang = sqlc.narg('source_lang')::text)
+                    AND (sqlc.narg('target_lang')::text IS NULL OR p.target_lang = sqlc.narg('target_lang')::text)))
+ORDER BY lower(t.name), t.id
+LIMIT @lim OFFSET @off;
+
+-- name: ListMemberFacetRoles :many
+-- The roles of the org's active members that match q and the language pair
+-- (the Members list's filters but its own): the Role filter offers only these.
+SELECT DISTINCT m.role
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.tenant_id = @tenant_id
+  AND u.is_active = true
+  AND (sqlc.narg('q')::text IS NULL
+       OR strpos(lower(u.name), lower(sqlc.narg('q')::text)) > 0
+       OR strpos(lower(u.email), lower(sqlc.narg('q')::text)) > 0)
+  AND (sqlc.narg('source_lang')::text IS NULL AND sqlc.narg('target_lang')::text IS NULL
+       OR EXISTS (SELECT 1 FROM user_language_pairs p
+                  WHERE p.user_id = u.id AND p.tenant_id = m.tenant_id
+                    AND (sqlc.narg('source_lang')::text IS NULL OR p.source_lang = sqlc.narg('source_lang')::text)
+                    AND (sqlc.narg('target_lang')::text IS NULL OR p.target_lang = sqlc.narg('target_lang')::text)));
+
+-- name: ListMemberFacetPairs :many
+-- The distinct pairs of the org's active members that match q and role: the
+-- Source and Target filters offer languages from these.
+SELECT DISTINCT p.source_lang, p.target_lang
+FROM memberships m
+JOIN users u ON u.id = m.user_id AND u.is_active = true
+JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+WHERE m.tenant_id = @tenant_id
+  AND (sqlc.narg('q')::text IS NULL
+       OR strpos(lower(u.name), lower(sqlc.narg('q')::text)) > 0
+       OR strpos(lower(u.email), lower(sqlc.narg('q')::text)) > 0)
+  AND (sqlc.narg('role')::text IS NULL OR m.role = sqlc.narg('role')::text)
+ORDER BY p.source_lang, p.target_lang;
+
+-- name: ListVendorOrgFacetPairs :many
+-- The distinct pairs the active people of a client's vendor orgs cover, among
+-- the vendor orgs that match q (name or admin email): the Vendors list's
+-- Source and Target filters offer languages from these.
+SELECT DISTINCT p.source_lang, p.target_lang
+FROM tenants t
+JOIN memberships m ON m.tenant_id = t.id
+JOIN users u ON u.id = m.user_id AND u.is_active = true
+JOIN user_language_pairs p ON p.user_id = m.user_id AND p.tenant_id = m.tenant_id
+WHERE t.client_tenant_id = @client_tenant_id AND t.kind = 'vendor' AND t.status = 'approved'
+  AND (sqlc.narg('q')::text IS NULL
+       OR strpos(lower(t.name), lower(sqlc.narg('q')::text)) > 0
+       OR EXISTS (SELECT 1 FROM memberships am JOIN users au ON au.id = am.user_id
+                  WHERE am.tenant_id = t.id AND am.role = 'admin' AND au.is_active
+                    AND strpos(lower(au.email), lower(sqlc.narg('q')::text)) > 0))
+ORDER BY p.source_lang, p.target_lang;
+
+-- name: ListVendorOrgLanguagePairs :many
+-- The distinct pairs the active people of several vendor orgs cover, for the
+-- client's Vendors list. Only vendor orgs of @client_tenant_id count.
+SELECT DISTINCT m.tenant_id, ulp.source_lang, ulp.target_lang
+FROM memberships m
+JOIN tenants t ON t.id = m.tenant_id AND t.client_tenant_id = @client_tenant_id
+JOIN users u ON u.id = m.user_id AND u.is_active
+JOIN user_language_pairs ulp ON ulp.user_id = m.user_id AND ulp.tenant_id = m.tenant_id
+WHERE m.tenant_id = ANY(@vendor_ids::bigint[])
+ORDER BY m.tenant_id, ulp.source_lang, ulp.target_lang;
+
+-- name: ListVendorTenantIDs :many
+-- Internal: tenantdelete. The vendor orgs of a client org, deleted before it.
+SELECT id FROM tenants WHERE client_tenant_id = @client_tenant_id ORDER BY id;
 
 -- name: ListTenantProjectIDsPage :many
 -- Internal: tenantdelete. A page of the tenant's project ids after @after_id.

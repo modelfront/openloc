@@ -56,6 +56,7 @@ export function TaskFilterBar() {
         label="Deadline"
         value={filters.deadline ? TASK_DEADLINE_LABELS[filters.deadline] : null}
         testId="filter-deadline"
+        searchable={false}
         render={(close) => (
           <>
             <FilterOption selected={!filters.deadline} onClick={() => { setParam('deadline', null); close() }}>All</FilterOption>

@@ -127,6 +127,56 @@ describe('useProjectDraft', () => {
     expect(api.saveProjectDraft).not.toHaveBeenCalled()
   })
 
+  // An upload right after a settings change reads the draft's stored settings
+  // (its filter profiles), so a save still waiting goes first.
+  it('ensureDraft saves a pending change of an existing draft before it resolves', async () => {
+    let name = 'before'
+    const { result } = renderHook(() => useProjectDraft({ initialId: 7, buildPayload: () => payload(name) }), { wrapper })
+
+    act(() => { result.current.endHydration() })
+    name = 'after'
+    act(() => { result.current.scheduleSave() })
+    let id: number | undefined
+    await act(async () => { id = await result.current.ensureDraft() })
+    expect(id).toBe(7)
+    expect(api.saveProjectDraft).toHaveBeenCalledWith(7, payload('after'))
+
+    // Nothing pending: no extra save.
+    api.saveProjectDraft.mockClear()
+    await act(async () => { await result.current.ensureDraft() })
+    expect(api.saveProjectDraft).not.toHaveBeenCalled()
+  })
+
+  it('ensureDraft waits for a save that is already running', async () => {
+    let finish: (v: { id: number; status: string }) => void = () => {}
+    api.saveProjectDraft.mockImplementationOnce(() => new Promise(r => { finish = r }))
+    const { result } = renderHook(() => useProjectDraft({ initialId: 7, buildPayload: () => payload('x') }), { wrapper })
+    act(() => { result.current.endHydration() })
+    act(() => { result.current.scheduleSave() })
+    await settle() // the debounce fires: the save is running
+
+    let resolved = false
+    let ensured: Promise<number> | undefined
+    act(() => { ensured = result.current.ensureDraft().then(id => { resolved = true; return id }) })
+    await act(async () => { await Promise.resolve() })
+    expect(resolved).toBe(false)
+    await act(async () => { finish({ id: 7, status: 'draft' }); await ensured })
+    expect(resolved).toBe(true)
+  })
+
+  it('ensureDraft saves again after a save failed', async () => {
+    api.saveProjectDraft.mockRejectedValueOnce(new Error('offline'))
+    const { result } = renderHook(() => useProjectDraft({ initialId: 7, buildPayload: () => payload('x') }), { wrapper })
+    act(() => { result.current.endHydration() })
+    act(() => { result.current.scheduleSave() })
+    await settle()
+    await act(async () => { await Promise.resolve() })
+    expect(api.saveProjectDraft).toHaveBeenCalledTimes(1)
+
+    await act(async () => { await result.current.ensureDraft() })
+    expect(api.saveProjectDraft).toHaveBeenCalledTimes(2)
+  })
+
   // The "Start from" choices rewrite the form before the
   // user has typed anything, so they use this instead of scheduleSave.
   it('scheduleSaveExisting saves an open draft but never creates one', async () => {

@@ -1,47 +1,51 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { UserProfile } from '@/api'
+import { queryKeys } from '@/lib/query-keys'
 
-vi.mock('../../api', async () => {
-  const actual = await vi.importActual<typeof import('../../api')>('../../api')
-  return { ...actual, getMe: vi.fn() }
-})
+const getMe = vi.fn()
+vi.mock('@/api', () => ({ getMe: () => getMe() }))
 
-import { getMe, type UserProfile } from '../../api'
 import { OrgPageFrame } from './OrgPageFrame'
 
-function renderFrame(role: string, url = '/org/vendors') {
-  vi.mocked(getMe).mockResolvedValue({ id: 1, role } as UserProfile)
+function renderFrame() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[url]}>
+      <MemoryRouter initialEntries={['/org/settings']}>
         <OrgPageFrame><p>tab body</p></OrgPageFrame>
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return qc
 }
 
+beforeEach(() => getMe.mockReset())
+
 describe('OrgPageFrame', () => {
-  it.each(['owner', 'admin'])('%s sees the Members, Settings and Vendors tabs', async role => {
-    renderFrame(role)
-    const tabs = await screen.findByRole('navigation', { name: 'Section' })
+  it('shows the Members and Settings tabs, the current one marked', async () => {
+    getMe.mockResolvedValue({ tenant_kind: 'customer' } satisfies Partial<UserProfile>)
+    const qc = renderFrame()
+    // The frame decides on the tabs from the profile: assert once it loaded.
+    await waitFor(() => expect(qc.getQueryState(queryKeys.auth.me)?.status).toBe('success'))
+    expect(screen.getByRole('heading', { name: 'Organization' })).toBeInTheDocument()
+    expect(screen.getByText('tab body')).toBeInTheDocument()
+    const tabs = screen.getByRole('navigation', { name: 'Section' })
     expect([...tabs.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Members', '/org'],
       ['Settings', '/org/settings'],
-      ['Vendors', '/org/vendors'],
     ])
-    expect(screen.getByRole('link', { name: 'Vendors' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByText(/Vendor for/)).toBeNull()
   })
 
-  it.each(['project_manager', 'linguist'])('%s gets the page with no tab row', async role => {
-    renderFrame(role)
-    // Wait for the role to arrive: before it does, no frame shows tabs.
-    await waitFor(() => expect(getMe).toHaveBeenCalled())
-    await act(async () => { await Promise.resolve() })
+  it('in a vendor org, names the client and shows no tab row', async () => {
+    getMe.mockResolvedValue({ tenant_kind: 'vendor', client_org_name: 'Example Org' } satisfies Partial<UserProfile>)
+    renderFrame()
+    expect(await screen.findByText('Vendor for Example Org')).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Section' })).toBeNull()
     expect(screen.getByText('tab body')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Organization' })).toBeInTheDocument()
-    expect(screen.queryByRole('navigation', { name: 'Section' })).not.toBeInTheDocument()
   })
 })

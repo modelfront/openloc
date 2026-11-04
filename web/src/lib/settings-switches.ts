@@ -5,7 +5,6 @@ export const SETTING_SWITCHES = [
   { key: 'mt_on_upload', field: 'mtOnUpload', on: 'MT on upload enabled', off: 'MT on upload disabled' },
   { key: 'tm_on_upload', field: 'tmOnUpload', on: 'Apply TM on upload enabled', off: 'Apply TM on upload disabled' },
   { key: 'auto_complete', field: 'autoComplete', on: 'Auto-complete enabled', off: 'Auto-complete disabled' },
-  { key: 'inline_html', field: 'inlineHTML', on: 'HTML strings enabled', off: 'HTML strings disabled' },
 ] as const
 
 type SettingSwitch = (typeof SETTING_SWITCHES)[number]

@@ -104,45 +104,72 @@ function CompleteStepForm({
         </Alert>
       )}
 
-      {!isFinalStep && (
-        <div className="space-y-2">
-          <label htmlFor="complete-comment" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Comment for next assignee <span className="text-gray-400 font-normal">(optional)</span>
-          </label>
-          <Textarea
-            id="complete-comment"
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            placeholder="e.g., Pay attention to terminology in section 3…"
-            rows={3}
-            maxLength={MAX_NOTE_LENGTH}
-            className="text-sm"
-          />
-        </div>
-      )}
+      {!isFinalStep && <HandOffComment value={comment} onChange={setComment} />}
 
-      <DialogFooter>
+      <CompleteStepButtons
+        pending={pending}
+        offerApproveAll={offerApproveAll}
+        tone={tone}
+        completeLabel={isFinalStep ? 'Complete final step' : 'Complete step'}
+        onComplete={() => onConfirm(note)}
+        onApproveAll={() => onApproveAll(note)}
+      />
+    </>
+  )
+}
+
+/** The hand-off note for whoever works the next step. */
+export function HandOffComment({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <label htmlFor="complete-comment" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        Comment for next assignee <span className="text-gray-400 font-normal">(optional)</span>
+      </label>
+      <Textarea
+        id="complete-comment"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="e.g., Pay attention to terminology in section 3…"
+        rows={3}
+        maxLength={MAX_NOTE_LENGTH}
+        className="text-sm"
+      />
+    </div>
+  )
+}
+
+/** Complete step, and Approve all and complete when there are drafts to approve. */
+export function CompleteStepButtons({ pending, offerApproveAll, tone, completeLabel, onComplete, onApproveAll }: {
+  pending: boolean
+  offerApproveAll: boolean
+  tone: 'success' | 'final'
+  completeLabel: string
+  onComplete: () => void
+  onApproveAll: () => void
+}) {
+  return (
+    <DialogFooter>
+      <Button
+        size="sm"
+        variant={offerApproveAll ? 'outline' : tone}
+        onClick={onComplete}
+        disabled={pending}
+        data-testid="complete-confirm"
+      >
+        {pending && !offerApproveAll ? 'Completing...' : completeLabel}
+      </Button>
+      {offerApproveAll && (
         <Button
           size="sm"
-          variant={offerApproveAll ? 'outline' : tone}
-          onClick={() => onConfirm(note)}
+          onClick={onApproveAll}
           disabled={pending}
+          variant={tone}
+          data-testid="complete-approve-all"
         >
-          {pending && !offerApproveAll ? 'Completing...' : isFinalStep ? 'Complete final step' : 'Complete step'}
+          {pending ? 'Completing...' : 'Approve all and complete'}
         </Button>
-        {offerApproveAll && (
-          <Button
-            size="sm"
-            onClick={() => onApproveAll(note)}
-            disabled={pending}
-            variant={tone}
-            data-testid="complete-approve-all"
-          >
-            {pending ? 'Completing...' : 'Approve all and complete'}
-          </Button>
-        )}
-      </DialogFooter>
-    </>
+      )}
+    </DialogFooter>
   )
 }
 

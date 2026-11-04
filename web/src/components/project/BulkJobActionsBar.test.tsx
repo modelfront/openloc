@@ -28,6 +28,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
 
 import { BulkJobActionsBar, type StepTarget } from './BulkJobActionsBar'
 import type { Job } from '../../api'
@@ -87,17 +88,42 @@ function renderBar(jobs: Job[], targets: StepTarget[] = jobs.map(j => activeTask
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={qc}>
-      <BulkJobActionsBar
-        projectId={42}
-        selectedJobs={jobs}
-        stepTargets={targets}
-        isManager={isManager}
-        onClear={() => {}}
-      />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={qc}>
+        <BulkJobActionsBar
+          projectId={42}
+          selectedJobs={jobs}
+          stepTargets={targets}
+          isManager={isManager}
+          onClear={() => {}}
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
+
+describe('BulkJobActionsBar — Open in editor', () => {
+  it('opens the selected files of one language together, in selection order', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue({} as Window)
+    renderBar([makeJob({ id: 5, target_language: 'de' }), makeJob({ id: 3, target_language: 'de' })])
+    await userEvent.click(screen.getByTestId('bulk-open-editor-btn'))
+    expect(open).toHaveBeenCalledWith('/projects/42/edit?jobs=5,3', '_blank')
+    open.mockRestore()
+  })
+
+  it('opens one file in the single-file editor', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue({} as Window)
+    renderBar([makeJob({ id: 5 })])
+    await userEvent.click(screen.getByTestId('bulk-open-editor-btn'))
+    expect(open).toHaveBeenCalledWith('/projects/42/jobs/5/edit', '_blank')
+    open.mockRestore()
+  })
+
+  it('is disabled for files of two target languages', () => {
+    renderBar([makeJob({ id: 5, target_language: 'de' }), makeJob({ id: 3, target_language: 'fr' })])
+    expect(screen.getByTestId('bulk-open-editor-btn')).toBeDisabled()
+  })
+})
 
 describe('BulkJobActionsBar — Stop', () => {
   it('is hidden when nothing in the selection is running', () => {

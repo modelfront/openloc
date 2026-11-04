@@ -4,12 +4,15 @@ import type { Translation } from '../api/projects'
 import type { TMEntry } from '../api/tms'
 import type { EditorRef, EditorRow } from '../api/editor'
 import { indexFieldsOf, type EditorIndexData, type IndexRow } from './editor-index'
+import { editorIdsHolding, type EditorId } from './editor-scope'
 /**
  * Patch the CAT editor's caches for a job with saved translation rows (one
  * save, or every sibling a propagation wrote): the loaded pages that hold them
  * (the latest `updated_at` and text), their index rows (status, lock, origin)
  * and, for cross-reference targets, the references' text. Each cache is copied
- * once however many rows change. Call this from `saveMut.onSuccess` BEFORE
+ * once however many rows change. Every editor open on the job is patched: its
+ * own, and each multi-file scope that holds it. Call this from
+ * `saveMut.onSuccess` BEFORE
  * `invalidateJobContext` so the cached prop reflects the new value immediately
  * — refetches that arrive later just confirm what's already there.
  *
@@ -26,10 +29,14 @@ export function advanceTranslationInCache(
 ) {
   const list: readonly Translation[] = Array.isArray(saved) ? saved : [saved as Translation]
   if (list.length === 0) return
+  for (const id of editorIdsHolding(queryClient, jobId)) patchEditorCaches(queryClient, id, list)
+}
+
+function patchEditorCaches(queryClient: QueryClient, editorId: EditorId, list: readonly Translation[]) {
   const byId = new Map(list.map(t => [t.id, t]))
   const bySegment = new Map(list.map(t => [t.segment_id, t]))
 
-  queryClient.setQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(jobId) }, old => {
+  queryClient.setQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(editorId) }, old => {
     if (!Array.isArray(old)) return old
     let changed = false
     const next = old.map(r => {
@@ -42,7 +49,7 @@ export function advanceTranslationInCache(
     })
     return changed ? next : old
   })
-  queryClient.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), old => {
+  queryClient.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(editorId), old => {
     if (!Array.isArray(old?.rows)) return old
     let rows: IndexRow[] | null = null
     for (const t of list) {
@@ -53,7 +60,7 @@ export function advanceTranslationInCache(
     }
     return rows ? { ...old, rows } : old
   })
-  queryClient.setQueryData<EditorRef[]>(queryKeys.job.editorRefs(jobId), old => {
+  queryClient.setQueryData<EditorRef[]>(queryKeys.job.editorRefs(editorId), old => {
     if (!Array.isArray(old) || !old.some(r => bySegment.has(r.segment_id))) return old
     return old.map(r => {
       const t = bySegment.get(r.segment_id)
@@ -108,22 +115,40 @@ export function invalidateProjectStatus(queryClient: QueryClient, projectId: num
  * pages on screen, so those are left as they are.
  */
 export function invalidateJobContext(queryClient: QueryClient, projectId: number, jobId: number, opts: { editorRowsFresh?: boolean } = {}) {
-  invalidateSegmentSaveContext(queryClient, projectId, jobId)
-  // The CAT-editor status bar. A segment save patches it instead
-  // (optimisticAdjustLeverage): the server reads the whole job to answer.
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.leverage(jobId) })
-  const editorKeys: unknown[] = [queryKeys.job.editorIndex(jobId)[2], queryKeys.job.editorRows(jobId)[2]]
-  queryClient.invalidateQueries({
-    queryKey: queryKeys.job.translations(jobId),
-    predicate: opts.editorRowsFresh ? q => !editorKeys.includes(q.queryKey[2]) : undefined,
-  })
-  // A step change resets or restores every segment's status and closes a
-  // step round, so the previous-step chips move with it.
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.stepStatuses(jobId) })
-  // Stored QA findings follow the translations they describe: Clear and
-  // Apply TM/MT replace the targets they were computed on, and the server
-  // drops the findings of the rows they touched.
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.qaReport(jobId) })
+  invalidateJobsContext(queryClient, projectId, [jobId], opts)
+}
+
+/**
+ * invalidateJobContext for several jobs of a project at once — a multi-file
+ * editor's Complete step or selection action. Each job's own caches go stale;
+ * the project-wide ones and the editor caches go stale once, not once per
+ * job: every per-job call would refetch the whole multi-file index again.
+ */
+export function invalidateJobsContext(queryClient: QueryClient, projectId: number, jobIds: readonly number[], opts: { editorRowsFresh?: boolean } = {}) {
+  const editorIds = new Set<EditorId>()
+  for (const jobId of jobIds) {
+    for (const key of jobSaveKeys(jobId)) queryClient.invalidateQueries({ queryKey: key })
+    // The CAT-editor status bar. A segment save patches it instead
+    // (optimisticAdjustLeverage): the server reads the whole job to answer.
+    queryClient.invalidateQueries({ queryKey: queryKeys.job.leverage(jobId) })
+    // A step change resets or restores every segment's status and closes a
+    // step round, so the previous-step chips move with it.
+    queryClient.invalidateQueries({ queryKey: queryKeys.job.stepStatuses(jobId) })
+    // Every editor open on the job: its own and each multi-file scope holding it.
+    for (const id of editorIdsHolding(queryClient, jobId)) editorIds.add(id)
+  }
+  for (const key of projectSaveKeys(projectId)) queryClient.invalidateQueries({ queryKey: key })
+  for (const id of editorIds) {
+    // Stored QA findings follow the translations they describe: Clear and
+    // Apply TM/MT replace the targets they were computed on, and the server
+    // drops the findings of the rows they touched.
+    queryClient.invalidateQueries({ queryKey: queryKeys.job.qaReport(id) })
+    const editorKeys: unknown[] = [queryKeys.job.editorIndex(id)[2], queryKeys.job.editorRows(id)[2]]
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.job.translations(id),
+      predicate: opts.editorRowsFresh ? q => !editorKeys.includes(q.queryKey[2]) : undefined,
+    })
+  }
   // The QE+APE step writes AI-authored comments, so a
   // pipeline run can add comments to segments the user never touched, and a
   // clear removes the ones describing text it just threw away. Refresh both
@@ -131,6 +156,11 @@ export function invalidateJobContext(queryClient: QueryClient, projectId: number
   // panel's own list — the counts alone left a deleted comment on screen.
   queryClient.invalidateQueries({ queryKey: queryKeys.comments.allCounts })
   queryClient.invalidateQueries({ queryKey: queryKeys.comments.all })
+}
+
+/** The QA reports of every editor open on the job: its own and each multi-file scope holding it. */
+export function invalidateQAReports(queryClient: QueryClient, jobId: number) {
+  for (const id of editorIdsHolding(queryClient, jobId)) queryClient.invalidateQueries({ queryKey: queryKeys.job.qaReport(id) })
 }
 
 /**
@@ -142,22 +172,36 @@ export function invalidateJobContext(queryClient: QueryClient, projectId: number
  * segment save does not change.
  */
 export function invalidateSegmentSaveContext(queryClient: QueryClient, projectId: number, jobId: number) {
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.detail(jobId) })
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.analysis(jobId) })
-  queryClient.invalidateQueries({ queryKey: queryKeys.job.steps(jobId) })
-  // Every job-level write that replaces target text — Apply TM, Apply MT, an
-  // AI step re-run, a clear — appends history rows. A prefix invalidation
-  // because the caller does not know which translations were touched; the
-  // panel is gated on being open, so at most one query actually refetches.
-  queryClient.invalidateQueries({ queryKey: queryKeys.segmentHistory.all })
-  queryClient.invalidateQueries({ queryKey: queryKeys.jobs.byProject(projectId) })
-  queryClient.invalidateQueries({ queryKey: queryKeys.files.byProject(projectId) })
-  queryClient.invalidateQueries({ queryKey: queryKeys.projectAnalysis.v2(projectId) })
-  // Refresh the CAT-editor TM-matches sidebar. A confirm writes the
-  // segment's source→target to the TM, so the active segment's matches change.
-  // The prefix covers every cached source for the job, so the open segment
-  // refetches and shows the just-written entry immediately.
-  queryClient.invalidateQueries({ queryKey: queryKeys.tmMatches.byJobPrefix(jobId) })
+  for (const key of [...jobSaveKeys(jobId), ...projectSaveKeys(projectId)]) queryClient.invalidateQueries({ queryKey: key })
+}
+
+/** A job's caches a segment save moves. */
+function jobSaveKeys(jobId: number): readonly (readonly unknown[])[] {
+  return [
+    queryKeys.job.detail(jobId),
+    queryKeys.job.analysis(jobId),
+    queryKeys.job.steps(jobId),
+    // Refresh the CAT-editor TM-matches sidebar. A confirm writes the
+    // segment's source→target to the TM, so the active segment's matches
+    // change. The prefix covers every cached source for the job, so the open
+    // segment refetches and shows the just-written entry immediately.
+    queryKeys.tmMatches.byJobPrefix(jobId),
+  ]
+}
+
+/** The project-wide caches a segment save moves. */
+function projectSaveKeys(projectId: number): readonly (readonly unknown[])[] {
+  return [
+    // Every job-level write that replaces target text — Apply TM, Apply MT,
+    // an AI step re-run, a clear — appends history rows. A prefix
+    // invalidation because the caller does not know which translations were
+    // touched; the panel is gated on being open, so at most one query
+    // actually refetches.
+    queryKeys.segmentHistory.all,
+    queryKeys.jobs.byProject(projectId),
+    queryKeys.files.byProject(projectId),
+    queryKeys.projectAnalysis.v2(projectId),
+  ]
 }
 
 /**

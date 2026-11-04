@@ -3,7 +3,7 @@ title: "The Playground and guided tours"
 summary: "Try every feature on sample data, and take a tour that shows the app one step at a time."
 order: 40
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-14
+updated_at: 2026-11-02
 sources:
   - web/src/components/guide/**
   - web/src/components/demo/**
@@ -55,6 +55,8 @@ Outside the Playground, starting a tour first opens the Playground, then the tou
 | **AI prompts tour** | Owner, admin, project manager |
 | **Dashboards tour** | Owner, admin, project manager |
 | **Assistant and MCP tour** | Every role |
+
+A vendor organization (see [Invite a vendor](/docs/guides/customers-and-vendors#invite-a-vendor-owner-or-admin)) has no tours: its account menu has no **Learn** item, and its empty project list has no **New here? Take the tour** button.
 
 On each card, **Next** and **Back** move between steps, the counter shows where you are (for example **3 of 8**), and the **✕** ends the tour.
 

@@ -621,3 +621,34 @@ func SeedMTRouterForProfile(t testing.TB, q db.Querier, tenantID, profileID int6
 	SetProfileMTRouter(t, q, profileID, &id)
 	return id
 }
+
+// SeedVendorTenant creates a vendor org of clientID; its slug is the name in
+// lower case with dashes.
+func SeedVendorTenant(t testing.TB, q db.Querier, clientID int64, name string) db.Tenant {
+	t.Helper()
+	v, err := q.CreateVendorTenant(context.Background(), db.CreateVendorTenantParams{
+		Name: name, Slug: strings.ToLower(strings.ReplaceAll(name, " ", "-")), ClientTenantID: clientID,
+	})
+	if err != nil {
+		t.Fatalf("CreateVendorTenant %s: %v", name, err)
+	}
+	return v
+}
+
+// SeedLanguagePair gives userID the pair src→tgt in tenantID.
+func SeedLanguagePair(t testing.TB, q db.Querier, tenantID, userID int64, src, tgt string) {
+	t.Helper()
+	if err := q.InsertUserLanguagePair(context.Background(), db.InsertUserLanguagePairParams{
+		UserID: userID, SourceLang: src, TargetLang: tgt, TenantID: tenantID,
+	}); err != nil {
+		t.Fatalf("InsertUserLanguagePair %s→%s: %v", src, tgt, err)
+	}
+}
+
+// AssertStrings fails when got is not want, in order.
+func AssertStrings(t testing.TB, label string, got, want []string) {
+	t.Helper()
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") || len(got) != len(want) {
+		t.Errorf("%s = %v, want %v", label, got, want)
+	}
+}

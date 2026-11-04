@@ -114,6 +114,13 @@ func (s *Service) RunAndPersistSelection(ctx context.Context, jobID, tenantID in
 	if !js.profileAssigned {
 		return JobRunResult{}, ErrNoQAProfile
 	}
+	return s.runSelection(ctx, job, js, ids, func() (*termIndex, error) { return s.loadRunTerms(ctx, js) })
+}
+
+// runSelection checks the job's rows among ids. terms loads the run's terms;
+// it is not called when no id is a row of the job.
+func (s *Service) runSelection(ctx context.Context, job db.Job, js jobScope, ids []int64,
+	terms func() (*termIndex, error)) (JobRunResult, error) {
 	rows, err := segmentbulk.JobRows(ctx, s.queries, job, auth.UserIDFromContext(ctx), ids)
 	if err != nil {
 		return JobRunResult{}, err
@@ -132,7 +139,10 @@ func (s *Service) RunAndPersistSelection(ctx context.Context, jobID, tenantID in
 		return JobRunResult{NoRules: true}, nil
 	}
 
-	terms, err := s.loadRunTerms(ctx, js)
+	if len(found) == 0 {
+		return JobRunResult{}, nil
+	}
+	idx, err := terms()
 	if err != nil {
 		return JobRunResult{}, err
 	}
@@ -144,7 +154,7 @@ func (s *Service) RunAndPersistSelection(ctx context.Context, jobID, tenantID in
 			batch = append(batch, qaRow{id: r.ID, source: r.SourceText, target: ptr.Deref(r.ActiveText),
 				sourceRich: ptr.Deref(r.SourceRichText), targetRich: ptr.Deref(r.ActiveRichText)})
 		}
-		n, err := s.runRows(ctx, js, terms, batch)
+		n, err := s.runRows(ctx, js, idx, batch)
 		result.Findings += n
 		if err != nil {
 			return result, err

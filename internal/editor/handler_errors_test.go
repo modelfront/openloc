@@ -20,8 +20,8 @@ var errDB = errors.New("connection reset by peer")
 // failingQueries finds the job, then fails every editor query.
 type failingQueries struct{ db.Querier }
 
-func (failingQueries) GetJobTenant(context.Context, db.GetJobTenantParams) (db.Job, error) {
-	return db.Job{ID: 1, FileID: 2, TargetLanguage: "de"}, nil
+func (failingQueries) ListEditorScopeJobs(context.Context, db.ListEditorScopeJobsParams) ([]db.ListEditorScopeJobsRow, error) {
+	return []db.ListEditorScopeJobsRow{{JobID: 1, FileID: 2, TargetLanguage: "de", ProjectID: 4}}, nil
 }
 func (failingQueries) ListEditorIndex(context.Context, db.ListEditorIndexParams) ([]db.ListEditorIndexRow, error) {
 	return nil, errDB
@@ -32,7 +32,10 @@ func (failingQueries) ListEditorSegmentsByIDs(context.Context, db.ListEditorSegm
 func (failingQueries) ListEditorTexts(context.Context, db.ListEditorTextsParams) ([]db.ListEditorTextsRow, error) {
 	return nil, errDB
 }
-func (failingQueries) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]string, error) {
+func (failingQueries) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]db.ListEditorRefSourcesRow, error) {
+	return nil, errDB
+}
+func (failingQueries) CountEditorComments(context.Context, db.CountEditorCommentsParams) ([]db.CountEditorCommentsRow, error) {
 	return nil, errDB
 }
 func (failingQueries) ListEditorWordCandidates(context.Context, db.ListEditorWordCandidatesParams) ([]db.ListEditorWordCandidatesRow, error) {
@@ -42,13 +45,15 @@ func (failingQueries) ListEditorWordCandidates(context.Context, db.ListEditorWor
 // A failed query answers 500 and hands its cause to the request log, so the
 // log says what failed.
 func TestEditorQueryErrorsReachTheRequestLog(t *testing.T) {
-	h := NewHandler(failingQueries{})
+	h := NewHandler(failingQueries{}, nil)
 	for path, handle := range map[string]http.HandlerFunc{
 		"index":              h.HandleIndex,
 		"rows?segment_ids=1": h.HandleRows,
 		"search?q=a":         h.HandleSearch,
 		"refs":               h.HandleRefs,
 		"word?word=a":        h.HandleWordCandidates,
+		"comment-counts":     h.HandleCommentCounts,
+		"fuzzy?segment_id=1": h.HandleFuzzy,
 	} {
 		t.Run(path, func(t *testing.T) {
 			res := serveFailing(handle, path)
@@ -72,15 +77,15 @@ func (laterQueriesFail) ListEditorSegmentsByIDs(context.Context, db.ListEditorSe
 func (laterQueriesFail) ListEditorTranslationsBySegments(context.Context, db.ListEditorTranslationsBySegmentsParams) ([]db.Translation, error) {
 	return nil, errDB
 }
-func (laterQueriesFail) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]string, error) {
-	return []string{`See <ph id="1" ref_key="k">x</ph>`}, nil
+func (laterQueriesFail) ListEditorRefSources(context.Context, db.ListEditorRefSourcesParams) ([]db.ListEditorRefSourcesRow, error) {
+	return []db.ListEditorRefSourcesRow{{FileID: 2, SourceRichText: `See <ph id="1" ref_key="k">x</ph>`}}, nil
 }
 func (laterQueriesFail) ListEditorSegmentsByKeys(context.Context, db.ListEditorSegmentsByKeysParams) ([]db.ListEditorSegmentsByKeysRow, error) {
 	return nil, errDB
 }
 
 func TestEditorSecondQueryErrorsReachTheRequestLog(t *testing.T) {
-	h := NewHandler(laterQueriesFail{})
+	h := NewHandler(laterQueriesFail{}, nil)
 	for path, handle := range map[string]http.HandlerFunc{
 		"rows?segment_ids=1": h.HandleRows,
 		"refs":               h.HandleRefs,

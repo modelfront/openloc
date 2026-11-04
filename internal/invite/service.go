@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -52,6 +54,8 @@ type View struct {
 	TenantID      int64              `json:"tenant_id"`
 	Email         string             `json:"email"`
 	Role          string             `json:"role"`
+	Kind          string             `json:"kind"`
+	VendorOrgName *string            `json:"vendor_org_name,omitempty"`
 	InvitedBy     int64              `json:"invited_by"`
 	InvitedByName string             `json:"invited_by_name,omitempty"`
 	AcceptedAt    pgtype.Timestamptz `json:"accepted_at"`
@@ -61,7 +65,8 @@ type View struct {
 
 func viewOf(inv db.Invite) View {
 	return View{
-		ID: inv.ID, TenantID: inv.TenantID, Email: inv.Email, Role: inv.Role, InvitedBy: inv.InvitedBy,
+		ID: inv.ID, TenantID: inv.TenantID, Email: inv.Email, Role: inv.Role,
+		Kind: inv.Kind, VendorOrgName: inv.VendorOrgName, InvitedBy: inv.InvitedBy,
 		AcceptedAt: inv.AcceptedAt, ExpiresAt: inv.ExpiresAt, CreatedAt: inv.CreatedAt,
 	}
 }
@@ -90,12 +95,55 @@ func (s *Service) spendEmail(actor auth.MemberActor) error {
 	return nil
 }
 
-// CheckCreate reports whether callerRole may invite someone as role (already
-// defaulted). It returns a RuleError, so previews refuse exactly like Create.
-func CheckCreate(callerRole, role string) error {
+// maxVendorOrgNameLen caps a vendor org's name, in characters.
+const maxVendorOrgNameLen = 120
+
+// NewInvite is an invitation a caller asks for. A non-nil VendorOrgName asks
+// for a vendor-org invite: the invitee sets up a vendor org of the caller's org
+// and becomes its admin.
+type NewInvite struct {
+	Email         string
+	Role          string
+	VendorOrgName *string
+}
+
+// CheckCreate normalizes in (email, default role, trimmed vendor name) and
+// reports whether actor may create it. It returns a RuleError, so previews
+// refuse exactly like Create. Duplicates and the email budget are checked by
+// Create only.
+func CheckCreate(ctx context.Context, q db.Querier, actor auth.MemberActor, in NewInvite) (NewInvite, error) {
+	in.Email = strings.TrimSpace(strings.ToLower(in.Email))
+	if in.Email == "" {
+		return in, RuleError{Status: http.StatusBadRequest, Msg: "email is required"}
+	}
+	tenant, err := q.GetTenant(ctx, actor.TenantID)
+	if err != nil {
+		return in, fmt.Errorf("load organization: %w", err)
+	}
+	if in.VendorOrgName != nil {
+		return checkVendorOrgInvite(actor.Role, tenant.Kind, in)
+	}
+	if in.Role == "" {
+		in.Role = auth.RoleLinguist
+	}
+	return in, checkMemberRole(actor.Role, tenant.Kind, in.Role)
+}
+
+// checkMemberRole reports whether callerRole may invite someone as role into
+// an org of tenantKind.
+func checkMemberRole(callerRole, tenantKind, role string) error {
 	// Owner is never invited from inside an org: ownership comes from a role
-	// change by an owner, or from a platform operator creating the org.
-	if role != auth.RoleAdmin && role != auth.RoleProjectManager && role != auth.RoleLinguist {
+	// change by an owner, or from a platform operator creating the org. A
+	// vendor org has no owner, and its admins come from a role change.
+	if tenantKind == auth.TenantKindVendor {
+		// A vendor org's admin runs its team; its project managers invite nobody.
+		if callerRole == auth.RoleProjectManager {
+			return RuleError{Status: http.StatusForbidden, Msg: "in a vendor organization, only its admins invite people"}
+		}
+		if role != auth.RoleProjectManager && role != auth.RoleLinguist {
+			return RuleError{Status: http.StatusBadRequest, Msg: "in a vendor organization, role must be 'project_manager' or 'linguist'"}
+		}
+	} else if role != auth.RoleAdmin && role != auth.RoleProjectManager && role != auth.RoleLinguist {
 		return RuleError{Status: http.StatusBadRequest, Msg: "role must be 'admin', 'project_manager', or 'linguist'"}
 	}
 	if !mayHandle(callerRole, role) {
@@ -108,23 +156,44 @@ func CheckCreate(callerRole, role string) error {
 	return nil
 }
 
+// checkVendorOrgInvite validates a vendor-org invite. It is an admin invite in
+// the client org, so mayHandle limits it to the client's owners and admins.
+// Only a customer org invites vendors: vendor orgs don't nest.
+func checkVendorOrgInvite(callerRole, tenantKind string, in NewInvite) (NewInvite, error) {
+	if tenantKind != auth.TenantKindCustomer {
+		return in, RuleError{Status: http.StatusForbidden, Msg: "only a client organization can invite a vendor"}
+	}
+	if in.Role != "" && in.Role != auth.RoleAdmin {
+		return in, RuleError{Status: http.StatusBadRequest, Msg: "a vendor invite makes the person the vendor's admin; leave role empty or set it to 'admin'"}
+	}
+	in.Role = auth.RoleAdmin
+	if !mayHandle(callerRole, in.Role) {
+		return in, RuleError{Status: http.StatusForbidden, Msg: "only owners and admins can invite a vendor"}
+	}
+	name := strings.TrimSpace(*in.VendorOrgName)
+	if n := utf8.RuneCountInString(name); n == 0 || n > maxVendorOrgNameLen {
+		return in, RuleError{Status: http.StatusBadRequest, Msg: fmt.Sprintf("vendor_org_name must be 1 to %d characters", maxVendorOrgNameLen)}
+	}
+	// It becomes an org name and an email subject: one line of text.
+	if strings.ContainsFunc(name, unicode.IsControl) {
+		return in, RuleError{Status: http.StatusBadRequest, Msg: "vendor_org_name can't contain line breaks or control characters"}
+	}
+	in.VendorOrgName = &name
+	return in, nil
+}
+
 // Create validates and stores a 7-day invite, then emails the link. Role
 // defaults to linguist. A failed email is logged, not returned: the invite row
 // is durable and the inviter can resend.
-func (s *Service) Create(ctx context.Context, actor auth.MemberActor, email, role string) (View, error) {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" {
-		return View{}, RuleError{Status: http.StatusBadRequest, Msg: "email is required"}
-	}
-	if role == "" {
-		role = auth.RoleLinguist
-	}
-	if err := CheckCreate(actor.Role, role); err != nil {
+func (s *Service) Create(ctx context.Context, actor auth.MemberActor, in NewInvite) (View, error) {
+	in, err := CheckCreate(ctx, s.q, actor, in)
+	if err != nil {
 		return View{}, err
 	}
+	email, role := in.Email, in.Role
 	tenantID := actor.TenantID
 
-	_, err := s.q.GetPendingInviteByEmailAndTenant(ctx, db.GetPendingInviteByEmailAndTenantParams{Email: email, TenantID: tenantID})
+	_, err = s.q.GetPendingInviteByEmailAndTenant(ctx, db.GetPendingInviteByEmailAndTenantParams{Email: email, TenantID: tenantID})
 	if err == nil {
 		return View{}, RuleError{Status: http.StatusConflict, Msg: "a pending invite already exists for this email"}
 	}
@@ -156,13 +225,19 @@ func (s *Service) Create(ctx context.Context, actor auth.MemberActor, email, rol
 	if err != nil {
 		return View{}, fmt.Errorf("generate invite token: %w", err)
 	}
+	kind := auth.InviteKindMember
+	if in.VendorOrgName != nil {
+		kind = auth.InviteKindVendorOrg
+	}
 	inv, err := s.q.CreateInvite(ctx, db.CreateInviteParams{
-		TenantID:  tenantID,
-		Email:     email,
-		Role:      role,
-		InvitedBy: actor.UserID,
-		Token:     token,
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(inviteExpiry), Valid: true},
+		TenantID:      tenantID,
+		Email:         email,
+		Role:          role,
+		InvitedBy:     actor.UserID,
+		Token:         token,
+		ExpiresAt:     pgtype.Timestamptz{Time: time.Now().Add(inviteExpiry), Valid: true},
+		Kind:          kind,
+		VendorOrgName: in.VendorOrgName,
 	})
 	if err != nil {
 		return View{}, fmt.Errorf("create invite: %w", err)
@@ -193,7 +268,7 @@ func (s *Service) Resend(ctx context.Context, actor auth.MemberActor, id int64) 
 	if err != nil {
 		return View{}, fmt.Errorf("generate invite token: %w", err)
 	}
-	subject, content, err := s.inviteEmail(ctx, inv.TenantID, inv.Role, token)
+	subject, content, err := s.inviteEmail(ctx, inv, token)
 	if err != nil {
 		return View{}, err
 	}
@@ -222,6 +297,23 @@ func (s *Service) Resend(ctx context.Context, actor auth.MemberActor, id int64) 
 	return viewOf(updated), nil
 }
 
+// handlerRole is the role whose invites the actor may handle: their own,
+// except that a vendor org's project manager handles none (only its admins
+// run its team).
+func handlerRole(ctx context.Context, q db.Querier, actor auth.MemberActor) (string, error) {
+	if actor.Role != auth.RoleProjectManager {
+		return actor.Role, nil
+	}
+	tenant, err := q.GetTenant(ctx, actor.TenantID)
+	if err != nil {
+		return "", fmt.Errorf("load organization: %w", err)
+	}
+	if tenant.Kind == auth.TenantKindVendor {
+		return "", nil
+	}
+	return actor.Role, nil
+}
+
 // handledRoles lists the invite roles the actor may handle, for queries that
 // filter by role.
 func handledRoles(actorRole string) []string {
@@ -238,18 +330,28 @@ func handledRoles(actorRole string) []string {
 // newest first, with the inviter's name. The role filter runs in SQL, so a
 // page of results is a page of invites the actor may see.
 func List(ctx context.Context, q db.Querier, actor auth.MemberActor) ([]View, error) {
+	return list(ctx, q, actor, false)
+}
+
+// list is List; pendingOnly leaves out the accepted invites.
+func list(ctx context.Context, q db.Querier, actor auth.MemberActor, pendingOnly bool) ([]View, error) {
 	out := make([]View, 0)
-	roles := handledRoles(actor.Role)
+	role, err := handlerRole(ctx, q, actor)
+	if err != nil {
+		return nil, err
+	}
+	roles := handledRoles(role)
 	if len(roles) == 0 {
 		return out, nil
 	}
-	rows, err := q.ListInvitesByTenant(ctx, db.ListInvitesByTenantParams{TenantID: actor.TenantID, Roles: roles})
+	rows, err := q.ListInvitesByTenant(ctx, db.ListInvitesByTenantParams{TenantID: actor.TenantID, Roles: roles, PendingOnly: pendingOnly})
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}
 	for _, r := range rows {
 		out = append(out, View{
 			ID: r.ID, TenantID: r.TenantID, Email: r.Email, Role: r.Role,
+			Kind: r.Kind, VendorOrgName: r.VendorOrgName,
 			InvitedBy: r.InvitedBy, InvitedByName: r.InvitedByName,
 			AcceptedAt: r.AcceptedAt, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
 		})
@@ -274,7 +376,11 @@ func get(ctx context.Context, q db.Querier, actor auth.MemberActor, id int64) (d
 	if err != nil {
 		return db.Invite{}, err
 	}
-	if !mayHandle(actor.Role, inv.Role) {
+	role, err := handlerRole(ctx, q, actor)
+	if err != nil {
+		return db.Invite{}, err
+	}
+	if !mayHandle(role, inv.Role) {
 		return db.Invite{}, pgx.ErrNoRows
 	}
 	return inv, nil

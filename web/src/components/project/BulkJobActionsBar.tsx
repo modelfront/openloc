@@ -4,6 +4,9 @@
 // buttons, among them the manager re-run of a healthy AI step; Re-run here
 // repeats the automation that failed a job.
 //
+// Open in editor opens the selected jobs in one CAT editor grid (one project,
+// one target language), or the single-file editor for one job.
+//
 // Two kinds of action. The step actions — Assign, Set deadline, Complete
 // step — act on the exact steps picked (`stepTargets`), so a later Review
 // step can be assigned before it starts. The job actions — Download,
@@ -26,6 +29,7 @@
 // open to everyone (the backend checks a linguist holds the task).
 
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 
@@ -72,6 +76,8 @@ import { ImportXLIFFAction } from './ImportXLIFFAction'
 import { BulkDeadlineButton } from './BulkDeadlineButton'
 import { SelectionBar, SelectionBarDivider } from '@/components/list/SelectionBar'
 import { isAutomatedStep } from '@/lib/workflow-steps'
+import { editorScopePath, openEditorTab } from '@/lib/editor-link'
+import { openTogetherBlock } from '@/lib/editor-scope'
 
 /** One job's assignment for one workflow step, as a target of the step actions. */
 export interface StepTarget {
@@ -97,6 +103,7 @@ interface Props {
 
 export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isManager, onClear }: Props) {
   const { run, runQueued, runningAction } = useBulkJobActions(projectId)
+  const navigate = useNavigate()
   const [clearOpen, setClearOpen] = useState(false)
   const [completeOpen, setCompleteOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -123,6 +130,7 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
     ...new Map(stepTargets.filter(t => t.assignmentId === t.job.workflow_step?.id).map(t => [t.job.id, t.job])).values(),
   ].filter(canCompleteJob)
   const stopEligible = selectedJobs.filter(canStopJob)
+  const openBlock = openTogetherBlock(selectedJobs)
   // Re-run repeats a failed job's automation, so it counts each job once,
   // from a selected task in error.
   const rerunEligible = [
@@ -232,9 +240,20 @@ export function BulkJobActionsBar({ projectId, selectedJobs, stepTargets, isMana
       busy={busy}
     >
 
-      {/* Download leads the bar: it's the action users hunt for, and unlike the
-          rest it needs no eligibility from the workflow — any selection has
-          something to download. */}
+      <BulkButton
+        label="Open in editor"
+        pending={false}
+        eligibleCount={openBlock ? 0 : total}
+        disabled={busy}
+        tooltip={total === 1 ? 'Open this task in the CAT editor' : `Work through the ${total} files in one editor grid`}
+        ineligibleTooltip={openBlock ?? undefined}
+        onClick={() => openEditorTab(editorScopePath(projectId, selectedJobs.map(j => j.id)), navigate)}
+        testid="bulk-open-editor-btn"
+      />
+
+      {/* Download leads the file actions: it's the action users hunt for,
+          and unlike the rest it needs no eligibility from the workflow — any
+          selection has something to download. */}
       <DownloadMenu
         projectId={projectId}
         jobs={selectedJobs}

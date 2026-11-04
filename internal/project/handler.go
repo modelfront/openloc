@@ -71,7 +71,6 @@ type createRequest struct {
 		MtOnUpload     *bool    `json:"mt_on_upload"`
 		TmOnUpload     *bool    `json:"tm_on_upload"`
 		AutoComplete   *bool    `json:"auto_complete"`
-		InlineHTML     *bool    `json:"inline_html"`
 		LinguistTerms  *string  `json:"linguist_terms"`
 		// Match scoring; nil keeps the template's value or the column default.
 		SublanguagePenaltyPct *int32  `json:"sublanguage_penalty_pct"`
@@ -90,6 +89,9 @@ type createRequest struct {
 		// Segmentation profile; nil keeps the template's while it fits the
 		// source language, else the suggested one for it.
 		SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+		// Filter profile per format; a format left out keeps the template's
+		// choice, else its Default.
+		FilterProfileIDs map[string]*int64 `json:"filter_profile_ids"`
 	} `json:"settings"`
 	TMAssignments   []settings.TMAssignmentInput   `json:"tm_assignments"`
 	TermAssignments []settings.TermAssignmentInput `json:"term_assignments"`
@@ -123,7 +125,6 @@ func (req *createRequest) params() (CreateParams, SetupConfig, error) {
 		cfg.MtOnUpload = req.Settings.MtOnUpload
 		cfg.TmOnUpload = req.Settings.TmOnUpload
 		cfg.AutoComplete = req.Settings.AutoComplete
-		cfg.InlineHTML = req.Settings.InlineHTML
 		cfg.LinguistTerms = req.Settings.LinguistTerms
 		cfg.SublanguagePenaltyPct = req.Settings.SublanguagePenaltyPct
 		cfg.NearExactPenaltyPct = req.Settings.NearExactPenaltyPct
@@ -137,6 +138,7 @@ func (req *createRequest) params() (CreateParams, SetupConfig, error) {
 			cfg.TMProfileID = req.Settings.TMProfileID
 		}
 		cfg.SegmentationProfileID = req.Settings.SegmentationProfileID
+		cfg.FilterProfileIDs = req.Settings.FilterProfileIDs
 		if len(req.Settings.QAProfileID) > 0 {
 			if raw := strings.TrimSpace(string(req.Settings.QAProfileID)); raw == "null" {
 				cfg.ClearQAProfile = true

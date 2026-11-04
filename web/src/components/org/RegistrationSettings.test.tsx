@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import RegistrationSettings from './RegistrationSettings'
@@ -37,7 +37,8 @@ describe('RegistrationSettingsSection', () => {
 
     api.getOrgSettings.mockResolvedValueOnce({ open_registration: false, domain: 'example.com' })
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByText('Invite only')).toBeInTheDocument()
+    expect(await screen.findByRole('switch')).not.toBeChecked()
+    expect(screen.getByRole('region', { name: 'Registration' })).toHaveTextContent('Invite only')
     expect(screen.getByText('@example.com')).toBeInTheDocument()
   })
 
@@ -53,5 +54,16 @@ describe('RegistrationSettingsSection', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Open registration enabled'))
     expect(api.updateOrgSettings).toHaveBeenCalledWith({ open_registration: true })
     expect(screen.getByText('Anyone with organization email can join')).toBeInTheDocument()
+  })
+})
+
+describe('RegistrationSettingsSection header', () => {
+  it('says the current mode in its header, with the switch shown', async () => {
+    api.getOrgSettings.mockResolvedValue({ open_registration: true, domain: 'example.com' })
+    renderSettings()
+
+    const section = screen.getByRole('region', { name: 'Registration' })
+    expect(await within(section).findByText(/Open to @example.com/)).toBeVisible()
+    expect(within(section).getByRole('switch')).toBeVisible()
   })
 })

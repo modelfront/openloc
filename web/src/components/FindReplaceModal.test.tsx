@@ -24,7 +24,7 @@ vi.mock('../api', () => ({
 const defaultProps = {
   open: true,
   onClose: vi.fn(),
-  jobId: 42,
+  jobs: { jobIds: [42], jobOf: () => 42 },
   onHighlight: vi.fn(),
   onScrollToTranslation: vi.fn(),
   onDeactivate: vi.fn(),
@@ -296,7 +296,7 @@ describe('FindReplaceModal', () => {
     render(<FindReplaceModal {...defaultProps} />)
     await user.type(screen.getByPlaceholderText('Find...'), 'old')
     await user.click(screen.getByRole('button', { name: /replace all/i }))
-    await waitFor(() => expect(defaultProps.onComplete).toHaveBeenCalledWith(expect.objectContaining({ taskReopened: true })))
+    await waitFor(() => expect(defaultProps.onComplete).toHaveBeenCalledWith(expect.objectContaining({ reopenedJobs: [42] })))
   })
 
   it('without a selection there is no "In selection" option', () => {
@@ -364,7 +364,7 @@ describe('FindReplaceModal', () => {
     render(<FindReplaceModal {...defaultProps} onTaskLocked={onTaskLocked} />)
     await user.type(screen.getByPlaceholderText('Find...'), 'old')
     await user.click(screen.getByRole('button', { name: /replace all/i }))
-    await waitFor(() => expect(onTaskLocked).toHaveBeenCalledWith(err))
+    await waitFor(() => expect(onTaskLocked).toHaveBeenCalledWith(err, 42))
     expect(toast.error).not.toHaveBeenCalled()
     expect(defaultProps.onComplete).not.toHaveBeenCalled()
   })
@@ -433,5 +433,59 @@ describe('FindReplaceModal include locked', () => {
     render(<TooltipProvider><FindReplaceModal {...defaultProps} canReplaceLocked /></TooltipProvider>)
     await user.hover(screen.getByRole('checkbox', { name: /include locked/i }))
     expect(await screen.findByText(/replace changes them too/i)).toBeInTheDocument()
+  })
+})
+
+// Several files open together: each request goes to the job of its rows.
+describe('FindReplaceModal over several files', () => {
+  const twoFiles = { jobIds: [1, 2], jobOf: (id: number) => (id < 20 ? 1 : 2) }
+
+  it('Replace all writes every file, and one locked file does not stop the others', async () => {
+    const { toast } = await import('sonner')
+    const err = new ApiError(409, 'The task is completed.', { error: { code: 'task_completed', message: 'The task is completed.' } })
+    mockFindReplace.mockImplementation(async (jobId: number) => {
+      if (jobId === 1) throw err
+      return { ...NONE_SKIPPED, replaced: 2, segments: 2, taskReopened: false }
+    })
+    const onTaskLocked = vi.fn()
+    const user = userEvent.setup()
+    render(<FindReplaceModal {...defaultProps} jobs={twoFiles} onTaskLocked={onTaskLocked} />)
+    await user.type(screen.getByPlaceholderText('Find...'), 'old')
+    await user.click(screen.getByRole('button', { name: /replace all/i }))
+    await waitFor(() => expect(defaultProps.onComplete).toHaveBeenCalledWith(expect.objectContaining({ writtenJobs: [2] })))
+    expect(mockFindReplace.mock.calls.map(c => c[0])).toEqual([1, 2])
+    expect(onTaskLocked).toHaveBeenCalledWith(err, 1)
+    expect(toast.warning).toHaveBeenCalledWith('Replaced 2 occurrences in 2 segments · 1 file you cannot edit now')
+  })
+
+  it('Replace sends the open match to its own file\'s job', async () => {
+    mockFindMatches.mockImplementation(async (jobId: number) => ({ matches: 1, segments: 1, translation_ids: jobId === 1 ? [] : [21] }))
+    mockReplaceOne.mockResolvedValue({ ...NONE_SKIPPED, replaced: 1, segments: 1, taskReopened: false })
+    const user = userEvent.setup()
+    render(<FindReplaceModal {...defaultProps} jobs={twoFiles} />)
+    await user.type(screen.getByPlaceholderText('Find...'), 'old')
+    await user.click(screen.getByRole('button', { name: /^find$/i }))
+    await waitFor(() => expect(defaultProps.onScrollToTranslation).toHaveBeenCalledWith(21))
+    await user.click(screen.getByRole('button', { name: /^replace$/i }))
+    await waitFor(() => expect(mockReplaceOne).toHaveBeenCalledWith(2, 'old', '', expect.anything(), 21))
+  })
+})
+
+describe('FindReplaceModal: nothing written', () => {
+  it('names a file that failed for another reason beside a locked one', async () => {
+    const { toast } = await import('sonner')
+    const err = new ApiError(409, 'The task is completed.', { error: { code: 'task_completed', message: 'The task is completed.' } })
+    mockFindReplace.mockImplementation(async (jobId: number) => {
+      if (jobId === 1) throw err
+      throw new Error('Server error')
+    })
+    const onTaskLocked = vi.fn()
+    const user = userEvent.setup()
+    render(<FindReplaceModal {...defaultProps} jobs={{ jobIds: [1, 2], jobOf: (id: number) => (id < 20 ? 1 : 2) }} onTaskLocked={onTaskLocked} />)
+    await user.type(screen.getByPlaceholderText('Find...'), 'old')
+    await user.click(screen.getByRole('button', { name: /replace all/i }))
+    await waitFor(() => expect(onTaskLocked).toHaveBeenCalledWith(err, 1))
+    expect(toast.error).toHaveBeenCalledWith('Server error')
+    expect(defaultProps.onComplete).not.toHaveBeenCalled()
   })
 })

@@ -21,5 +21,9 @@ func (h *Handler) HandleDuplicate(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err, "duplicate")
 		return
 	}
-	httputil.Created(w, h.newTemplateResponse(r.Context(), dup, profile))
+	resp, ok := h.templateResponseOr500(w, r, dup, profile)
+	if !ok {
+		return
+	}
+	httputil.Created(w, resp)
 }

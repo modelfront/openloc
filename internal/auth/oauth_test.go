@@ -57,6 +57,56 @@ func TestHandleDevLogin_Enabled(t *testing.T) {
 	}
 }
 
+// The login page's Vendor login button: identity "vendor" signs in as the seed
+// vendor org's admin, straight into the vendor org.
+func TestHandleDevLogin_VendorIdentity(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+
+	router := testutil.NewTestRouter(pool)
+	client := testutil.SeedTenant(t, q, "DevLoginClient")
+	vendor := testutil.SeedVendorTenant(t, q, client.ID, seedid.VendorOrgName)
+	testutil.SeedUserWithRole(t, q, vendor.ID, seedid.VendorAdminEmail, "pass", "admin")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/auth/dev-login", strings.NewReader(`{"identity":"vendor"}`))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedsOrgSelection bool `json:"needs_org_selection"`
+		User              struct {
+			Email    string `json:"email"`
+			TenantID int64  `json:"tenant_id"`
+			Role     string `json:"role"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.User.Email != seedid.VendorAdminEmail {
+		t.Errorf("signed in as %q, want the seed vendor admin %q", resp.User.Email, seedid.VendorAdminEmail)
+	}
+	if resp.NeedsOrgSelection || resp.User.TenantID != vendor.ID || resp.User.Role != "admin" {
+		t.Errorf("landed in tenant %d as %q (picker %v), want the vendor org %d as admin",
+			resp.User.TenantID, resp.User.Role, resp.NeedsOrgSelection, vendor.ID)
+	}
+}
+
+func TestHandleDevLogin_UnknownIdentity(t *testing.T) {
+	pool, _, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+
+	router := testutil.NewTestRouter(pool)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/auth/dev-login", strings.NewReader(`{"identity":"nobody"}`))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unknown identity, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleDevLogin_Disabled(t *testing.T) {
 	pool, _, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()

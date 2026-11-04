@@ -14,7 +14,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Settings, LogOut, Building2, ChevronDown, Search, SlidersHorizontal, Check, LineChart, BarChart3, PieChart, Undo2, Workflow, Languages, Mail, TriangleAlert, FileText, FileSpreadsheet } from 'lucide-react'
+import { Settings, LogOut, Building2, ChevronDown, Search, SlidersHorizontal, Check, LineChart, BarChart3, PieChart, Undo2, Workflow, Languages, Mail, TriangleAlert, FileText, FileSpreadsheet, Copy } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
 import { SettingsCard } from '@/components/layout/SettingsCard'
@@ -23,6 +23,7 @@ import { EditorSidebarSection } from '@/components/EditorSidebarSection'
 import { Button } from '@/components/ui/button'
 import { CreateButton } from '@/components/ui/create-button'
 import { DeleteButton } from '@/components/ui/delete-button'
+import { RowAction, RowDeleteAction } from '@/components/list/RowAction'
 import { SegmentRowAction, SegmentRowActionBar } from '../components/SegmentRowAction'
 import { DownloadOptionsMenu, type DownloadOption } from '@/components/ui/download-options-menu'
 import { PinButton } from '@/components/charts/PinButton'
@@ -39,7 +40,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ChoiceToggle } from '@/components/ui/choice-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Chip, ChipButton, chipStripeClass, chipSurfaceClass, type ChipColor } from '@/components/ui/chip'
-import { AIStepChip, HumanStepChip, HybridStepChip, PretranslateStepChip } from '@/components/ui/chip-presets'
+import { AIStepChip, HumanStepChip, HybridStepChip, MemberDisabledChip, PretranslateStepChip, VendorOrgChip } from '@/components/ui/chip-presets'
 import { SegmentStatusIcon, LockIcon } from '@/components/SegmentStatusIcon'
 import { CountMeta } from '@/components/ui/count-meta'
 import { DotSeparator } from '@/components/ui/dot-separator'
@@ -66,6 +67,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { DataTable, type ColumnDef } from '@/components/ui/data-table'
+import { Pagination } from '@/components/ui/pagination'
 import { AddFilterMenu, AssetFilterBar, FilterChip, FilterOption, InlineRenameField, InlineNameField, AddItemButton, ClearFiltersButton, LoadMoreButton } from '@/components/list'
 import { FormField } from '@/components/ui/form-field'
 import { CheckboxField } from '@/components/ui/checkbox-field'
@@ -83,6 +85,7 @@ import { WorkflowStepsEditor, type WorkflowStep as WorkflowDeadlineStep } from '
 import { DateTimePicker } from '@/components/ui/date-picker'
 import { DateTimePickerDemo } from './debug/DatePickerDemos'
 import { SortableGridRowDemo } from './debug/SortableGridRowDemo'
+import { LanguageFilterChipDemo, PagedTableDemo } from './debug/ListDemos'
 import { LanguageCode, LanguagePair } from '@/components/ui/language-code'
 import { ReorderIcon } from '@/components/ui/reorder-icon'
 import { DragHandle } from '@/components/ui/drag-handle'
@@ -581,6 +584,30 @@ function ConfirmDialogDemo() {
   )
 }
 
+/** Sections the page opens together: open + onOpenChange, driven by Expand all. */
+function ControlledSectionsDemo() {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const names = ['HTML', 'Excel']
+  const allOpen = names.every(n => open[n])
+  return (
+    <div className="w-full">
+      <div className="mb-2 flex justify-end">
+        <TextLink onClick={() => setOpen(Object.fromEntries(names.map(n => [n, !allOpen])))}>
+          {allOpen ? 'Collapse all' : 'Expand all'}
+        </TextLink>
+      </div>
+      <div>
+        {names.map(n => (
+          <SlimCollapsibleSection key={n} title={n} size="compact" toggleLabel="2 profiles" variant="grouped"
+            open={!!open[n]} onOpenChange={o => setOpen(prev => ({ ...prev, [n]: o }))}>
+            <div className={listRowClass}><span className="font-medium">{n} profiles</span></div>
+          </SlimCollapsibleSection>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function DisclosureToggleDemo() {
   const [open, setOpen] = useState<Record<string, boolean>>({ row: true })
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
@@ -636,7 +663,8 @@ function FilterChipDemo({ size, removable }: { size?: 'sm' | 'md'; removable?: b
       onRemove={removable ? () => { setShown(false); setValue(null) } : undefined}
       label="Status"
       value={value}
-      testId={`debug-filter-chip-${size ?? 'sm'}`}
+      testId={`debug-filter-chip-${size ?? 'sm'}${removable ? '-removable' : ''}`}
+      searchable={false}
       render={(close) => (
         <>
           <FilterOption selected={value == null} onClick={() => { setValue(null); close() }}>
@@ -653,10 +681,58 @@ function FilterChipDemo({ size, removable }: { size?: 'sm' | 'md'; removable?: b
   )
 }
 
+// A chip holding several values: its options are `multi` toggles that leave
+// the popover open (the project list's Deadline filter).
+function MultiFilterChipDemo() {
+  const [values, setValues] = useState<string[]>([])
+  const options = ['Overdue', 'Due within 24h', 'Due in 1–7 days']
+  const toggle = (o: string) => setValues(options.filter(x => (x === o) !== values.includes(x)))
+  return (
+    <FilterChip
+      size="sm"
+      label="Deadline"
+      value={values.length ? values.join(', ') : null}
+      testId="debug-filter-chip-multi"
+      searchable={false}
+      render={(close) => (
+        <>
+          <FilterOption selected={!values.length} onClick={() => { setValues([]); close() }}>All</FilterOption>
+          {options.map((o) => (
+            <FilterOption key={o} multi selected={values.includes(o)} onClick={() => toggle(o)}>{o}</FilterOption>
+          ))}
+        </>
+      )}
+    />
+  )
+}
+
+// A list that comes from data (people, customers, languages) keeps the
+// default search box above its options.
+function SearchableFilterChipDemo() {
+  const [value, setValue] = useState<string | null>(null)
+  const people = ['Ada Lovelace', 'Alan Turing', 'Barbara Liskov', 'Edsger Dijkstra', 'Grace Hopper', 'Ken Thompson', 'Margaret Hamilton']
+  return (
+    <FilterChip
+      size="sm"
+      label="Created by"
+      value={value}
+      testId="debug-filter-chip-search"
+      render={(close) => (
+        <>
+          <FilterOption selected={value == null} onClick={() => { setValue(null); close() }}>Anyone</FilterOption>
+          {people.map(p => (
+            <FilterOption key={p} selected={value === p} onClick={() => { setValue(p); close() }}>{p}</FilterOption>
+          ))}
+        </>
+      )}
+    />
+  )
+}
+
 // AddFilterMenu + FilterChip as the Tasks tab uses them: a chip shows only
 // while its filter is set; the menu offers the others and opens the picked
 // one's options right away.
-function AddFilterMenuDemo() {
+function AddFilterMenuDemo({ size }: { size?: 'sm' | 'md' }) {
   const [values, setValues] = useState<Record<string, string | null>>({ status: null, priority: null })
   const OPTIONS: Record<string, { label: string; values: string[] }> = {
     status: { label: 'Status', values: ['Draft', 'In progress', 'Completed'] },
@@ -676,12 +752,13 @@ function AddFilterMenuDemo() {
     <div className="flex items-center gap-2">
       {keys.some(k => values[k] == null) && (
         <AddFilterMenu
-          testId="debug-add-filter"
-          filters={keys.filter(k => values[k] == null).map(k => ({ key: k, label: OPTIONS[k].label, options: options(k) }))}
+          size={size}
+          testId={`debug-add-filter-${size ?? 'sm'}`}
+          filters={keys.filter(k => values[k] == null).map(k => ({ key: k, label: OPTIONS[k].label, options: options(k), searchable: false }))}
         />
       )}
       {keys.filter(k => values[k] != null).map(k => (
-        <FilterChip key={k} label={OPTIONS[k].label} value={values[k]} testId={`debug-chip-${k}`} onRemove={() => set(k, null)} render={options(k)} />
+        <FilterChip key={k} size={size} label={OPTIONS[k].label} value={values[k]} testId={`debug-chip-${size ?? 'sm'}-${k}`} onRemove={() => set(k, null)} render={options(k)} searchable={false} />
       ))}
     </div>
   )
@@ -760,6 +837,18 @@ export default function DebugPage() {
               <DeleteButton size="icon-xs" onClick={() => {}} />
               <DeleteButton disabled onClick={() => {}} />
               <DeleteButton loading onClick={() => {}} />
+            </Row>
+          </SubSection>
+          <SubSection
+            title="RowAction / RowDeleteAction"
+            description="Icon actions at the end of a clickable table row (components/list/RowAction.tsx): a ghost icon Button, or a DeleteButton, named by a tooltip and an aria-label. The click does not open the row. Used by the segmentation and filter profile lists."
+          >
+            <Row label="copy / disabled / delete">
+              <TooltipProvider delay={200}>
+                <RowAction label="Copy" onClick={() => {}} testId="debug-row-copy"><Copy /></RowAction>
+                <RowAction label="Copy" disabled onClick={() => {}} testId="debug-row-copy-disabled"><Copy /></RowAction>
+                <RowDeleteAction label="Delete Demo profile" onClick={() => {}} testId="debug-row-delete" />
+              </TooltipProvider>
             </Row>
           </SubSection>
           <SubSection
@@ -944,6 +1033,12 @@ export default function DebugPage() {
               <HybridStepChip />
               <AIStepChip />
               <PretranslateStepChip />
+            </Row>
+            <Row label="org kind">
+              <VendorOrgChip />
+            </Row>
+            <Row label="member state">
+              <MemberDisabledChip />
             </Row>
           </SubSection>
         </Section>
@@ -1254,13 +1349,19 @@ export default function DebugPage() {
 
         <Section
           title="FilterChip"
-          description="Shared popover filter chip (components/list) used by ProjectFilterBar and the project page's Tasks and Files filters. Trigger shows label + active value; picking an option closes the popover. Two sizes: sm (26px, default) and md (30px, matches the h-input form-control height for bars that sit next to a search box). onRemove adds an × that takes the chip off a bar where the user picks which filters show. AddFilterMenu (components/list) is that bar's add button: it lists the filters not set and opens the picked one's options right away, so a chip appears only once a value is picked (the Tasks tab)."
+          description="Shared popover filter chip (components/list) used by ProjectFilterBar and the project page's Tasks and Files filters. LanguageFilterChip is the one for a source or target language: All, then every language the org knows, or only the codes given (the languages with a hit), the current pick always listed. Trigger shows label + active value; picking an option closes the popover. Two sizes: sm (26px, default) and md (30px, matches the h-input form-control height for bars that sit next to a search box). onRemove adds an × that takes the chip off a bar where the user picks which filters show; a removable md chip stays 30px. A chip that holds several values marks its options multi: each toggles, shows a check and leaves the popover open (the project list's Deadline filter). The options sit under a search box by default (FilterOptions, also in AddFilterMenu); a short fixed list such as a status passes searchable={false}. AddFilterMenu (components/list) is that bar's add button, drawn with the idle chip frame (FILTER_CHIP_IDLE_FRAME) and the chips' size: it lists the filters not set and opens the picked one's options right away, so a chip appears only once a value is picked (the Tasks tab)."
         >
           <Row label="sm (26px, default)">
             <FilterChipDemo size="sm" />
           </Row>
           <Row label="removable (onRemove)">
             <FilterChipDemo size="sm" removable />
+          </Row>
+          <Row label="several values (multi)">
+            <MultiFilterChipDemo />
+          </Row>
+          <Row label="search (the default)">
+            <SearchableFilterChipDemo />
           </Row>
           <Row label="AddFilterMenu">
             <AddFilterMenuDemo />
@@ -1270,6 +1371,15 @@ export default function DebugPage() {
               <FilterChipDemo size="md" />
               <Input placeholder="…next to a 30px input" className="text-sm max-w-[220px]" />
             </div>
+          </Row>
+          <Row label="LanguageFilterChip (codes)">
+            <LanguageFilterChipDemo />
+          </Row>
+          <Row label="md removable (stays 30px)">
+            <FilterChipDemo size="md" removable />
+          </Row>
+          <Row label="AddFilterMenu md (the project list)">
+            <AddFilterMenuDemo size="md" />
           </Row>
         </Section>
 
@@ -1298,6 +1408,30 @@ export default function DebugPage() {
               <LoadMoreButton hasNextPage isFetchingNextPage onLoadMore={() => {}} testId="debug-load-more-busy" />
               <LoadMoreButton size="sm" hasNextPage isFetchingNextPage={false} onLoadMore={() => {}} testId="debug-load-more-sm" />
             </div>
+          </Row>
+        </Section>
+
+        <Section
+          title="Pagination"
+          description="Numbered pages under a list whose total is known (ui/pagination.tsx): Previous, the first and last page, the current page and its neighbours with … between, Next. Nothing for one page. The Members tab uses it, with the page in the URL; a long list without a total uses LoadMoreButton."
+        >
+          <Row label="page 1 of 3">
+            <Pagination page={1} pageCount={3} onPageChange={() => {}} testId="debug-pages-short" />
+          </Row>
+          <Row label="page 6 of 12">
+            <Pagination page={6} pageCount={12} onPageChange={() => {}} testId="debug-pages-long" />
+          </Row>
+        </Section>
+
+        <Section
+          title="PagedTable"
+          description="The body of a flush SettingsCard holding a numbered list (components/list/PagedTable.tsx), with usePagedQuery (hooks/usePagedQuery.ts) for the page in the URL. A placeholder while the first page loads, the error with Retry, the empty message, or the table wall to wall with Pagination under it; a page past the end goes back to page 1. The Members tab's Members, Vendors and Accepted invites lists use it."
+        >
+          <Row label="23 rows, ten a page">
+            <PagedTableDemo />
+          </Row>
+          <Row label="empty">
+            <PagedTableDemo empty />
           </Row>
         </Section>
 
@@ -1473,12 +1607,18 @@ export default function DebugPage() {
             <div className="w-64"><Progress value={null} size="sm" tone="blue" aria-label="Import progress" /></div>
           </Row>
         </Section>
-        <Section title="SettingsCard" description="One titled card on a settings page (components/layout/SettingsCard.tsx): the card surface, a SectionHeader, an optional muted description line, then the body. Renders a <section>, so tests find a card by its heading. icon is a leading lucide icon sized by the header; info sits right of the title (a SectionInfo, a count); action is right-aligned; className is spacing against the neighbouring cards only. Used by personal Settings and the Organization pages.">
-          <SettingsCard title="Notification rules" icon={<Mail />} description="Master switches for email notifications.">
+        <Section title="SettingsCard" description="One section of a settings page (components/layout/SettingsCard.tsx), always open: a slim header with icon, title, a live one-line summary and action buttons; then an optional toolbar strip (search, filters, a mode switch), the description and the body. flush lets a table run wall to wall. #id in the URL scrolls to it. Used by personal Settings and the Organization pages.">
+          <SettingsCard title="Notification rules" id="debug-settings-plain" icon={<Mail />} summary="3 of 4 emails on · Task assignment, Step rejection, Deadline approaching" description="Master switches for email notifications.">
             <p className="text-sm">Card body</p>
           </SettingsCard>
-          <SettingsCard title="Members" info={<span className="text-sm text-gray-500">(3)</span>} action={<Button size="sm">Invite</Button>} className="mt-4">
-            <p className="text-sm">No description: the header sits closer to the body.</p>
+          <SettingsCard
+            title="Members"
+            id="debug-settings-toolbar"
+            summary="59 members · 2 owners, 4 admins"
+            toolbar={<Input placeholder="Search name or email..." className="max-w-xs text-sm" />}
+            action={<Button size="xs">Invite</Button>}
+          >
+            <p className="text-sm">With a toolbar strip and a header action.</p>
           </SettingsCard>
         </Section>
         <Section title="EditorSidebarSection" description="One collapsible section of the CAT editor's Resources sidebar (components/EditorSidebarSection.tsx): a full-width DisclosureToggle header with a muted count or note on the right (meta; 0 shows nothing), an optional header action outside the toggle, and a body that unmounts while closed. Every sidebar section (TM matches, MT suggestion, Terminology, References, History, QA findings, Comments) uses it.">
@@ -1573,9 +1713,10 @@ export default function DebugPage() {
           <Row label="dialog"><DialogDemo /></Row>
         </Section>
 
-        <Section title="DataTable" description="Sortable table (components/ui/data-table.tsx, TanStack Table) behind Terminology / TM / Analyses. Pass columns + data; cells can render any component (status pill below). A column with meta.sort ({ direction, rank?, hint?, arrow?, onToggle(shift) }) gets a sort button in its header: a faint arrow when direction is null, else the direction's arrow (arrow overrides it: down for a column's natural order, as the issue lists do), a rank badge from 2 levels up, and a hint tooltip. aria-sort goes on rank 1 only. The caller sorts the data (on the server when the list loads in pages, as Reported issues does, up to 3 levels with Shift+click). onRowClick gets the click event too, and onRowAuxClick (opt-in) a middle click outside the row's links and controls, so openRowLink (lib/row-link.ts) opens the row's page in a new tab on Cmd/Ctrl+click or a middle click. VirtualDataTable is the virtualized variant for large sets.">
+        <Section title="DataTable" description="Sortable table (components/ui/data-table.tsx, TanStack Table) behind Terminology / TM / Analyses. Pass columns + data; cells can render any component (status pill below). A column with meta.sort ({ direction, rank?, hint?, arrow?, onToggle(shift) }) gets a sort button in its header: a faint arrow when direction is null, else the direction's arrow (arrow overrides it: down for a column's natural order, as the issue lists do), a rank badge from 2 levels up, and a hint tooltip. aria-sort goes on rank 1 only. The caller sorts the data (on the server when the list loads in pages, as Reported issues does, up to 3 levels with Shift+click). onRowClick gets the click event too, and onRowAuxClick (opt-in) a middle click outside the row's links and controls, so openRowLink (lib/row-link.ts) opens the row's page in a new tab on Cmd/Ctrl+click or a middle click. VirtualDataTable is the virtualized variant for large sets. hideHeader keeps the column headers for screen readers only, for a table repeated under one heading per group (the Filter profiles list); its column widths move to a colgroup.">
           <DataTable columns={DEMO_TABLE_COLUMNS} data={DEMO_TABLE_ROWS} />
           <DataTable columns={DEMO_SORTED_COLUMNS} data={DEMO_TABLE_ROWS} />
+          <Row label="hideHeader"><DataTable columns={DEMO_TABLE_COLUMNS} data={DEMO_TABLE_ROWS} hideHeader /></Row>
         </Section>
 
         <Section title="VirtualDataTable" description="Virtualized table for large sets (components/ui/virtual-data-table.tsx, TanStack Table + Virtual) — used by TM / Terminology browsers. Sticky header, only visible rows are in the DOM, optional infinite-scroll via onLoadMore. Needs a bounded-height scroll container; 60 rows shown in a fixed viewport.">
@@ -1669,7 +1810,7 @@ export default function DebugPage() {
           <DisclosureToggleDemo />
         </Section>
 
-        <Section title="SlimCollapsibleSection & SectionInfo" description="The titled collapsible section (components/layout/SlimCollapsibleSection.tsx) — header toggles the body; chip / info / action sit outside the toggle; title leftmost, chevron trailing right. No card: a hairline under the header gives the row a floor without boxing the section in, plus a light hover fill and a focus-visible ring (the header is tabbable). Open state lives in the useCollapsibleOpen hook and is not persisted across mounts. The compact size is the slim form for a list of sections, like the Tasks tab's workflow steps (14px title, 6px padding); toggleLabel puts 'Show 3 tasks' / 'Hide 3 tasks' by the chevron, disabled makes a muted row that does not open, variant='grouped' sections, side by side in one parent, stack as cards — closed rows touch as one card, an open one keeps its body inside and ends the card there, the rows after it starting the next — and tone colours the header with a chip surface (the Tasks tab: green for a finished step, yellow for one in progress). SectionInfo (components/ui/section-info.tsx) is the little info-icon tooltip next to a title; its amber tone is the warning form, its red tone the error form, the icon prop swaps the tone's icon (the Tasks tab's step rows: Sent back, AI step running, Comment), and its small size sits beside small text.">
+        <Section title="SlimCollapsibleSection & SectionInfo" description="The titled collapsible section (components/layout/SlimCollapsibleSection.tsx) — header toggles the body; chip / info / action sit outside the toggle; title leftmost, chevron trailing right. No card: a hairline under the header gives the row a floor without boxing the section in, plus a light hover fill and a focus-visible ring (the header is tabbable). Open state lives in the useCollapsibleOpen hook and is not persisted across mounts, unless the page passes open + onOpenChange to drive its sections together (the Filter profiles list's Expand all / Collapse all). The compact size is the slim form for a list of sections, like the Tasks tab's workflow steps (14px title, 6px padding); toggleLabel puts 'Show 3 tasks' / 'Hide 3 tasks' by the chevron, disabled makes a muted row that does not open, variant='grouped' sections, side by side in one parent, stack as cards — closed rows touch as one card, an open one is a card of its own, its body inside, with a gap above and below — and tone colours the header with a chip surface (the Tasks tab: green for a finished step, yellow for one in progress). SectionInfo (components/ui/section-info.tsx) is the little info-icon tooltip next to a title; its amber tone is the warning form, its red tone the error form, the icon prop swaps the tone's icon (the Tasks tab's step rows: Sent back, AI step running, Comment), and its small size sits beside small text.">
           <SlimCollapsibleSection
             title="Providers"
             defaultOpen
@@ -1687,18 +1828,20 @@ export default function DebugPage() {
             </div>
           </SlimCollapsibleSection>
           <div>
-            <SlimCollapsibleSection title="Translation" size="compact" toggleLabel="3 tasks" variant="grouped" tone="yellow" defaultOpen>
+            <SlimCollapsibleSection title="Translation" size="compact" toggleLabel="3 tasks" variant="grouped">
+              {null}
+            </SlimCollapsibleSection>
+            {/* Open in the middle: a card of its own, with the gap above and below. */}
+            <SlimCollapsibleSection title="Review" size="compact" toggleLabel="2 tasks" variant="grouped" tone="yellow" defaultOpen>
               <div className={listRowClass}>
                 <span className="font-medium">A compact section: one in a list of many</span>
               </div>
-            </SlimCollapsibleSection>
-            <SlimCollapsibleSection title="Review" size="compact" toggleLabel="2 tasks" variant="grouped">
-              {null}
             </SlimCollapsibleSection>
             <SlimCollapsibleSection title="Sign-off" size="compact" toggleLabel="No tasks" variant="grouped" tone="green" disabled>
               {null}
             </SlimCollapsibleSection>
           </div>
+          <Row label="controlled: open + onOpenChange"><ControlledSectionsDemo /></Row>
           <Row label="SectionInfo tone / size">
             <SectionInfo label="Info">Muted, the default.</SectionInfo>
             <SectionInfo tone="amber" label="Warning">Amber, for a note that must not be overlooked.</SectionInfo>

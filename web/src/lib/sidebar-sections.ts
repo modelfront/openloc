@@ -7,13 +7,14 @@
  * testable without a DOM.
  */
 
-export const SIDEBAR_SECTION_IDS = ['tm', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'] as const
+export const SIDEBAR_SECTION_IDS = ['tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'] as const
 
 export type SidebarSectionId = (typeof SIDEBAR_SECTION_IDS)[number]
 
 /** Shown in the customize popover; matches each section's own header text. */
 export const SIDEBAR_SECTION_LABELS: Record<SidebarSectionId, string> = {
   tm: 'TM matches',
+  fuzzy: 'Internal matches',
   mt: 'MT suggestion',
   terminology: 'Terminology',
   references: 'References',

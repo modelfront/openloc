@@ -125,6 +125,22 @@ describe('automation and assignment detail rendering', () => {
     expect(text).toBe('finished QE+APE for manual.docx (de) (12 auto-approved, 3 need review)')
   })
 
+  it('a comment-only run shows how many segments got a comment', () => {
+    const text = sentenceText(makeEvent('job.pipeline_completed', {
+      phase: 'AI comment review', file_name: 'manual.docx', target_language: 'de',
+      commented: 4,
+    }))
+    expect(text).toBe('finished AI comment review for manual.docx (de) (4 commented)')
+  })
+
+  it('a QE+APE run that also left comments counts them', () => {
+    const text = sentenceText(makeEvent('job.pipeline_completed', {
+      phase: 'QE+APE', file_name: 'manual.docx', target_language: 'de',
+      auto_approved: 12, needs_review: 3, commented: 2,
+    }))
+    expect(text).toBe('finished QE+APE for manual.docx (de) (12 auto-approved, 3 need review, 2 commented)')
+  })
+
   it('pre-translation completion notes skipped phases', () => {
     const text = sentenceText(makeEvent('job.pipeline_completed', {
       phase: 'TM + MT pre-translation', file_name: 'manual.docx', target_language: 'de',

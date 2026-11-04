@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -77,31 +76,22 @@ func (b *directBackend) ListInvites(ctx context.Context, _ ListInvitesIn) (Invit
 	now := time.Now()
 	out := make([]InviteView, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, InviteView{
-			ID: r.ID, Email: r.Email, Role: r.Role, Status: inviteStatus(r.AcceptedAt, r.ExpiresAt, now),
-			InvitedByName: r.InvitedByName, CreatedAt: tsString(r.CreatedAt),
-			ExpiresAt: tsString(r.ExpiresAt), AcceptedAt: tsString(r.AcceptedAt),
-		})
+		out = append(out, inviteView(r, now))
 	}
 	return InviteList{Invites: out, Count: len(out)}, nil
 }
 
 // PreviewInviteMember runs the role rules and describes the invite. Duplicates
 // and the email budget run on the confirmed call, inside invite.Service.Create.
+// The tool has no vendor_org_name: creating a vendor org takes the app's
+// Invite vendor form, never a model's call.
 func (b *directBackend) PreviewInviteMember(ctx context.Context, in InviteMemberIn) (Preview, error) {
-	email := strings.TrimSpace(strings.ToLower(in.Email))
-	if email == "" {
-		return Preview{}, invalidf("email is required")
-	}
-	role := in.Role
-	if role == "" {
-		role = auth.RoleLinguist
-	}
-	if err := inviteRuleError(invite.CheckCreate(auth.ActorFromContext(ctx).Role, role)); err != nil {
+	checked, err := invite.CheckCreate(ctx, b.q, auth.ActorFromContext(ctx), memberInvite(in))
+	if err := inviteRuleError(err); err != nil {
 		return Preview{}, err
 	}
 	return Preview{
-		Summary: fmt.Sprintf("Invite %s as %s.", email, role),
+		Summary: fmt.Sprintf("Invite %s as %s.", checked.Email, checked.Role),
 		Effects: []string{"They get an email with a link that is valid for 7 days."},
 	}, nil
 }
@@ -110,14 +100,26 @@ func (b *directBackend) InviteMember(ctx context.Context, in InviteMemberIn) (In
 	if b.insight.Invites == nil {
 		return InviteView{}, errors.New("invites are not configured")
 	}
-	inv, err := b.insight.Invites.Create(ctx, auth.ActorFromContext(ctx), in.Email, in.Role)
+	inv, err := b.insight.Invites.Create(ctx, auth.ActorFromContext(ctx), memberInvite(in))
 	if err := inviteRuleError(err); err != nil {
 		return InviteView{}, err
 	}
+	return inviteView(inv, time.Now()), nil
+}
+
+// memberInvite is the tool's input as a member invite: it never carries a
+// vendor org name.
+func memberInvite(in InviteMemberIn) invite.NewInvite {
+	return invite.NewInvite{Email: in.Email, Role: in.Role}
+}
+
+// inviteView is an invite as the tools show it.
+func inviteView(v invite.View, now time.Time) InviteView {
 	return InviteView{
-		ID: inv.ID, Email: inv.Email, Role: inv.Role, Status: inviteStatus(inv.AcceptedAt, inv.ExpiresAt, time.Now()),
-		CreatedAt: tsString(inv.CreatedAt), ExpiresAt: tsString(inv.ExpiresAt), AcceptedAt: tsString(inv.AcceptedAt),
-	}, nil
+		ID: v.ID, Email: v.Email, Role: v.Role, Kind: v.Kind, VendorOrgName: v.VendorOrgName,
+		Status: inviteStatus(v.AcceptedAt, v.ExpiresAt, now), InvitedByName: v.InvitedByName,
+		CreatedAt: tsString(v.CreatedAt), ExpiresAt: tsString(v.ExpiresAt), AcceptedAt: tsString(v.AcceptedAt),
+	}
 }
 
 func (b *directBackend) PreviewRevokeInvite(ctx context.Context, in RevokeInviteIn) (Preview, error) {
@@ -125,14 +127,18 @@ func (b *directBackend) PreviewRevokeInvite(ctx context.Context, in RevokeInvite
 	if err != nil {
 		return Preview{}, insightNotFound(err)
 	}
+	summary := fmt.Sprintf("Revoke the %s invite for %s.", inv.Role, inv.Email)
 	effect := "The invite link stops working."
-	if inv.AcceptedAt.Valid {
+	if inv.VendorOrgName != nil {
+		summary = fmt.Sprintf("Revoke the invite for %s to set up the vendor %s.", inv.Email, *inv.VendorOrgName)
+	}
+	switch {
+	case inv.AcceptedAt.Valid && inv.VendorOrgName != nil:
+		effect = "The invite was already accepted; the vendor organization stays. Only the invite record goes."
+	case inv.AcceptedAt.Valid:
 		effect = "The invite was already accepted; the person stays a member. Only the invite record goes."
 	}
-	return Preview{
-		Summary: fmt.Sprintf("Revoke the %s invite for %s.", inv.Role, inv.Email),
-		Effects: []string{effect},
-	}, nil
+	return Preview{Summary: summary, Effects: []string{effect}}, nil
 }
 
 func (b *directBackend) RevokeInvite(ctx context.Context, in RevokeInviteIn) (InviteRevoked, error) {

@@ -20,7 +20,7 @@ import {
 } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { parseProjectFilters } from '../lib/project-filters'
-import { isAdminRole, isManagerRole } from '../lib/roles'
+import { isAdminRole, isManagerRole, isVendorOrg } from '../lib/roles'
 import { formatDate } from '../utils'
 import { useMutationWithToast } from '../hooks/use-mutation-with-toast'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -58,9 +58,12 @@ export default function ProjectList() {
 
   // Delete is owner/admin in the list.
   // Duplicate = project creation, which is manager-level.
-  const { data: me } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
-  const isAdmin = isAdminRole(me?.role)
-  const isManager = isManagerRole(me?.role)
+  const { data: me, isPending: mePending } = useQuery({ queryKey: queryKeys.auth.me, queryFn: getMe })
+  // A vendor org only sees the projects its client sends it: it creates,
+  // duplicates and deletes nothing, and has no labels or creators to filter by.
+  const vendor = isVendorOrg(me)
+  const isAdmin = isAdminRole(me?.role) && !vendor
+  const isManager = isManagerRole(me?.role) && !vendor
   const navigate = useNavigate()
 
   const {
@@ -109,7 +112,8 @@ export default function ProjectList() {
     setDeleteTarget({ id, name })
   }
 
-  if (isLoading) return <LoadingPlaceholder />
+  // The kind of org decides the header and the filter bar, so wait for it.
+  if (isLoading || mePending) return <LoadingPlaceholder />
 
   const hasActiveFilters = Object.keys(filters).length > 0
   // No data at all means the first page failed.
@@ -120,14 +124,14 @@ export default function ProjectList() {
       <PageContainer>
         <PageHeader
           title="Projects"
-          actions={
+          actions={vendor ? undefined : (
             <Link to="/projects/new">
               <CreateButton data-guide="projects.new">New project</CreateButton>
             </Link>
-          }
+          )}
         />
 
-        <ProjectFilterBar myUserId={me?.id ?? null} />
+        {!vendor && <ProjectFilterBar myUserId={me?.id ?? null} />}
 
         {loadFailed && <LoadFailed what="projects" error={error} onRetry={() => refetch()} />}
 
@@ -229,12 +233,14 @@ export default function ProjectList() {
 
           {projects.length === 0 && !loadFailed && (
             <EmptyState
-              message={hasActiveFilters
-                ? 'No projects match the current filters. Clear filters to see all projects.'
-                : 'No projects yet. Create one to get started.'}
+              message={vendor
+                ? `Projects that ${me?.client_org_name} sends to ${me?.tenant_name} appear here.`
+                : hasActiveFilters
+                  ? 'No projects match the current filters. Clear filters to see all projects.'
+                  : 'No projects yet. Create one to get started.'}
             />
           )}
-          {projects.length === 0 && !hasActiveFilters && !loadFailed && (
+          {projects.length === 0 && !hasActiveFilters && !loadFailed && !vendor && (
             <div className="flex justify-center">
               <TakeTourButton playbook="demo-overview" label="New here? Take the tour" />
             </div>

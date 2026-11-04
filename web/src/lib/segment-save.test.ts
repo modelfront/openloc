@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 import { applyAcquiredRow, applySegmentSaveSuccess, leverageFacts, optimisticAdjustLeverage, patchPropagatedSiblings } from './segment-save'
 import { queryKeys } from './query-keys'
+import type { EditorId } from './editor-scope'
 import type { Translation } from '../api/projects'
 import type { EditorRow } from '../api/editor'
 import { indexLookup, type EditorIndexData, type IndexRow } from './editor-index'
@@ -16,13 +17,13 @@ import type { JobLeverage, LeverageBand } from '../api/analyses'
  */
 
 /** Seed one loaded page of editor rows holding these translations. */
-function seedPage(qc: QueryClient, jobId: number, trs: Translation[]) {
+function seedPage(qc: QueryClient, jobId: EditorId, trs: Translation[]) {
   qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage(jobId, 0, String(trs[0]?.segment_id ?? 0)),
     trs.map(t => ({ segment: { id: t.segment_id } as EditorRow['segment'], translation: t, previous_step_text: null, placeables: [] })))
 }
 
 /** The translations of every loaded page. */
-function pageTranslations(qc: QueryClient, jobId: number): Translation[] {
+function pageTranslations(qc: QueryClient, jobId: EditorId): Translation[] {
   return qc.getQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(jobId) })
     .flatMap(([, rows]) => rows ?? []).flatMap(r => (r.translation ? [r.translation] : []))
 }
@@ -183,11 +184,11 @@ describe('patchPropagatedSiblings', () => {
     const row = (id: number): IndexRow => ({
       segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 1, status: 'needs_review',
       hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null, locked: false,
-      inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2,
+      inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2, fileIdx: 0,
     })
     const rows = [row(1), row(2), row(3)]
     qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), {
-      rows, repetitionStats: { segments: 2, words: 2, characters: 2 }, lookup: indexLookup(rows),
+      rows, repetitionStats: { segments: 2, words: 2, characters: 2 }, lookup: indexLookup(rows), files: [],
     })
     let writes = 0
     const unsubscribe = qc.getQueryCache().subscribe(e => {
@@ -263,13 +264,13 @@ describe('leverage bar after a save', () => {
   const row = (id: number): IndexRow => ({
     segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 2, status: 'needs_review',
     hasText: true, stepEdited: false, predicted: false, origin: 'tm', tmMatch: 100, locked: false,
-    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2,
+    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 2, fileIdx: 0,
   })
   function seed(indexed: number[]): QueryClient {
     const qc = new QueryClient()
     const rows = indexed.map(row)
     qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), {
-      rows, repetitionStats: { segments: 2, words: 4, characters: 22 }, lookup: indexLookup(rows),
+      rows, repetitionStats: { segments: 2, words: 4, characters: 22 }, lookup: indexLookup(rows), files: [],
     })
     qc.setQueryData<JobLeverage>(queryKeys.job.leverage(jobId), {
       job_id: jobId, target_language: 'es',
@@ -352,6 +353,15 @@ describe('applyAcquiredRow', () => {
     const qc = seed([makeTr(1, { active_text: 'my save', updated_at: '2026-10-15T10:00:05Z' })])
     applyAcquiredRow(qc, 7, makeTr(1, { active_text: 'before my save', updated_at: '2026-10-15T10:00:04.900Z' }))
     expect(cached(qc, 1)?.active_text).toBe('my save')
+  })
+
+  // A multi-file editor caches its rows under its scope id; the hold names
+  // the row's job.
+  it('patches a newer row in a multi-file editor that holds the job', () => {
+    const qc = new QueryClient()
+    seedPage(qc, '3:7,8', [makeTr(1, { active_text: 'mine', updated_at: '2026-10-15T10:00:00.100Z' })])
+    applyAcquiredRow(qc, 7, makeTr(1, { active_text: 'theirs', updated_at: '2026-10-15T10:00:05Z' }))
+    expect(pageTranslations(qc, '3:7,8').find(r => r.id === 1)?.active_text).toBe('theirs')
   })
 
   it('leaves a row the cache does not have alone', () => {

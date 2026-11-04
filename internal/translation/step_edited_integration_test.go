@@ -74,7 +74,7 @@ func TestIntegrationStepEdited_WritePaths(t *testing.T) {
 	a := newTr("same", 2)
 	b := newTr("same", 3)
 	if _, err := q.PropagateTranslation(ctx, db.PropagateTranslationParams{
-		HumanText: str("gleich"), FileID: file.ID, SourceText: "same", TargetLanguage: "de", ExcludeID: a.ID,
+		HumanText: str("gleich"), FileIds: []int64{file.ID}, SourceText: "same", TargetLanguage: "de", ExcludeID: a.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}

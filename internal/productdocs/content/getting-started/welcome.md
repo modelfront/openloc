@@ -3,7 +3,7 @@ title: "Welcome to OpenLoc"
 summary: "What the TMS is, who it is for, and how a translation moves through it."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-19
+updated_at: 2026-11-03
 sources:
   - web/src/App.tsx
   - web/src/components/layout/NavRail.tsx
@@ -42,7 +42,7 @@ Everyone in an organization has one of four roles:
 | Owner | The person who set up the organization | Everything an Admin can do. The organization's top-level account. |
 | Admin | Localization lead, IT | Manage members, MT routers and engines, QA profiles and organization settings; delete things |
 | Project manager | Localization PM, content owner | Create projects, upload files, assign work, review analyses, download results |
-| Linguist | Translator, reviewer, vendor | Open assigned tasks in the editor, translate, confirm, complete steps |
+| Linguist | Translator, reviewer | Open assigned tasks in the editor, translate, confirm, complete steps |
 
 A linguist's left menu holds only Tasks. Managers and admins see the full left menu. Docs and API are in the account menu, for every role. See [Roles and permissions](/docs/reference/roles-and-permissions) for the exact list.
 
@@ -65,6 +65,8 @@ A linguist's left menu holds only Tasks. Managers and admins see the full left m
 
 Managers work from **Projects**; linguists work from **Tasks**. The other entries hold the resources a project draws on: memories, term bases, customers, templates, workflows, MT routers and engines, AI engines, integrations, QA profiles and dashboards. The [Interface tour](/docs/getting-started/interface-tour) describes each one.
 
-Your personal **Settings**, **Organization settings** (owners and admins; project managers reach only its Vendors tab), **AI settings**, **Docs** and **API** live in the account menu — your name at the top right — together with **Sign out**. **Docs** opens these documentation pages; everyone sees the same pages, and Ctrl+K (Cmd+K on Mac) searches them. **API** opens the documentation for connecting other systems to OpenLoc.
+Your personal **Settings**, **Organization settings** (owners and admins), **AI settings**, **Docs** and **API** live in the account menu — your name at the top right — together with **Sign out**. **Docs** opens these documentation pages; everyone sees the same pages, and Ctrl+K (Cmd+K on Mac) searches them. **API** opens the documentation for connecting other systems to OpenLoc.
+
+A vendor organization, created by [Invite vendor](/docs/guides/customers-and-vendors#invite-a-vendor-owner-or-admin), has a smaller menu; see [Run a vendor organization](/docs/guides/customers-and-vendors#run-a-vendor-organization).
 
 New here? Follow [Your first project](/docs/getting-started/first-project) — it takes about ten minutes and walks a file from upload to download.

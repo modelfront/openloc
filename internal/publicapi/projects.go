@@ -47,10 +47,13 @@ type projectCreate struct {
 	WorkflowID      *int64   `json:"workflow_id"`
 	// SegmentationProfileID, left out, keeps the template's profile while it
 	// fits the source language, else takes the suggested one.
-	SegmentationProfileID *int64          `json:"segmentation_profile_id"`
-	CustomerID            json.RawMessage `json:"customer_id"`
-	Client                json.RawMessage `json:"client"`
-	Domain                json.RawMessage `json:"domain"`
+	SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+	// FilterProfileIDs is the filter profile per file format; a format left
+	// out keeps the template's, else its Default.
+	FilterProfileIDs map[string]*int64 `json:"filter_profile_ids"`
+	CustomerID       json.RawMessage   `json:"customer_id"`
+	Client           json.RawMessage   `json:"client"`
+	Domain           json.RawMessage   `json:"domain"`
 }
 
 func (h Handlers) createProject(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +79,7 @@ func (h Handlers) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	p, err := project.CreateWithSetup(ctx, h.Pool, h.Queries, auth.TenantIDFromContext(ctx), auth.UserIDFromContext(ctx),
-		params, templateID, project.SetupConfig{WorkflowID: req.WorkflowID, SegmentationProfileID: req.SegmentationProfileID})
+		params, templateID, project.SetupConfig{WorkflowID: req.WorkflowID, SegmentationProfileID: req.SegmentationProfileID, FilterProfileIDs: req.FilterProfileIDs})
 	if err != nil {
 		project.WriteCreateError(w, r, err)
 		return

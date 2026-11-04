@@ -69,7 +69,7 @@ test.describe("CAT editor toolbar Clear", () => {
       content: "Hello world\n\nSecond line\n",
       contentType: "text/plain",
     });
-    const linguist = await sessionAs(browser, "vendor@seed.example.com");
+    const linguist = await sessionAs(browser, "linguist@seed.example.com");
     const me = await (await linguist.page.request.get("/api/auth/me", { headers: await authHeaders(linguist.page) })).json();
     const assigned = await page.request.post(`/api/jobs/${job.jobId}/assign`, { headers, data: { user_id: me.data.id } });
     expect(assigned.ok(), `assign: ${assigned.status()} ${await assigned.text()}`).toBe(true);

@@ -3,7 +3,7 @@ title: "Settings"
 summary: "Personal, organization and AI settings, and where each option lives."
 order: 50
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-03
 sources:
   - web/src/pages/SettingsPage.tsx
   - web/src/pages/org/**
@@ -32,6 +32,7 @@ sources:
   - web/src/components/workflow/RawMTPane.tsx
   - web/src/components/workflow/WorkflowTab.tsx
   - internal/settings/**
+  - internal/filterprofile/**
   - internal/appearance/**
 limitations:
   - access-level-labels
@@ -48,6 +49,8 @@ screenshots:
 ---
 Settings live in three places, all reached from the account menu (click your name in the top right): **Settings** for you, **Organization settings** for the whole organization, and **AI settings** for AI providers and access keys. Options that decide how a project is translated live on the project itself and on templates; reusable workflows and steps live on the **Workflows** page.
 
+Each section on **Settings** and on the **Organization** page sums up its state next to its title, for example **Registration · Open to @example.com**.
+
 ## Personal Settings
 
 Account menu → **Settings**. Every role has this page. The options apply to you only.
@@ -63,19 +66,24 @@ There is no password field here. To set a new password, use **Forgot password?**
 
 ## Organization settings
 
-Account menu → **Organization settings** opens the **Organization** page. Owners and admins see three tabs: **Members**, **Settings** and **Vendors**. Project managers see the entry too, and it opens **Vendors** only, with no tab row. Linguists do not see it. Changes apply to every member.
+Account menu → **Organization settings** opens the **Organization** page. It has two tabs: **Members** and **Settings**. Only owners and admins see it. Changes apply to every member.
 
 | Tab | Section | Option | Notes |
 |---|---|---|---|
-| **Members** | **Members** | Role dropdown per member | **Owner**, **Admin**, **Project manager** or **Linguist**. Changing someone to Linguist asks for confirmation; they then appear on the **Vendors** tab, which lists every member with the Linguist role. |
+| **Members** | **Members** | Search by name or email; **Role**, **Source** and **Target** filters; 10 members per page, page numbers under the list. Click a member's row: **Role** and **Language pairs**, **Save** | **Owner**, **Admin**, **Project manager** or **Linguist**. Changing someone to Linguist asks for confirmation, because they lose access to every management page. |
+| | **Vendors** | Search by vendor name or admin email; **Source** and **Target** filters; 10 per page | The vendor organizations you invited, with their admins, the languages their people work in and the date each joined. |
 | | | **Language pairs** | The pairs a member works in, shown as chips next to the name. |
-| | **Invite member** | **Email**, **Role** (**Admin** or **Project manager**), **Send invite** | Linguists are invited from the **Vendors** tab. |
-| | **Pending invites** | **Resend invite**, revoke | Each invite shows its expiry date. See [Resend an invitation](/docs/guides/customers-and-vendors#resend-an-invitation). |
-| | **Accepted invites** | History | Who accepted, and when. |
-| **Settings** | **Registration** | **Invite only** / **Anyone with organization email can join** | When open, people who sign in with your email domain join as project managers. People already on the **Vendors** tab join as linguists. |
+| | **Invite member** (button at the top of the members list) | A window: **Email**, **Role** (**Admin**, **Project manager** or **Linguist**), **Send invite** | |
+| | **Invite vendor** (button at the top of the vendors list) | A window: **Vendor name**, **Admin email**, **Send invite** | Creates a separate vendor organization linked to yours; the person you invite becomes its admin. See [Invite a vendor](/docs/guides/customers-and-vendors#invite-a-vendor-owner-or-admin). |
+| | **Pending invites** | **Resend invite**, revoke | Each invite shows its expiry date. A vendor invite shows the vendor name and a **Vendor org admin** label instead of a role. See [Resend an invitation](/docs/guides/customers-and-vendors#resend-an-invitation). |
+| | **Accepted invites** | Search by email or vendor name; 10 per page | Who accepted, and when, newest first. |
+| **Settings** | **Registration** | **Invite only** / **Anyone with organization email can join** | When open, people who sign in with your email domain join as project managers. |
 | | **Notification rules** | **Task assignment**, **Step rejection**, **Workflow completion**, **Deadline approaching** | Master switches. Off means no notification of that kind for anyone, in the app or by email. |
 | | **Analysis weights** | One percentage per match band, from **100% (exact)** to **New (no match)**, plus **Repetitions** and **QE approved** | How much effort each band counts for in weighted words. 0% is free, 100% is full effort. See [Analysis bands](/docs/concepts/analysis-bands). |
-| **Vendors** | Vendor table | Invite, resend, revoke | External linguists and their invitations. See [Invite a vendor](/docs/guides/customers-and-vendors#invite-a-vendor). |
+
+### In a vendor organization
+
+A vendor organization's admin sees a smaller Organization page, with the **Members** tab only; see [Run a vendor organization](/docs/guides/customers-and-vendors#run-a-vendor-organization).
 
 ## AI settings
 
@@ -102,7 +110,7 @@ A project carries its own settings on its **Settings** tab and its workflow step
 | Fill in **machine translation** on start or upload | — | ✓ | ✓ | Managers |
 | **QA profile** (in the **Quality assurance** block) | Defined on the **QA profiles** page | Chosen | Chosen | Managers |
 | **Segmentation profile** (in the **File configurations** block): how files uploaded afterwards are split into segments; required, and only profiles that suit the source language are offered. See [Segmentation profiles](/docs/guides/segmentation) | Defined under **File configurations** → **Segmentation profiles** | Chosen | Chosen | Managers |
-| **Strings contain HTML** (under auto-complete). On by default: tags in JSON, PO, TXT and Excel strings become protected tags, and a translation may hold only the source's tags. Off: strings are plain text, with no tags, no tag check, and export exactly as typed. Each file keeps the mode it was uploaded with, so a change applies to new uploads only | — | ✓ | ✓ | Managers |
+| **Filter profiles** (in the **File configurations** block, under **Segmentation profile**): one picker per format (**HTML**, **Excel**, **JSON**, **PO**, **Plain text**, **XML**) that decides how files of that format are read. The list opens from its heading, which names the formats that have a pick. A new project or template without a template starts each format at your organization's default, else the built-in **Default**; picking **Default** clears the pick. A change applies to files uploaded afterwards. See [Filter profiles](/docs/guides/filter-profiles) | Defined under **File configurations** | Chosen | Chosen | Managers |
 | **Linguists can add terms** (in the **Terminology** block, above the term-base rows): **No**, **Yes, saved as pending** (the default) or **Yes, saved as approved**. Decides whether linguists may add terms from the editor, and the status their terms get. Managers always can, and pick the status themselves. The picker is locked until a term-base row has **Write** ticked. See [Add a term while translating](/docs/guides/terminology#add-a-term-while-translating) | — | ✓ | ✓ | Managers |
 | **Translation memory** rows and match scoring (**Fuzzy match threshold**, **Language-variant mismatch penalty**, **Near-exact penalty**, **TM lookup order**; see [Several memories](/docs/concepts/tm-matching#several-memories)) | TMs live on the **Translation memories** page | ✓ | ✓ | Managers |
 | **TM profile**: a shared TM setup to follow, or **From scratch** for a list this project keeps alone | Profiles are created on the **Translation memories** page | Followed | Followed | Managers |
@@ -112,7 +120,7 @@ A project carries its own settings on its **Settings** tab and its workflow step
 | **Analysis weights**, **Notification rules** | ✓ | — | — | Owners and admins |
 | Email notification mute, theme, palettes | — | — | — | Each member, for themselves |
 
-On a project or template, every asset it uses links to where it lives, in a new tab. A translation memory or term base name in its row is a link. The **TM profile**, **MT router**, **QA profile**, **Segmentation profile** and **Workflow** dropdowns each end with an open icon (hover for "Open QA profile" and so on). The MT router link opens the **MT** page with that router's card highlighted. The QA profile link opens the **QA profiles** page with that profile highlighted and its rules expanded. The workflow link opens the **Workflows** page with that workflow's **Edit workflow** dialog open; a built-in workflow has no icon.
+On a project or template, every asset it uses links to where it lives, in a new tab. A translation memory or term base name in its row is a link. The **TM profile**, **MT router**, **QA profile**, **Segmentation profile**, **Workflow** and per-format **Filter profiles** dropdowns each end with an open icon (hover for "Open QA profile", "Open HTML filter profile" and so on). The MT router link opens the **MT** page with that router's card highlighted. The QA profile link opens the **QA profiles** page with that profile highlighted and its rules expanded. The workflow link opens the **Workflows** page with that workflow's **Edit workflow** dialog open; a built-in workflow has no icon.
 
 On the **New project** form the **Workflow** dropdown starts empty, and **Create project** points at it, framed red, until you pick a workflow or **Raw MT**. **Save as template** works with or without one. The **Translation memory** and **Machine translation** blocks start unanswered: the **TM profile** dropdown and the **MT router** are empty, and each *on start or upload* switch is ticked but locked. Choosing a TM profile or **From scratch** unlocks the translation memory switch and shows the memory list and the match scoring fields; choosing an **MT router** unlocks the machine translation switch. On the form, the project's **Settings** tab and the template editor, a warning icon beside **MT router** lists the target languages the chosen router has no engine for; see [Machine translation](/docs/guides/machine-translation#choose-the-router-for-a-project-or-template). A saved project or template always shows what it has, with both switches editable. Under **Raw MT**, the machine translation switch stays on and locked (“Always on with Raw MT.”), and the project cannot be created until it has an **MT router**. See [Create a project](/docs/guides/projects-and-files#create-a-project).
 

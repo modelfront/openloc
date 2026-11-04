@@ -59,6 +59,9 @@ after the field opens the selected profile's page in a new tab.
   made from it starts with the profile for its own language.
 - When you change the source language and the profile no longer suits it, the
   field moves to the built-in profile for the new language.
+- Below it, the same section has one **Filter profiles** picker per file
+  format. They decide how each format is read, not how it is split: see
+  [Filter profiles](/docs/guides/filter-profiles).
 - A project keeps its profile when someone later changes that profile's
   language. Its **Settings** tab then shows the profile marked
   **(not for this language)** until you pick another.
@@ -85,8 +88,10 @@ come with OpenLoc. They are read-only: to change one, copy it.
 ## Open the Segmentation profiles tab
 
 Open **File configurations** in the left menu; it opens on the **Segmentation
-profiles** tab. Owners, admins and project managers see it and may create,
-edit, copy, delete and import profiles. Linguists do not see it.
+profiles** tab, next to the **Filter profiles** tab (see
+[Filter profiles](/docs/guides/filter-profiles)). Owners, admins and project
+managers see it and may create, edit, copy, delete and import profiles.
+Linguists do not see it.
 
 The list shows every profile with its languages (**Any** for the
 language-neutral ones) and its mode. A built-in profile has **(built-in)**

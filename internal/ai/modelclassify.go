@@ -269,3 +269,20 @@ func containsAny(s string, markers []string) bool {
 	}
 	return false
 }
+
+// NewestSonnet returns the Sonnet with the highest generation in models, or ""
+// when there is none. The chat defaults to it, so the default follows what a
+// tenant's key lists rather than a name fixed at build time. Equal generations
+// keep the earlier model: the catalog lists newest first.
+func NewestSonnet(models []Model) string {
+	best, bestVersion := "", 0.0
+	for _, m := range models {
+		if !strings.Contains(m.ID, "sonnet") {
+			continue
+		}
+		if v := claudeVersion(m.ID); best == "" || v > bestVersion {
+			best, bestVersion = m.ID, v
+		}
+	}
+	return best
+}

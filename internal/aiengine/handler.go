@@ -61,6 +61,8 @@ func modeLabel(mode string) string {
 		return "QE"
 	case "ape":
 		return "APE"
+	case "comment":
+		return "Comment only"
 	default:
 		return "MT"
 	}
@@ -237,7 +239,7 @@ func (h *Handler) validate(ctx context.Context, tenantID int64, in *engineInput,
 		return fmt.Sprintf("prompt %q is a %s prompt — an MT engine needs an MT prompt", prompt.Name, modeLabel(mode))
 	}
 	if purpose == PurposeQEAPE && mode == "mt" {
-		return fmt.Sprintf("prompt %q is an MT prompt — a QE+APE engine needs a QE, APE or QE+APE prompt", prompt.Name)
+		return fmt.Sprintf("prompt %q is an MT prompt — a QE+APE engine needs a QE, APE, QE+APE or Comment only prompt", prompt.Name)
 	}
 	if row.BadOutputAction == nil || strings.TrimSpace(*row.BadOutputAction) == "" {
 		return "select a bad-output action"

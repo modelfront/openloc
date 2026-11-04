@@ -33,6 +33,7 @@ import { ApiError } from '../../api/request'
 import { visibleAnchors } from '../../lib/guide'
 import { clearHeldRecording } from '../../lib/watch-recording'
 import { handleClientAction } from './chat-actions'
+import { reportSendFailure } from './chat-send-failure'
 import { siteLink, useAppConfig } from '@/pages/docs/DocsHost'
 import { ChatReplies } from './ChatReplies'
 import { ChatEmptyState } from './ChatEmptyState'
@@ -310,8 +311,9 @@ function ChatWindow({ hidden, pendingPrompt, model, onSelectModel, provider, mod
         setNoKey(true)
         // Drop the placeholder pair — nothing was answered.
         setMessages(prev => prev.slice(0, -2))
-      } else if ((err as Error).name !== 'AbortError') {
-        patchLast(m => ({ ...m, error: (err as Error).message, runningTool: undefined }))
+      } else if ((err as Error)?.name !== 'AbortError') {
+        const error = reportSendFailure(err)
+        patchLast(m => ({ ...m, error, runningTool: undefined }))
       }
     } finally {
       setStreaming(false)

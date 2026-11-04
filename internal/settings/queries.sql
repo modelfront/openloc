@@ -3,11 +3,11 @@
 -- ============================================================
 
 -- name: CreateSettingsProfile :one
--- Penalties, auto_complete, inline_html and linguist_terms are deliberately
--- absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
+-- Penalties, auto_complete and linguist_terms are deliberately absent: they take
+-- the column defaults (1% / 1% / on / pending). Adding them as params would make every existing
 -- struct-literal caller pass a silent zero value — 0 means "locales are
 -- equivalent" (new projects would start auto-confirming sublanguage variants)
--- and false would switch auto-completion or HTML strings off. Callers that need non-defaults
+-- and false would switch auto-completion off. Callers that need non-defaults
 -- (create-from-template) set them via UpdateSettingsProfile.
 INSERT INTO settings_profiles (tenant_id, fuzzy_threshold, mt_on_upload, tm_on_upload, qa_profile_id)
 VALUES ($1, $2, $3, $4, $5) RETURNING *;
@@ -24,14 +24,12 @@ SELECT * FROM settings_profiles WHERE id = $1;
 -- its default is TRUE, and `false` is a bool's zero value, so a struct literal
 -- that omits it would silently switch auto-completion off.
 -- tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
--- inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
 -- linguist_terms is nil-keeps-stored like tm_lookup_order.
 UPDATE settings_profiles SET fuzzy_threshold = $2, mt_on_upload = $3, tm_on_upload = $4, qa_profile_id = $5,
   sublanguage_penalty_pct = COALESCE(sqlc.narg('sublanguage_penalty_pct')::int, sublanguage_penalty_pct),
   near_exact_penalty_pct  = COALESCE(sqlc.narg('near_exact_penalty_pct')::int, near_exact_penalty_pct),
   auto_complete           = COALESCE(sqlc.narg('auto_complete')::bool, auto_complete),
   tm_lookup_order         = COALESCE(sqlc.narg('tm_lookup_order')::text, tm_lookup_order),
-  inline_html             = COALESCE(sqlc.narg('inline_html')::bool, inline_html),
   linguist_terms     = COALESCE(sqlc.narg('linguist_terms')::text, linguist_terms),
   updated_at = now()
 WHERE id = $1 RETURNING *;

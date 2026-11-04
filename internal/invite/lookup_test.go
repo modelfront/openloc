@@ -21,6 +21,7 @@ func seedLookupInvite(t *testing.T, q db.Querier, tenantID, invitedBy int64, ema
 		t.Fatalf("token: %v", err)
 	}
 	inv, err := q.CreateInvite(context.Background(), db.CreateInviteParams{
+		Kind:      "member",
 		TenantID:  tenantID,
 		Email:     email,
 		Role:      "linguist",

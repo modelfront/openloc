@@ -13,10 +13,9 @@ import (
 	"openloc/internal/ai"
 )
 
-// DefaultModel matches internal/ai's default for the claude provider so the
-// MT path and the chat path never silently diverge on what "default Claude"
-// means for a tenant.
-const DefaultModel = "claude-sonnet-5"
+// FallbackModel is the chat model when the tenant's Claude list names no
+// Sonnet (see Handler.defaultModel), and the model of an LLM built without one.
+const FallbackModel = "claude-sonnet-5"
 
 // anthropicLLM adapts the official SDK to the LLM interface. Constructed per
 // request — the key is the tenant's own, so nothing is cached across
@@ -31,7 +30,7 @@ type anthropicLLM struct {
 // proxy) is honoured here the same way OpenAI's is.
 func NewAnthropic(apiKey, baseURL, model string) LLM {
 	if model == "" {
-		model = DefaultModel
+		model = FallbackModel
 	}
 	// llmClient refuses internal addresses at dial time; the SDK's default
 	// client does not.

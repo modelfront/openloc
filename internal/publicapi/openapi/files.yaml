@@ -61,6 +61,16 @@ paths:
                     translation is written back into its own cell. A workbook
                     with language codes in row 1 is read by them and refuses
                     a layout (400).
+                filter_profile_id:
+                  type: integer
+                  format: int64
+                  description: |
+                    The filter profile this file is read with, from
+                    `GET /filter-profiles`; it must be for the file's format.
+                    Left out, the project's profile for the format is used,
+                    else the format's Default. An Excel profile with column
+                    rules gives a workbook its layout when `xlsx_layout` is
+                    left out.
       responses:
         "201":
           description: The stored file.
@@ -180,3 +190,20 @@ components:
           type: array
           items: { type: string }
           description: Letters of the columns to translate, for example `["B", "D"]`. Omit it, or leave it empty, to translate every text cell of the sheet.
+        target_columns:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/XLSXTargetColumn" }
+          description: Writes each target language into its own column on the source text's row, and the source text stays. Needs exactly one column in `columns`, the source column. Omit it to write each translation back into its source cell. The export refuses a language that has no column.
+    XLSXTargetColumn:
+      type: object
+      required: [language, column]
+      properties:
+        language:
+          type: string
+          description: Target language code, for example `fr` or `pt-BR`. A job in a regional variant, such as `fr-CA`, uses its base language's column when it has none of its own.
+          example: fr
+        column:
+          type: string
+          description: Letter of the column that receives the language, for example `C`. Not the source column, and not another language's.
+          example: C

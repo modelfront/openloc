@@ -45,8 +45,9 @@ func registerProjects(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 			"language pairs (as \"source→target\", e.g. \"en→es\"), and active_jobs " +
 			"(jobs they are working on RIGHT NOW). One call answers \"which vendors " +
 			"translate English into Spanish?\" (filter language_pairs) and \"who is " +
-			"currently busy?\" (active_jobs > 0). There is no separate vendor role: " +
-			"vendors are members, usually with the linguist role. An empty " +
+			"currently busy?\" (active_jobs > 0). Linguists here are this " +
+			"organization's own members; a vendor organization (a separate, linked " +
+			"organization) and its people are not listed. An empty " +
 			"language_pairs means none recorded, not none supported. Email addresses " +
 			"are deliberately not included. Sorted by name; when has_more is true, " +
 			"pass next_cursor as cursor for the next page.",

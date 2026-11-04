@@ -1426,6 +1426,16 @@ func TestIntegrationMCPMembersCarryPairsAndActiveJobs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed language pair: %v", err)
 	}
+	// linguistA is also in tenant B, which sets en→fr for them: A's listing
+	// shows only A's pairs.
+	if err := f.q.CreateMembership(ctx, db.CreateMembershipParams{UserID: f.linguistA.ID, TenantID: f.tenantB.ID, Role: "linguist"}); err != nil {
+		t.Fatalf("membership in B: %v", err)
+	}
+	if err := f.q.InsertUserLanguagePair(ctx, db.InsertUserLanguagePairParams{
+		UserID: f.linguistA.ID, SourceLang: "en", TargetLang: "fr", TenantID: f.tenantB.ID,
+	}); err != nil {
+		t.Fatalf("seed tenant B pair: %v", err)
+	}
 	project, err := f.q.GetProject(ctx, db.GetProjectParams{ID: f.projectA.ID, TenantID: f.tenantA.ID})
 	if err != nil {
 		t.Fatalf("load project: %v", err)

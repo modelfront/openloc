@@ -3,7 +3,7 @@ title: "Quality estimation and automatic post-editing"
 summary: "How a quality check decides which machine translations a person still has to read, and the four outcomes."
 order: 40
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-29
+updated_at: 2026-11-02
 sources:
   - internal/pipeline/**
   - internal/airouter/**
@@ -59,6 +59,10 @@ For each segment the check decides three things: is the translation good enough 
 Whenever the check offers a rewrite, the rewrite replaces the text, and the verdict on the rewrite decides the outcome. The segment's history keeps the original machine output. Every auto-approval is recorded there as well: an **Auto-approved** entry when the text was accepted untouched, and the same mark on the **APE** entry when it was the rewrite that was approved.
 
 "Auto-approved" is its own status, distinct from a human's "Approved". The editor shows the difference, filters can select one or the other, and the analysis reports the auto-approved share of every band. See [Segment statuses](/docs/reference/segment-statuses).
+
+## Comment-only review
+
+A step whose engine uses a **Comment only** prompt gives none of the four outcomes: it reads every segment that has text, a person's included, and only adds AI comments. A re-run reads them all again. See [Choose what the model sends back](/docs/guides/ai-engines-and-prompts#choose-what-the-model-sends-back).
 
 ## Running it as a workflow step
 

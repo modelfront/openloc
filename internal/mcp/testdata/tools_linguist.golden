@@ -14,6 +14,7 @@ openloc_export_segmentation_srx read
 openloc_find_replace_job write
 openloc_get_appearance read
 openloc_get_doc_page read
+openloc_get_filter_profile read
 openloc_get_job read
 openloc_get_job_analysis read
 openloc_get_job_leverage read
@@ -26,6 +27,7 @@ openloc_get_tm_matches read
 openloc_ignore_qa_finding write
 openloc_list_comments read
 openloc_list_docs read
+openloc_list_filter_profiles read
 openloc_list_job_steps read
 openloc_list_my_tasks read
 openloc_list_notifications read

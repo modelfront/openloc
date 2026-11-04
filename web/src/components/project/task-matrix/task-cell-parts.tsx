@@ -6,6 +6,7 @@ import { Fragment } from 'react'
 import { cn } from '@/lib/utils'
 import { HANDOFF_NOTE_TITLE } from '@/lib/current-task'
 import { deadlineChipProps } from '@/lib/deadline'
+import { dayMonth } from '@/lib/short-date'
 import { TASK_STATE_DISPLAY, type MatrixCell, type MatrixColumn } from '@/lib/task-matrix'
 import { Chip, chipTextClass, type ChipProps } from '@/components/ui/chip'
 import { OverflowChip, STEP_TYPE_PRESETS } from '@/components/ui/chip-presets'
@@ -13,9 +14,6 @@ import { CountMeta } from '@/components/ui/count-meta'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isAutomatedStep } from '@/lib/workflow-steps'
 import { pipelineBadge } from '@/lib/project-logic'
-
-const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 
 /**
  * Where the task stands, as one chip, first match wins: a red Error (the
@@ -59,7 +57,7 @@ export function TaskStatus({ cell, column, size = 'small' }: { cell: MatrixCell;
         title={cell.completedAt ? `Done ${new Date(cell.completedAt).toLocaleString()}` : undefined}
         data-testid="task-done-chip"
       >
-        {cell.completedAt ? `Done ${shortDate(cell.completedAt)}` : 'Done'}
+        {cell.completedAt ? `Done ${dayMonth(cell.completedAt)}` : 'Done'}
       </Chip>
     )
   }

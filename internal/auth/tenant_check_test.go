@@ -25,8 +25,8 @@ func TestCheckTenantActiveSeparatesOutagesFromRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/api/projects", nil)
-			gate := func(context.Context, int64) (bool, error) { return false, tc.err }
-			if _, ok := checkTenantActive(rec, req, gate, 1, false); ok {
+			gate := func(context.Context, int64, int64) (TenantGate, error) { return TenantGate{}, tc.err }
+			if _, ok := checkTenantActive(rec, req, gate, 1, 2, false); ok {
 				t.Fatal("the gate let the request through")
 			}
 			if rec.Code != tc.want {

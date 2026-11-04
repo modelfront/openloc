@@ -128,9 +128,10 @@ func xlsxRowKeyed(translations map[string]string) bool {
 }
 
 // writeXLSXCells writes each translation into the cell its key names, keeping
-// the cell's style. The cell's own source text decides the markup written
-// back (exportString).
-func writeXLSXCells(f *excelize.File, translations map[string]string, plainText bool) error {
+// the cell's style, or, on a sheet of dest (sheet → 1-based column), into that
+// column of the cell's row. The source cell's text decides the markup written
+// (exportString).
+func writeXLSXCells(f *excelize.File, translations map[string]string, plainText bool, dest map[string]int) error {
 	for key, translated := range translations {
 		if translated == "" {
 			continue
@@ -142,14 +143,21 @@ func writeXLSXCells(f *excelize.File, translations map[string]string, plainText 
 		if idx, err := f.GetSheetIndex(sheet); err != nil || idx < 0 {
 			return fmt.Errorf("segment key %q names a sheet the workbook does not have", key)
 		}
-		if _, _, err := excelize.CellNameToCoordinates(cell); err != nil {
+		_, row, err := excelize.CellNameToCoordinates(cell)
+		if err != nil {
 			return fmt.Errorf("segment key %q names no cell: %w", key, err)
 		}
 		source, err := f.GetCellValue(sheet, cell)
 		if err != nil {
 			return fmt.Errorf("read cell %s: %w", key, err)
 		}
-		if err := f.SetCellValue(sheet, cell, exportString(translated, source, plainText)); err != nil {
+		target := cell
+		if col := dest[sheet]; col > 0 {
+			if target, err = excelize.CoordinatesToCellName(col, row); err != nil {
+				return fmt.Errorf("target cell of %s: %w", key, err)
+			}
+		}
+		if err := f.SetCellValue(sheet, target, exportString(translated, source, plainText)); err != nil {
 			return fmt.Errorf("set cell %s: %w", key, err)
 		}
 	}

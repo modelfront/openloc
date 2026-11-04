@@ -33,7 +33,11 @@ func (h *Handler) HandleDetachTMProfile(w http.ResponseWriter, r *http.Request) 
 		httputil.ServerError(w, "detach", "TM profile")
 		return
 	}
-	httputil.Data(w, h.newTemplateResponse(r.Context(), tmpl, after))
+	resp, ok := h.templateResponseOr500(w, r, tmpl, after)
+	if !ok {
+		return
+	}
+	httputil.Data(w, resp)
 }
 
 // HandleSaveTMProfile creates a TM profile from the template's current TM scope

@@ -7,8 +7,9 @@
  * - Easy to find all usages via "queryKeys.xxx"
  */
 
-import type { EditorSearch, IssueScope } from '@/api'
+import type { EditorSearch, IssueScope, MemberFilters, VendorOrgFilters } from '@/api'
 import type { TextSearchOptions } from './text-search'
+import type { EditorId } from './editor-scope'
 
 export const queryKeys = {
   // --- Auth (current user) ---
@@ -40,8 +41,12 @@ export const queryKeys = {
     steps:     ['tasks', 'steps'] as const,
   },
 
-  // --- Invites (the Organization page: Members and Vendors tabs). `members` key is defined below. ---
-  invites:           { all: ['invites'] as const },
+  // --- Invites (the Organization page's Members tab). `members` key is defined below. ---
+  invites:           {
+    all: ['invites'] as const,
+    // One page of the Accepted invites list; under `all`, so resend/revoke refresh it.
+    accepted: (q: string, page: number) => ['invites', 'accepted', q, page] as const,
+  },
 
   // --- Projects ---
   projects:          {
@@ -102,17 +107,20 @@ export const queryKeys = {
   job: {
     detail:       (id: number) => ['job', id] as const,
     // Prefix of every CAT editor cache below, so one invalidation refetches
-    // the index and only the pages on screen.
-    translations: (id: number) => ['job-translations', id] as const,
-    editorIndex:  (id: number) => ['job-translations', id, 'index'] as const,
+    // the index and only the pages on screen. Keyed by editor id: the job, or
+    // a multi-file scope (lib/editor-scope).
+    translations: (id: EditorId) => ['job-translations', id] as const,
+    editorIndex:  (id: EditorId) => ['job-translations', id, 'index'] as const,
     /** Prefix of every loaded page of rows. */
-    editorRows:   (id: number) => ['job-translations', id, 'rows'] as const,
+    editorRows:   (id: EditorId) => ['job-translations', id, 'rows'] as const,
     /** One page of rows, keyed on the segments it holds (editorPageKey): a
      *  split or join changes them, and the page is fetched again. */
-    editorPage:   (id: number, page: number, segmentIds: string) => ['job-translations', id, 'rows', page, segmentIds] as const,
-    editorSearch: (id: number, search: EditorSearch) => ['job-translations', id, 'search', search] as const,
-    editorRefs:   (id: number) => ['job-translations', id, 'refs'] as const,
-    editorWord:   (id: number, word: string) => ['job-translations', id, 'word', word] as const,
+    editorPage:   (id: EditorId, page: number, segmentIds: string) => ['job-translations', id, 'rows', page, segmentIds] as const,
+    editorSearch: (id: EditorId, search: EditorSearch) => ['job-translations', id, 'search', search] as const,
+    editorRefs:   (id: EditorId) => ['job-translations', id, 'refs'] as const,
+    editorWord:   (id: EditorId, word: string) => ['job-translations', id, 'word', word] as const,
+    /** Internal fuzzy matches of one segment, from the editor's files. */
+    editorFuzzy:  (id: EditorId, segmentId: number) => ['job-translations', id, 'fuzzy', segmentId] as const,
     steps:        (id: number) => ['job-steps', id] as const,
     /** Mutation key of a request that runs a phase on the job (Apply TM/MT,
      *  AI step): the request stays open until the run ends. */
@@ -126,13 +134,14 @@ export const queryKeys = {
     // segment status change immediately, without waiting for the 15s
     // refetchInterval.
     leverage:     (id: number) => ['job-leverage', id] as const,
-    // Persisted QA findings (GET /jobs/{id}/qa-report). Loaded when the editor
-    // opens so dots show without a manual Run QA; per-segment refreshes and
+    // Persisted QA findings of an editor (GET /jobs/{id}/qa-report, or the
+    // multi-file editor's …/editor/qa-report). Loaded when the editor opens so
+    // dots show without a manual Run QA; per-segment refreshes and
     // ignore/un-ignore patch it in place via setQueryData.
-    qaReport:     (id: number) => ['job-qa-report', id] as const,
+    qaReport:     (id: EditorId) => ['job-qa-report', id] as const,
     // Live segment holds (who has which segment open). The editor refetches
     // them when the hold stream announces a change, and polls as a fallback.
-    holds:        (id: number) => ['job-holds', id] as const,
+    holds:        (id: EditorId) => ['job-holds', id] as const,
     // Each segment's previous workflow step (GET /jobs/{id}/step-statuses).
     // Changes only when a step starts, ends or is rejected.
     stepStatuses: (id: number) => ['job-step-statuses', id] as const,
@@ -228,6 +237,14 @@ export const queryKeys = {
     detail: (id: number) => ['segmentation-profiles', 'detail', id] as const,
     preview: (input: unknown) => ['segmentation-profiles', 'preview', input] as const,
   },
+  // --- Filter profiles ---
+  // `lists` covers every list, whatever its format.
+  filterProfiles: {
+    all: ['filter-profiles'] as const,
+    lists: ['filter-profiles', 'list'] as const,
+    list: (format?: string) => ['filter-profiles', 'list', format ?? ''] as const,
+    detail: (id: number) => ['filter-profiles', 'detail', id] as const,
+  },
   qaProfile:         { detail: (id: number) => ['qa-profile', id] as const },
 
   // --- Languages ---
@@ -251,6 +268,8 @@ export const queryKeys = {
     // counts rather than threading fileId/lang down.
     allCounts: ['comment-counts'] as const,
     countsByFile: (fileId: number, lang: string) => ['comment-counts', fileId, lang] as const,
+    /** The counts of a CAT editor's files, by its editor id (lib/editor-scope). */
+    countsByEditor: (id: EditorId) => ['comment-counts', 'editor', id] as const,
   },
 
   // --- Segment history ---
@@ -342,9 +361,22 @@ export const queryKeys = {
   },
 
   // --- Members (tenant users — admin/member listing) ---
-  // The Members tab (OrgMembersPage) reads members with a direct fetch +
-  // setState, so it does not share this cache; the Vendors tab does.
-  members:           { all: ['members'] as const },
+  // A member change invalidates everything under `all`: the Members tab's
+  // pages, facets and count, and the assignee pickers.
+  members:           {
+    all: ['members'] as const,
+    // One page of the Members tab; under `all`, so a member change refreshes it.
+    page: (filters: MemberFilters, page: number) => ['members', 'page', filters, page] as const,
+    facets: (filters: MemberFilters) => ['members', 'facets', filters] as const,
+    // How many members match, for the Members section's summary line.
+    count: (filters: MemberFilters) => ['members', 'count', filters] as const,
+  },
+  // The vendor orgs this org invited (Members tab → Vendors).
+  vendorOrgs:        {
+    all: ['vendor-orgs'] as const,
+    page: (filters: VendorOrgFilters, page: number) => ['vendor-orgs', 'page', filters, page] as const,
+    facets: (filters: VendorOrgFilters) => ['vendor-orgs', 'facets', filters] as const,
+  },
 
   // --- Organization settings tab: one key per section ---
   orgSettings: {
@@ -410,3 +442,10 @@ export const queryKeys = {
 
 /** The prefix of every issue query of a scope: its lists and its issues' pages. */
 export const issuesKey = (scope: IssueScope) => (scope === 'mine' ? queryKeys.issues.all : queryKeys.platform.issues)
+
+/**
+ * Every query a change to an AI vendor's keys or connections can make stale:
+ * the vendor list, and the chat model list (cached for minutes), which fills
+ * only once a vendor holds a working key.
+ */
+export const aiKeyChangeKeys = [queryKeys.aiVendors.all, queryKeys.chat.models] as const

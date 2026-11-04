@@ -201,6 +201,32 @@ func TestIntegrationWorkerPipelineEvents(t *testing.T) {
 		}
 	})
 
+	// A comment-only run approves and rejects nothing: its event names it and
+	// carries the comment count alone, so the history row does not read as a
+	// QE+APE run that decided nothing.
+	t.Run("comment-only outcome rides the completed event", func(t *testing.T) {
+		cFile := testutil.SeedFile(t, q, project.ID, "comment.txt", db.FileFormatTxt)
+		cJob := testutil.SeedJob(t, q, cFile.ID, "de")
+		h := worker.NewHandler(&fakePipeline{aiResult: pipeline.AIStepResult{
+			Total: 15, Commented: 4, Mode: "comment",
+		}}, q)
+		if err := h.HandleAIStep(ctx, pipelineTask(t, worker.TaskAIStep, worker.PipelinePayload{TenantID: tenant.ID, JobID: cJob.ID})); err != nil {
+			t.Fatalf("HandleAIStep: %v", err)
+		}
+		details := findEventForFile(t, q, project.ID, tenant.ID, "job.pipeline_completed", "comment.txt")
+		if details["phase"] != "AI comment review" {
+			t.Errorf("expected phase 'AI comment review', got %v", details["phase"])
+		}
+		if details["commented"] != float64(4) {
+			t.Errorf("expected commented=4, got %v", details)
+		}
+		for _, k := range []string{"auto_approved", "needs_review"} {
+			if _, ok := details[k]; ok {
+				t.Errorf("comment-only event carries %s: %v", k, details)
+			}
+		}
+	})
+
 	t.Run("stop requested while queued emits job.pipeline_stopped", func(t *testing.T) {
 		stopFile := testutil.SeedFile(t, q, project.ID, "stop.txt", db.FileFormatTxt)
 		stopJob := testutil.SeedJob(t, q, stopFile.ID, "de")
@@ -293,6 +319,32 @@ func TestIntegrationWorkerPipelineEvents(t *testing.T) {
 		details := findEventForFile(t, q, project.ID, tenant.ID, "job.pipeline_failed", "permanent.txt")
 		if details["error"] != refused {
 			t.Errorf("expected the refusal in the event details, got %v", details["error"])
+		}
+	})
+
+	// A failed comment-only run names itself in the history like a finished
+	// one, while the job keeps the AI-step label that Re-run and the editor
+	// lock read.
+	t.Run("a failed comment-only run names itself", func(t *testing.T) {
+		f := testutil.SeedFile(t, q, project.ID, "comment-failed.txt", db.FileFormatTxt)
+		j := testutil.SeedJob(t, q, f.ID, "de")
+		h := worker.NewHandler(&fakePipeline{
+			aiResult: pipeline.AIStepResult{Mode: "comment"},
+			err:      pipeline.Permanent(fmt.Errorf("provider refused")),
+		}, q)
+		if err := h.HandleAIStep(ctx, pipelineTask(t, worker.TaskAIStep, worker.PipelinePayload{TenantID: tenant.ID, JobID: j.ID})); err == nil {
+			t.Fatal("expected the run to fail")
+		}
+		details := findEventForFile(t, q, project.ID, tenant.ID, "job.pipeline_failed", "comment-failed.txt")
+		if details["phase"] != "AI comment review" {
+			t.Errorf("expected phase 'AI comment review', got %v", details["phase"])
+		}
+		post, err := q.GetJob(ctx, j.ID)
+		if err != nil {
+			t.Fatalf("GetJob: %v", err)
+		}
+		if got := pipeline.FailedPhaseOf(post.Status, post.CurrentStep); got != pipeline.FailedPhaseAIStep {
+			t.Errorf("failed phase = %q (label %q), want the AI step", got, post.CurrentStep)
 		}
 	})
 }

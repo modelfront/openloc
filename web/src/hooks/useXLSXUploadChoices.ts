@@ -5,7 +5,7 @@ import { inspectXLSX, type XLSXInspection } from '@/api'
 import type { LayoutAnswer } from '@/hooks/useUploadQueue'
 import { useOnChange } from '@/hooks/useOnChange'
 import { queryKeys } from '@/lib/query-keys'
-import { choicesToLayout, inspectRefused, isXLSXFile, layoutProblem, sheetChoices, type SheetChoice } from '@/lib/xlsx-columns'
+import { NO_SHEET, choicesToLayout, inspectRefused, isXLSXFile, layoutProblem, sheetChoices, type SheetChoice } from '@/lib/xlsx-columns'
 
 export interface XLSXUploadEntry {
   file: File
@@ -28,23 +28,33 @@ export interface XLSXUploadEntry {
  * time, and holds what to translate in it, starting from the suggestion.
  * `answers` is what the upload queue takes as `layouts`. A workbook the
  * server refuses asks nothing: its upload reports the problem. Any other
- * failed read holds the upload until a retry succeeds.
+ * failed read holds the upload until a retry succeeds. `filterProfileOf`
+ * names the filter profile the uploader picked for a workbook, if any.
  */
-export function useXLSXUploadChoices(projectId: number, files: File[], enabled: boolean) {
+export function useXLSXUploadChoices(
+  projectId: number,
+  files: File[],
+  enabled: boolean,
+  filterProfileOf: (file: File) => number | undefined = () => undefined,
+) {
   const queryClient = useQueryClient()
   const xlsx = files.filter(isXLSXFile)
   const keys = xlsx.map((f, i) => `${i}-${f.name}-${f.size}-${f.lastModified}`)
+  const profiles = xlsx.map(filterProfileOf)
+  // A workbook is read again for each filter profile it is picked with: the
+  // suggestion comes from that profile's Excel rules.
+  const readKeys = keys.map((k, i) => (profiles[i] === undefined ? k : `${k}@${profiles[i]}`))
   const settled = (key: string) => {
     const status = queryClient.getQueryState(queryKeys.xlsxInspect.byFile(projectId, key))?.status
     return status === 'success' || status === 'error'
   }
   const queries = useQueries({
     queries: xlsx.map((file, i) => ({
-      queryKey: queryKeys.xlsxInspect.byFile(projectId, keys[i]),
-      queryFn: () => inspectXLSX(projectId, file),
+      queryKey: queryKeys.xlsxInspect.byFile(projectId, readKeys[i]),
+      queryFn: () => inspectXLSX(projectId, file, profiles[i]),
       // Each workbook goes up whole: one at a time keeps a batch of large
       // files from landing on the server together.
-      enabled: enabled && keys.slice(0, i).every(settled),
+      enabled: enabled && readKeys.slice(0, i).every(settled),
       staleTime: Infinity,
       retry: false,
     })),
@@ -56,6 +66,8 @@ export function useXLSXUploadChoices(projectId: number, files: File[], enabled: 
 
   const entries: XLSXUploadEntry[] = xlsx.map((file, i) => {
     const key = keys[i]
+    // Edits belong to one reading: a new profile starts from its suggestion.
+    const readKey = readKeys[i]
     const query = queries[i]
     const inspection = query.data
     const suggested = inspection && !inspection.bilingual ? inspection.suggested_layout : undefined
@@ -67,16 +79,20 @@ export function useXLSXUploadChoices(projectId: number, files: File[], enabled: 
       error: query.error,
       retry: () => { void query.refetch() },
       inspection,
-      choices: suggested ? edits[key] ?? sheetChoices(inspection!, suggested) : null,
-      setChoices: choices => setEdits(prev => ({ ...prev, [key]: choices })),
+      choices: suggested ? edits[readKey] ?? sheetChoices(inspection!, suggested) : null,
+      setChoices: choices => setEdits(prev => ({ ...prev, [readKey]: choices })),
     }
   })
 
   const pending = entries.some(e => e.pending)
   const failed = entries.find(e => e.failed)
-  const unchosen = entries.find(e => e.choices && layoutProblem(e.choices) !== null)
+  const unchosen = entries
+    .map(e => ({ name: e.file.name, problem: e.choices ? layoutProblem(e.choices) : null }))
+    .find(e => e.problem !== null)
   /** A choice the uploader still has to make; a failed read shows in its own entry. */
-  const problem = unchosen ? `Choose at least one sheet to translate in ${unchosen.file.name}.` : null
+  const problem = !unchosen ? null : unchosen.problem === NO_SHEET
+    ? `Choose at least one sheet to translate in ${unchosen.name}.`
+    : `${unchosen.name}: ${unchosen.problem}`
   /** Why the upload is held, or null when it may go. */
   const hold = pending
     ? 'Reading the Excel files…'

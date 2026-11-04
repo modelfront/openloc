@@ -63,6 +63,13 @@ type Querier interface {
 	// 0 rows = the job is not failed, or a concurrent Re-run claimed it first
 	// → 409. Tenant scoping happens in resolveJob before this by-ID write.
 	ClaimFailedJobForRerun(ctx context.Context, arg ClaimFailedJobForRerunParams) (int64, error)
+	// Internal: the inactivity sweep. Claims, and returns, the enabled vendor org
+	// memberships unused since @unused_since that have no warning yet and no live
+	// claim (one made after @claims_expire_before). A vendor org, or one whose
+	// client, is not approved is left alone: its people cannot use it, so signing
+	// in would not help them. The warning itself is set only once the email went
+	// out (MarkInactivityWarned); a claim whose email never did simply expires.
+	ClaimInactivityWarnings(ctx context.Context, arg ClaimInactivityWarningsParams) ([]ClaimInactivityWarningsRow, error)
 	// Atomic "not already running" guard + in_progress transition for the
 	// synchronous phase handlers (mt-apply / tm-apply / ai-step). No row means
 	// another run holds the job → 409. The running-state predicate is the SQL
@@ -81,9 +88,16 @@ type Querier interface {
 	// updated_at at least once per 30-segment chunk (the sync handlers' progress
 	// writer and the worker's makeProgressFunc), far inside 30 minutes.
 	ClaimJobPipeline(ctx context.Context, arg ClaimJobPipelineParams) (ClaimJobPipelineRow, error)
+	// Back to the format's built-in Default.
+	ClearFilterProfileDefault(ctx context.Context, arg ClearFilterProfileDefaultParams) error
+	// Takes a deleted profile off the tenant's projects: their uploads go back
+	// to the format's Default.
+	ClearFilterProfileFromProjects(ctx context.Context, arg ClearFilterProfileFromProjectsParams) (int64, error)
 	// Takes a deleted profile off the tenant's projects: their next upload asks
 	// for another profile.
 	ClearSegmentationProfileFromProjects(ctx context.Context, arg ClearSegmentationProfileFromProjectsParams) (int64, error)
+	// Internal: as ListSettingsFilterProfiles. Back to the format's Default.
+	ClearSettingsFilterProfile(ctx context.Context, arg ClearSettingsFilterProfileParams) error
 	// Internal: caller must have tenant-verified the job.
 	ClearStepEdited(ctx context.Context, jobID int64) error
 	// Caller MUST check locked=false first — this query trusts the caller.
@@ -132,6 +146,8 @@ type Querier interface {
 	ConfirmTranslationsHuman(ctx context.Context, arg ConfirmTranslationsHumanParams) ([]int64, error)
 	// Single-use: the DELETE is the redemption; a second redemption finds nothing.
 	ConsumeOAuthCode(ctx context.Context, codeHash string) (ConsumeOAuthCodeRow, error)
+	// Internal: copies a template's choices onto a new project's settings row.
+	CopySettingsFilterProfiles(ctx context.Context, arg CopySettingsFilterProfilesParams) error
 	// Internal: keyed on prompt_id alone. Every caller resolves the prompt
 	// through the tenant-scoped GetAIPrompt/UpdateAIPrompt first.
 	// How many AI engine rows reference this (system) prompt. Used by HandleDelete
@@ -152,7 +168,12 @@ type Querier interface {
 	// Live terms only — drives the "soft-delete the concept too" decision.
 	CountConceptTermsInLang(ctx context.Context, arg CountConceptTermsInLangParams) (int64, error)
 	CountConcepts(ctx context.Context, arg CountConceptsParams) (int64, error)
+	// Open comments per translation of the scope, for the grid's comment marks.
+	// Translations without a comment are left out.
+	CountEditorComments(ctx context.Context, arg CountEditorCommentsParams) ([]CountEditorCommentsRow, error)
 	CountFilesByProject(ctx context.Context, projectID int64) (int64, error)
+	// How many live projects and templates of the tenant name a profile.
+	CountFilterProfileUses(ctx context.Context, arg CountFilterProfileUsesParams) (CountFilterProfileUsesRow, error)
 	// The rows ClearTranslationsByJob (whole job) left because a user other than
 	// @actor_id holds them. Run after the clear, in its transaction: a held row
 	// still matches the clear's predicate, mirrored here. Driven by the holds
@@ -168,6 +189,10 @@ type Querier interface {
 	// Total matching the same filters as ListJobSegmentsPage (cursor excluded), so
 	// a caller can tell it is looking at 50 of 12,431 and should narrow.
 	CountJobSegmentsPage(ctx context.Context, arg CountJobSegmentsPageParams) (int64, error)
+	// Vendor access gate for a set of jobs: how many of @job_ids have a step
+	// assigned to the user. Every job is assigned when it equals their number.
+	// Internal: the caller resolved @job_ids tenant-scoped (editor.ResolveScope).
+	CountJobsAssignedToUser(ctx context.Context, arg CountJobsAssignedToUserParams) (int32, error)
 	// Job count per file for a page of files the caller has tenant-checked.
 	CountJobsByFiles(ctx context.Context, fileIds []int64) ([]CountJobsByFilesRow, error)
 	// Live MT routers that reference this engine, as default or in a rule.
@@ -257,6 +282,14 @@ type Querier interface {
 	// AI/system-authored comment (user_id NULL) — written by the QE+APE step for
 	// the LLM's `comment` output field.
 	CreateAIComment(ctx context.Context, arg CreateAICommentParams) (SegmentComment, error)
+	// Internal: NOT tenant-scoped. The translation id must come from a
+	// tenant-resolved AI step run (rows listed from a file loaded with
+	// GetFileTenant); never call it with an id straight off a request.
+	// The AI step's comment write: an AI comment, unless the translation already
+	// carries a live AI comment with exactly this wording. A comment-only review
+	// runs over the same segments on every re-run, so without the check each run
+	// would repeat the remarks of the last. Returns 0 when it was a duplicate.
+	CreateAICommentUnlessDuplicate(ctx context.Context, arg CreateAICommentUnlessDuplicateParams) (int64, error)
 	CreateAIConnection(ctx context.Context, arg CreateAIConnectionParams) (AiConnection, error)
 	CreateAIEngine(ctx context.Context, arg CreateAIEngineParams) (AiEngine, error)
 	// provider_id is intentionally absent: a row carries its own token/model/
@@ -303,8 +336,11 @@ type Querier interface {
 	// not parse a file as plain text. xlsx_layout is NULL for every file but an
 	// Excel workbook the uploader laid out (parser.XLSXLayout). segmentation is
 	// the rule set the file was split with (segmentation.Snapshot); NULL means
-	// the conservative built-in set.
+	// the conservative built-in set. filter_profile is the filter profile the
+	// file was imported with (filterprofile.Snapshot); NULL for a format without
+	// filter profiles.
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
+	CreateFilterProfile(ctx context.Context, arg CreateFilterProfileParams) (int64, error)
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error)
 	// Issues a user reports to the platform operators, and their conversation.
 	// Member queries are scoped by tenant_id, and by reporter_id unless
@@ -387,11 +423,11 @@ type Querier interface {
 	// ============================================================
 	// Settings Profile CRUD
 	// ============================================================
-	// Penalties, auto_complete, inline_html and linguist_terms are deliberately
-	// absent: they take the column defaults (1% / 1% / on / on / pending). Adding them as params would make every existing
+	// Penalties, auto_complete and linguist_terms are deliberately absent: they take
+	// the column defaults (1% / 1% / on / pending). Adding them as params would make every existing
 	// struct-literal caller pass a silent zero value — 0 means "locales are
 	// equivalent" (new projects would start auto-confirming sublanguage variants)
-	// and false would switch auto-completion or HTML strings off. Callers that need non-defaults
+	// and false would switch auto-completion off. Callers that need non-defaults
 	// (create-from-template) set them via UpdateSettingsProfile.
 	CreateSettingsProfile(ctx context.Context, arg CreateSettingsProfileParams) (SettingsProfile, error)
 	CreateSettingsTMAssignment(ctx context.Context, arg CreateSettingsTMAssignmentParams) (SettingsTmAssignment, error)
@@ -425,6 +461,11 @@ type Querier interface {
 	// the org the user most recently entered (SetLastTenant), used only to default
 	// the org picker.
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// A vendor organization, created when its admin accepts the client's
+	// vendor-org invite. The client is already approved, so the vendor org is
+	// too. No domain: domain sign-up and auto-join never reach a vendor org.
+	// A taken slug returns no row, as in CreatePendingTenant.
+	CreateVendorTenant(ctx context.Context, arg CreateVendorTenantParams) (Tenant, error)
 	CreateVendorToken(ctx context.Context, arg CreateVendorTokenParams) (AiVendorToken, error)
 	CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) (Workflow, error)
 	CreateWorkflowDefinitionStep(ctx context.Context, arg CreateWorkflowDefinitionStepParams) (WorkflowDefinitionStep, error)
@@ -593,9 +634,8 @@ type Querier interface {
 	// A member who leaves the organization releases every segment they hold there.
 	DeleteUserHoldsInTenant(ctx context.Context, arg DeleteUserHoldsInTenantParams) error
 	// Used by the PUT replace-semantics handler. Always paired with bulk insert
-	// inside a transaction so the user's pair set is atomically replaced.
-	// Org-scoped via the membership subquery — won't touch a user's pairs unless
-	// they're a member of the given tenant.
+	// inside a transaction so the member's pair set is atomically replaced.
+	// Touches only the pairs this org set.
 	DeleteUserLanguagePairs(ctx context.Context, arg DeleteUserLanguagePairsParams) error
 	DeleteVendorToken(ctx context.Context, arg DeleteVendorTokenParams) error
 	DeleteWorkflowDefinitionSteps(ctx context.Context, workflowID int64) error
@@ -607,11 +647,23 @@ type Querier interface {
 	// True while any demo project still exists in the tenant. The name check also
 	// covers databases seeded before the manifest existed.
 	DemoWorkspacePresent(ctx context.Context, arg DemoWorkspacePresentParams) (bool, error)
+	// Internal: the inactivity sweep. Disables up to @lim vendor org memberships
+	// unused since @unused_since whose warning went out before @warned_before,
+	// so nobody is disabled without a warning first, nor while their vendor org
+	// or its client is not approved.
+	DisableInactiveVendorMemberships(ctx context.Context, arg DisableInactiveVendorMembershipsParams) (int64, error)
 	// Accepts a failed job's error when a person completes or sends back its task:
 	// the job goes idle and the error is cleared, so it does not reappear on the
 	// task that becomes current next. Returns the dismissed message; pgx.ErrNoRows
 	// means the job was not failed. Tenant scoping is the caller's.
 	DismissJobFailure(ctx context.Context, arg DismissJobFailureParams) (*string, error)
+	// An admin enables a member their org disabled for disuse. The clock starts
+	// again from now. ErrNoRows: no such disabled membership in this org.
+	EnableMembership(ctx context.Context, arg EnableMembershipParams) (Membership, error)
+	// A client org enables an admin one of its own vendor orgs disabled for
+	// disuse. Scoped by the client's tenant id through the vendor's link.
+	// ErrNoRows: not a disabled admin of a vendor of this client.
+	EnableVendorAdmin(ctx context.Context, arg EnableVendorAdminParams) (Membership, error)
 	// Create a deployment-supplied engine for a tenant that has none of that type.
 	//
 	// Runs once, when the tenant is created. Idempotent so a retried signup cannot
@@ -733,6 +785,7 @@ type Querier interface {
 	// A live workflow a project or template may copy its steps from: a library
 	// row or a built-in one.
 	GetApplicableWorkflow(ctx context.Context, arg GetApplicableWorkflowParams) (Workflow, error)
+	GetBuiltinFilterProfileByKey(ctx context.Context, builtinKey *string) (FilterProfileCatalog, error)
 	// THE capability read: resolves a chart by its share token, with NO owner
 	// predicate — that is the whole point, since the holder of the link is exactly
 	// someone who could not reach the chart by browsing.
@@ -769,6 +822,8 @@ type Querier interface {
 	GetDashboardTenant(ctx context.Context, arg GetDashboardTenantParams) (GetDashboardTenantRow, error)
 	// Gets the default_assignee from the workflow_step definition for a given job_step_assignment
 	GetDefaultAssigneeForStep(ctx context.Context, id int64) (*int64, error)
+	// A format's Default built-in: the newest version.
+	GetDefaultFilterProfile(ctx context.Context, format string) (FilterProfileCatalog, error)
 	// Internal: projectdelete. The project only while it is marked deleted.
 	GetDeletedProject(ctx context.Context, arg GetDeletedProjectParams) (GetDeletedProjectRow, error)
 	// Internal: the one demo tenant, not scoped by a caller's tenant.
@@ -783,6 +838,11 @@ type Querier interface {
 	GetFile(ctx context.Context, id int64) (File, error)
 	// Tenant-scoped: returns file only if it belongs to the caller's tenant.
 	GetFileTenant(ctx context.Context, arg GetFileTenantParams) (File, error)
+	// A live org profile of the tenant, or a built-in.
+	GetFilterProfile(ctx context.Context, arg GetFilterProfileParams) (FilterProfileCatalog, error)
+	// The profile a project or template names, deleted or not: an upload that
+	// read its project's settings before a delete still resolves the profile.
+	GetFilterProfileForImport(ctx context.Context, arg GetFilterProfileForImportParams) (FilterProfileCatalog, error)
 	// Oldest token for a (tenant, provider) vendor — used by seed and demo data.
 	// Includes ciphertext.
 	GetFirstVendorToken(ctx context.Context, arg GetFirstVendorTokenParams) (GetFirstVendorTokenRow, error)
@@ -814,6 +874,11 @@ type Querier interface {
 	// into the '100' band — a distinct ICE band ships with the ICE feature.
 	GetJobAnalysis(ctx context.Context, arg GetJobAnalysisParams) ([]GetJobAnalysisRow, error)
 	GetJobByFileAndLang(ctx context.Context, arg GetJobByFileAndLangParams) (Job, error)
+	// Internal: the job's step in progress, read inside the step advance's
+	// transaction after LockJobForTaskEdit, so the advance sees the step a
+	// concurrent advance may just have moved. The caller resolved the job
+	// tenant-scoped.
+	GetJobCurrentStepID(ctx context.Context, jobID int64) (*int64, error)
 	// Worker helper: pulls job context the worker needs per job — file name
 	// (for job_name_snapshot), target_language, tenant_id (for cross-tenant
 	// defense). Joins through files+projects so a single round-trip carries
@@ -1066,6 +1131,8 @@ type Querier interface {
 	// The profile a project or template names, deleted or not: an upload that
 	// read its project's settings before a delete still resolves the profile.
 	GetSegmentationProfileForImport(ctx context.Context, arg GetSegmentationProfileForImportParams) (SegmentationProfileCatalog, error)
+	// Internal: as ListSettingsFilterProfiles, for one format.
+	GetSettingsFilterProfile(ctx context.Context, arg GetSettingsFilterProfileParams) (int64, error)
 	GetSettingsProfile(ctx context.Context, id int64) (SettingsProfile, error)
 	// Internal: the file's shared segment with this key at this position; the
 	// caller has checked the file in the tenant.
@@ -1136,7 +1203,6 @@ type Querier interface {
 	// itself. Read fuzzy_threshold and the penalty columns from the result; the
 	// other columns belong to the caller's own row and must not be read from here.
 	GetTMScopeSettingsProfile(ctx context.Context, spID int64) (SettingsProfile, error)
-	GetTaskEditState(ctx context.Context, arg GetTaskEditStateParams) (GetTaskEditStateRow, error)
 	// Task edit guard (taskedit.Guard). Both reads return the same columns: the
 	// job's pipeline state, its in-progress task, and its last completed task,
 	// which is the current task once nothing is in progress. One query per check,
@@ -1158,13 +1224,17 @@ type Querier interface {
 	// before an operator has approved it.
 	GetTenantByDomainOpenReg(ctx context.Context, domain *string) (Tenant, error)
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, error)
+	// Per-request tenant gate: the org's own status and kind, plus its client's
+	// status for a vendor org (NULL otherwise). A vendor org works only while
+	// its client does.
+	GetTenantGate(ctx context.Context, tenantID int64) (GetTenantGateRow, error)
 	// The identity that owns a tenant (the signup creator). Used to notify them on
 	// approve/reject. Earliest owner if somehow multiple.
 	GetTenantOwner(ctx context.Context, tenantID int64) (GetTenantOwnerRow, error)
-	// Per-request pending-gate. auth.Middleware calls this so approval
-	// takes effect on the next request without a re-login (a JWT claim would go
-	// stale for the token's 24h lifetime).
-	// Also returns kind: the demo organization is read-only.
+	// The selected org as /api/auth/me shows it. client_org_name and
+	// client_status are a vendor org's client's, NULL for any other kind.
+	GetTenantProfile(ctx context.Context, tenantID int64) (GetTenantProfileRow, error)
+	// The org's status and kind. The per-request gate reads GetTenantGate.
 	GetTenantStatus(ctx context.Context, id int64) (GetTenantStatusRow, error)
 	GetTerm(ctx context.Context, id int64) (Term, error)
 	GetTermBase(ctx context.Context, arg GetTermBaseParams) (TermBasis, error)
@@ -1280,6 +1350,10 @@ type Querier interface {
 	// Project audit log (project_events). Event taxonomy + emit helpers live in
 	// internal/projectevents/events.go.
 	InsertProjectEvent(ctx context.Context, arg InsertProjectEventParams) (int64, error)
+	// One `propagation` event per sibling a propagation wrote, all with the same
+	// text and the same source translation in @details. Internal: the ids are
+	// rows PropagateTranslation just returned for a tenant-scoped scope.
+	InsertPropagationHistoryBatch(ctx context.Context, arg InsertPropagationHistoryBatchParams) error
 	// TM Entry queries
 	// Plain insert — no deduplication. Used by TMX import (every TU stored as-is).
 	// source_rich_text / target_rich_text are nullable: pass empty string to
@@ -1305,9 +1379,11 @@ type Querier interface {
 	InsertTranslationHistory(ctx context.Context, arg InsertTranslationHistoryParams) (TranslationHistory, error)
 	// Single-pair insert. Bulk insert is done by the handler in a loop inside
 	// a transaction (sqlc's batch insert support is awkward for our setup).
-	// Org-scoped via the membership subquery — the INSERT silently no-ops if the
-	// user isn't a member of tenant_id (defense in depth).
+	// Org-scoped via the membership: the INSERT silently no-ops if the user isn't
+	// a member of tenant_id (defense in depth).
 	InsertUserLanguagePair(ctx context.Context, arg InsertUserLanguagePairParams) error
+	// Whether a profile is the tenant's default for its format.
+	IsFilterProfileDefault(ctx context.Context, arg IsFilterProfileDefaultParams) (bool, error)
 	// Vendor access gate for the file's language-neutral routes (source segments,
 	// source download): true if the user is assigned to any step of any job of the
 	// file. Translation routes use IsUserAssignedToFileLanguage.
@@ -1362,6 +1438,10 @@ type Querier interface {
 	ListAPITokensByTenant(ctx context.Context, tenantID int64) ([]ListAPITokensByTenantRow, error)
 	// The caller's own tokens in the current org. Never selects token_hash.
 	ListAPITokensByUser(ctx context.Context, arg ListAPITokensByUserParams) ([]ListAPITokensByUserRow, error)
+	// One page of the org's accepted invites the caller may handle (roles, as in
+	// ListInvitesByTenant), newest acceptance first. q matches the email or the
+	// vendor org's name as plain text. total counts every match.
+	ListAcceptedInvitesPage(ctx context.Context, arg ListAcceptedInvitesPageParams) ([]ListAcceptedInvitesPageRow, error)
 	// One representative workflow-step row per job in a project (batched, avoids
 	// N+1): the job's current task. DISTINCT ON picks the in_progress step when
 	// there is one, otherwise the last completed step, otherwise the latest step —
@@ -1468,7 +1548,14 @@ type Querier interface {
 	// LockIssueDuplicates. The duplicates ReopenDuplicatesOf sends back to the
 	// queue.
 	ListDuplicatesToReopen(ctx context.Context, originalID int64) ([]int64, error)
-	// One row per segment of a job, in document order, without the text the grid
+	// Internal fuzzy matches: confirmed translations in the scope's files whose
+	// source looks like @query, best first. The segment itself and identical
+	// sources (repetitions, which propagation fills) are left out. `%` compares
+	// against pg_trgm.similarity_threshold: run it through editor.fuzzyCandidates,
+	// which sets that first. The caller rescores with the TM scorer.
+	ListEditorFuzzyCandidates(ctx context.Context, arg ListEditorFuzzyCandidatesParams) ([]ListEditorFuzzyCandidatesRow, error)
+	// One row per segment of the editor's scope (the files of its jobs, in the
+	// order of @file_ids, each in document order), without the text the grid
 	// renders: what the CAT editor counts, filters and navigates on. A job's rows
 	// are the segments that own a translation in its language, so a shared segment
 	// a split or join replaced in this language is left out. The source text is
@@ -1483,23 +1570,30 @@ type Querier interface {
 	// holds every handed-over version. A translation with no closed round, or no
 	// text when it ended, is not returned.
 	ListEditorPreviousStepTexts(ctx context.Context, arg ListEditorPreviousStepTextsParams) ([]ListEditorPreviousStepTextsRow, error)
-	// Tagged sources of a job's segments that carry a cross-reference chip.
-	ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]string, error)
-	// The segments of @ids that belong to the job's file and language; others are
-	// not returned.
+	// Tagged sources of the scope's segments that carry a cross-reference chip,
+	// with their file: a chip points at a key in its own file.
+	ListEditorRefSources(ctx context.Context, arg ListEditorRefSourcesParams) ([]ListEditorRefSourcesRow, error)
+	// The jobs of @job_ids in the caller's tenant, with their file and the step in
+	// progress (none: empty name): what an editor scope opens. A job of a deleted
+	// project is left out; the caller checks that every id came back. Tenant
+	// scoping is structural via files→projects.
+	ListEditorScopeJobs(ctx context.Context, arg ListEditorScopeJobsParams) ([]ListEditorScopeJobsRow, error)
+	// The segments of @ids that belong to the scope's files and language; others
+	// are not returned.
 	ListEditorSegmentsByIDs(ctx context.Context, arg ListEditorSegmentsByIDsParams) ([]Segment, error)
-	// The job's segments with these original keys, and their translation. A key
-	// a split replaced in this language comes back once per piece, keyed by the
-	// original key, in document order.
+	// The scope's segments with these original keys, and their translation. A
+	// key a split replaced in this language comes back once per piece, keyed by
+	// the original key, in document order. The caller keeps the keys each file's
+	// chips name.
 	ListEditorSegmentsByKeys(ctx context.Context, arg ListEditorSegmentsByKeysParams) ([]ListEditorSegmentsByKeysRow, error)
-	// Source and target text of every segment of a job, for the editor's text
-	// search.
+	// Source and target text of every segment of the scope, for the editor's
+	// text search.
 	ListEditorTexts(ctx context.Context, arg ListEditorTextsParams) ([]ListEditorTextsRow, error)
 	// Internal: the translations of @segment_ids in one language. The ids come from
 	// ListEditorSegmentsByIDs (tenant-scoped), which is the tenant scope here.
 	ListEditorTranslationsBySegments(ctx context.Context, arg ListEditorTranslationsBySegmentsParams) ([]Translation, error)
-	// Translations of a job's file whose target contains @word anywhere (case
-	// sensitive). The caller narrows to whole words.
+	// Translations of the scope's files whose target contains @word anywhere
+	// (case sensitive). The caller narrows to whole words.
 	ListEditorWordCandidates(ctx context.Context, arg ListEditorWordCandidatesParams) ([]ListEditorWordCandidatesRow, error)
 	ListExtensions(ctx context.Context, tenantID int64) ([]Extension, error)
 	// Jobs whose pipeline ended in an error, newest first.
@@ -1510,12 +1604,31 @@ type Querier interface {
 	// Files uploaded while the project was a draft: stored and segmented, but
 	// their translations and jobs are created at publish.
 	ListFilesWithoutJobs(ctx context.Context, arg ListFilesWithoutJobsParams) ([]File, error)
+	// ============================================================
+	// The org's default per format
+	// ============================================================
+	// The org's default per format, with the profile's name.
+	ListFilterProfileDefaults(ctx context.Context, tenantID int64) ([]ListFilterProfileDefaultsRow, error)
+	// ============================================================
+	// Filter profiles
+	// ============================================================
+	// Reads go through filter_profile_catalog: the built-ins (tenant_id NULL,
+	// read by every org) and the org's own profiles, so reads take
+	// tenant_id = $tenant OR tenant_id IS NULL. Writes touch the org's table
+	// alone, scoped by tenant_id. Org profiles are soft-deleted: live reads
+	// filter deleted_at IS NULL.
+	// The built-ins, then the org's own profiles; @format, when set, keeps one
+	// format's.
+	ListFilterProfiles(ctx context.Context, arg ListFilterProfilesParams) ([]FilterProfileCatalog, error)
+	// One page by id after @cursor, with ListFilterProfiles' format filter.
+	ListFilterProfilesPage(ctx context.Context, arg ListFilterProfilesPageParams) ([]FilterProfileCatalog, error)
 	// Internal: caller must have tenant-verified the job (GetJobTenant) and pass
 	// ids of its rows. The ignored findings of those rows, for the per-finding
 	// ignore of a batch check.
 	ListIgnoredQAResultsForTranslations(ctx context.Context, ids []int64) ([]ListIgnoredQAResultsForTranslationsRow, error)
 	// Leaves the token out: only the invite email carries it. roles is the set the
-	// caller may handle (invite.handledRoles).
+	// caller may handle (invite.handledRoles); pending_only leaves out the
+	// accepted invites, which ListAcceptedInvitesPage pages.
 	ListInvitesByTenant(ctx context.Context, arg ListInvitesByTenantParams) ([]ListInvitesByTenantRow, error)
 	// Internal: platform sweep across tenants. One batch of queued attachment keys.
 	ListIssueAttachmentBlobPurges(ctx context.Context, batchSize int32) ([]string, error)
@@ -1551,7 +1664,8 @@ type Querier interface {
 	// in document order, with what a split or join reads. Rows of another job
 	// are not returned.
 	ListJobEditRowsByTranslations(ctx context.Context, arg ListJobEditRowsByTranslationsParams) ([]ListJobEditRowsByTranslationsRow, error)
-	// Tenant-scoped: the live holds in a job, with the holders' names.
+	// Tenant-scoped: the live holds in the jobs of @job_ids, with the holders'
+	// names.
 	ListJobHolds(ctx context.Context, arg ListJobHoldsParams) ([]ListJobHoldsRow, error)
 	// Translations whose AI outcome predates the job's current step round. The
 	// editor only treats an AI rejection as unfinished work in the round that
@@ -1623,6 +1737,10 @@ type Querier interface {
 	ListJobsForSettingsProfile(ctx context.Context, settingsProfileID int64) ([]ListJobsForSettingsProfileRow, error)
 	// Jobs where the user is assigned to the current active step
 	ListJobsForUserStep(ctx context.Context, userID *int64) ([]ListJobsForUserStepRow, error)
+	// The jobs of @job_ids with a finished step round on any of their segments:
+	// the editor's track changes has a baseline to mark against. Tenant scoping
+	// is structural via files→projects.
+	ListJobsWithPreviousStep(ctx context.Context, arg ListJobsWithPreviousStepParams) ([]int64, error)
 	// Live engines of the tenant whose row lost its key and whose vendor is
 	// @provider: the engines a new key of that vendor can fix.
 	ListKeylessAIEngineRows(ctx context.Context, arg ListKeylessAIEngineRowsParams) ([]ListKeylessAIEngineRowsRow, error)
@@ -1642,6 +1760,9 @@ type Querier interface {
 	// Every live value of every live label in the tenant, so the labels list costs
 	// two round trips rather than one per label.
 	ListLabelValues(ctx context.Context, tenantID int64) ([]LabelValue, error)
+	// The pairs of several members of one org at once (one page of the Members
+	// tab). Ordered like ListUserLanguagePairs.
+	ListLanguagePairsForMembers(ctx context.Context, arg ListLanguagePairsForMembersParams) ([]ListLanguagePairsForMembersRow, error)
 	ListLanguages(ctx context.Context) ([]Language, error)
 	// Internal: the caller resolved @ids tenant-scoped (a job's rows).
 	// GetLatestHistoryTextForTranslation for many rows: each row's newest history
@@ -1725,6 +1846,12 @@ type Querier interface {
 	// keeps pointing at a router after it is retired and its jobs must still
 	// translate.
 	ListMTRouters(ctx context.Context, tenantID int64) ([]MtRouter, error)
+	// The distinct pairs of the org's active members that match q and role: the
+	// Source and Target filters offer languages from these.
+	ListMemberFacetPairs(ctx context.Context, arg ListMemberFacetPairsParams) ([]ListMemberFacetPairsRow, error)
+	// The roles of the org's active members that match q and the language pair
+	// (the Members list's filters but its own): the Role filter offers only these.
+	ListMemberFacetRoles(ctx context.Context, arg ListMemberFacetRolesParams) ([]string, error)
 	// Internal: callers load the issue through a member query first. The files of
 	// the report and of the entries the org sees.
 	ListMemberIssueAttachments(ctx context.Context, issueID int64) ([]IssueAttachment, error)
@@ -1734,8 +1861,16 @@ type Querier interface {
 	// not the user row. Default: active users only; pass include_inactive=true to
 	// also return deactivated users (admin "deactivated members" view).
 	ListMembersByTenant(ctx context.Context, arg ListMembersByTenantParams) ([]ListMembersByTenantRow, error)
+	// The Members tab, one page of the org's active members: the most powerful
+	// role first, then name, then id. q matches name or email as plain text (no
+	// wildcards); role is one role; source and target together match one pair.
+	// total counts every match, for the page heading. disabled_at marks a vendor
+	// org member disabled for disuse; they stay listed so an admin can enable them.
+	ListMembersPage(ctx context.Context, arg ListMembersPageParams) ([]ListMembersPageRow, error)
 	// The org picker: every org this identity can enter, with the user's role. An
 	// organization being deleted is gone for its members already.
+	// client_org_name names a vendor org's client, NULL for any other kind;
+	// disabled_at is set when a vendor org disabled the membership for disuse.
 	ListMembershipsWithTenant(ctx context.Context, userID int64) ([]ListMembershipsWithTenantRow, error)
 	// Pass 3 audit (Medium B): every read scopes by tenant_id even though
 	// (user_id, tenant_id) is 1:1 today via the JWT — defense in depth so
@@ -1777,6 +1912,8 @@ type Querier interface {
 	// the model reads is the one the editor shows.
 	// @review_all (a step round that re-runs its AI after a rollback) takes every
 	// unconfirmed, unlocked segment with text, people's text included.
+	// @every_translation (a comment-only review, which changes nothing) takes
+	// every segment with text, whatever its status or lock.
 	ListPreTranslatedByFile(ctx context.Context, arg ListPreTranslatedByFileParams) ([]ListPreTranslatedByFileRow, error)
 	// ListJobPreviousStepStatuses for a page of translations.
 	ListPreviousStepStatusesByTranslations(ctx context.Context, arg ListPreviousStepStatusesByTranslationsParams) ([]ListPreviousStepStatusesByTranslationsRow, error)
@@ -1847,6 +1984,10 @@ type Querier interface {
 	// QA profiles are soft-deleted: live reads filter
 	// deleted_at IS NULL.
 	ListQAProfiles(ctx context.Context, tenantID int64) ([]QaProfile, error)
+	// The findings of the files of @file_ids in one target language, file by file
+	// in the order given: a multi-file editor's QA report. Tenant scoping is
+	// structural via files→projects.
+	ListQAResultsForFiles(ctx context.Context, arg ListQAResultsForFilesParams) ([]ListQAResultsForFilesRow, error)
 	// Internal: caller must have tenant-verified the job (GetJobTenant).
 	ListQAResultsForJob(ctx context.Context, arg ListQAResultsForJobParams) ([]ListQAResultsForJobRow, error)
 	// Internal: caller must have tenant-verified the translation (GetTranslationTenant).
@@ -1900,6 +2041,12 @@ type Querier interface {
 	// Tenant-scoped: returns the file's shared segments, as imported, only if the
 	// file belongs to caller's tenant, at most @row_limit of them.
 	ListSegmentsByFileTenant(ctx context.Context, arg ListSegmentsByFileTenantParams) ([]Segment, error)
+	// ============================================================
+	// A project's or template's choice per format
+	// ============================================================
+	// Internal: callers pass the settings profile id of a project or template
+	// they read with its tenant. The chosen profile per format, with its name.
+	ListSettingsFilterProfiles(ctx context.Context, settingsProfileID int64) ([]ListSettingsFilterProfilesRow, error)
 	// ============================================================
 	// Settings TM Assignments
 	// ============================================================
@@ -1988,6 +2135,8 @@ type Querier interface {
 	// rows in t2.id order. The caller drops the segment's own row and keeps 10,
 	// which is exactly the per-segment query's answer.
 	ListTargetsForSources(ctx context.Context, arg ListTargetsForSourcesParams) ([]ListTargetsForSourcesRow, error)
+	// The jobs of @job_ids, one row each; a job outside the tenant is left out.
+	ListTaskEditStates(ctx context.Context, arg ListTaskEditStatesParams) ([]ListTaskEditStatesRow, error)
 	// Distinct step names across the Tasks page's whole scope (every page, not only
 	// the loaded rows) — the option set for the page's Step filter. Same scope rule
 	// as ListTasksFiltered: assigned_to NULL = every assignee.
@@ -2017,6 +2166,9 @@ type Querier interface {
 	// Sort by id DESC for stable cursor pagination (newest-created first).
 	// Caller passes limit+1 to detect has_more in the handler.
 	ListTemplatesFiltered(ctx context.Context, arg ListTemplatesFilteredParams) ([]Template, error)
+	// The org's active owners and admins: who hears that one of its vendor orgs
+	// has a new admin.
+	ListTenantAdminIDs(ctx context.Context, tenantID int64) ([]int64, error)
 	// The ids among @ids whose file belongs to the tenant: the LLM call log
 	// carries file ids but no tenant, so this decides which calls an org may read.
 	ListTenantFileIDsIn(ctx context.Context, arg ListTenantFileIDsInParams) ([]int64, error)
@@ -2029,6 +2181,7 @@ type Querier interface {
 	// pending first (they need action), then newest. LEFT JOIN owner so an org
 	// without one still appears (owner_email/name are then NULL).
 	// The demo organization is built and rebuilt by the server, not managed here.
+	// A vendor org has no owner and lists with its client's name.
 	ListTenantsForPlatform(ctx context.Context) ([]ListTenantsForPlatformRow, error)
 	// Distinct languages with at least one live term in the base. Drives the CSV
 	// export language selector (the base is multilingual, so this is a superset of
@@ -2048,6 +2201,10 @@ type Querier interface {
 	// All live terms for a set of concepts, ordered so callers can group by concept.
 	// Joins users for the creator/updater display names (concept dialog stamps).
 	ListTermsForConcepts(ctx context.Context, conceptIds []int64) ([]ListTermsForConceptsRow, error)
+	// The file of each translation of @ids among the files of @file_ids in one
+	// target language: a multi-file QA run on a selection sends each job only
+	// its own rows. Tenant scoping is structural via files→projects.
+	ListTranslationFilesForQA(ctx context.Context, arg ListTranslationFilesForQAParams) ([]ListTranslationFilesForQARow, error)
 	// Internal: translation_history has no tenant_id (it hangs off translations),
 	// so the caller MUST verify the parent with GetTranslationTenant first — see
 	// HandleHistory.
@@ -2112,10 +2269,9 @@ type Querier interface {
 	// held_by_other: a user other than @actor_id (the user who ran the phase;
 	// NULL = any user) has the row open; the phase skips and counts it.
 	ListUntranslatedByFile(ctx context.Context, arg ListUntranslatedByFileParams) ([]ListUntranslatedByFileRow, error)
-	// Per-user language pair qualification.
-	// Tenant isolation goes through user_id → memberships(tenant_id). Every query scopes through the membership so
-	// a multi-org linguist's pairs are visible/editable only in the org being viewed.
-	// List all pairs for a user, scoped to an org via the membership.
+	// Per-org language pair qualification. A pair belongs to a membership
+	// (tenant_id, user_id): each org sets and reads only its own pairs for a person.
+	// List a member's pairs in one org.
 	// Ordered by row_group first so the client can reconstruct editor rows in order.
 	ListUserLanguagePairs(ctx context.Context, arg ListUserLanguagePairsParams) ([]ListUserLanguagePairsRow, error)
 	// Internal: the names of the support team members an issue's history names.
@@ -2123,10 +2279,26 @@ type Querier interface {
 	// Internal: platform operators only (RequirePlatformAdmin). The accounts of
 	// the support team (PLATFORM_ADMIN_EMAILS, lower-cased by the caller).
 	ListUsersByEmails(ctx context.Context, emails []string) ([]ListUsersByEmailsRow, error)
-	// List members of an org qualified for a given source→target pair.
+	// List members of an org qualified for a given source→target pair in that org.
 	// Used by the workflow assignment dropdown filter.
 	// Filters out soft-deleted / inactive users. Role comes from the membership.
 	ListUsersForLanguagePair(ctx context.Context, arg ListUsersForLanguagePairParams) ([]ListUsersForLanguagePairRow, error)
+	// The distinct pairs the active people of a client's vendor orgs cover, among
+	// the vendor orgs that match q (name or admin email): the Vendors list's
+	// Source and Target filters offer languages from these.
+	ListVendorOrgFacetPairs(ctx context.Context, arg ListVendorOrgFacetPairsParams) ([]ListVendorOrgFacetPairsRow, error)
+	// The distinct pairs the active people of several vendor orgs cover, for the
+	// client's Vendors list. Only vendor orgs of @client_tenant_id count.
+	ListVendorOrgLanguagePairs(ctx context.Context, arg ListVendorOrgLanguagePairsParams) ([]ListVendorOrgLanguagePairsRow, error)
+	// One page of the vendor orgs a client org invited, for its Members tab:
+	// the admins of active accounts, each with whether the vendor disabled their
+	// membership for disuse (the client may enable it). q matches the
+	// vendor's name or an admin's email as plain text; source and target match a
+	// pair one of its active people has (together, one pair). total counts every
+	// match. Scoped by the client's tenant id.
+	ListVendorOrgsForClient(ctx context.Context, arg ListVendorOrgsForClientParams) ([]ListVendorOrgsForClientRow, error)
+	// Internal: tenantdelete. The vendor orgs of a client org, deleted before it.
+	ListVendorTenantIDs(ctx context.Context, clientTenantID *int64) ([]int64, error)
 	// Internal: includes ciphertext. Every key for one (tenant, provider), in the
 	// order the runtime prefers them: the explicit chat key, then oldest. The model
 	// catalog tries them in that order and stops at the first that answers, so one
@@ -2220,6 +2392,11 @@ type Querier interface {
 	LockJobsForWrite(ctx context.Context, arg LockJobsForWriteParams) ([]int64, error)
 	// The issue row, locked for a member comment's status change.
 	LockMemberIssue(ctx context.Context, arg LockMemberIssueParams) (Issue, error)
+	// Internal: the accept flow, on an invite it already resolved from the
+	// invitee's token or verified email. Accepting a vendor-org invite creates an
+	// org: the row lock makes two concurrent accepts of one invite create it
+	// once. No row = already accepted.
+	LockPendingInviteForAccept(ctx context.Context, id int64) (Invite, error)
 	// LockJobsForWrite for every job with a task on a settings profile's steps.
 	LockProfileJobsForWrite(ctx context.Context, arg LockProfileJobsForWriteParams) ([]int64, error)
 	// LockJobsForWrite for every job of a project.
@@ -2306,6 +2483,10 @@ type Querier interface {
 	// hit from a penalized variant.
 	LookupTMBatch(ctx context.Context, arg LookupTMBatchParams) ([]LookupTMBatchRow, error)
 	MarkAllNotificationsRead(ctx context.Context, arg MarkAllNotificationsReadParams) error
+	// Internal: the warning email went out; its days start now. Only while the
+	// claim holds: a use of the org (or an enable) while the email was on its way
+	// withdrew it, and their new days count without a warning.
+	MarkInactivityWarned(ctx context.Context, id int64) error
 	// A completed job is open again because its last task was reopened. The idle
 	// label ends in "complete", so the job does not read as running.
 	MarkJobReopened(ctx context.Context, arg MarkJobReopenedParams) (int64, error)
@@ -2372,7 +2553,8 @@ type Querier interface {
 	// them the one with language rules, since the tour points at them.
 	PickTourPrompt(ctx context.Context, arg PickTourPromptParams) (int64, error)
 	// Auto-propagation: copy a confirmed translation onto every other segment in
-	// the same file + target language whose source matches. Locked rows are left
+	// the files of @file_ids (the editor's open files) in the target language
+	// whose source matches. Locked rows are left
 	// alone: a lock means "don't touch". The check sits on the outer WHERE so a
 	// row locked while the statement waits is re-checked and skipped.
 	//
@@ -2383,6 +2565,8 @@ type Querier interface {
 	//
 	// A sibling a user other than @actor_id holds is skipped, like a locked one.
 	// The siblings are locked in id order, the order a counts recount locks them.
+	// The md5 test lets idx_segments_file_source_md5 find them; the plain
+	// equality keeps the match exact.
 	PropagateTranslation(ctx context.Context, arg PropagateTranslationParams) ([]Translation, error)
 	// Internal: caller must have tenant-verified the translation (GetTranslationTenant / GetJobTenant).
 	// Removes the rows for checks that did not fire in the run that just upserted
@@ -2475,6 +2659,9 @@ type Querier interface {
 	// The step that sends the job back drops its hand-off note: its next hand-off
 	// writes a new one, and the note in between would be stale.
 	RejectStepAssignment(ctx context.Context, arg RejectStepAssignmentParams) error
+	// Internal: claims whose email was not sent (it failed, or the sweep stopped
+	// first), so the next sweep tries again without waiting for them to expire.
+	ReleaseInactivityClaims(ctx context.Context, ids []int64) error
 	// Deletes the caller's hold from one tab; a hold another tab took over stays.
 	ReleaseTabHold(ctx context.Context, arg ReleaseTabHoldParams) error
 	// Deletes the caller's hold on a translation from any tab: the task stopped
@@ -2639,6 +2826,9 @@ type Querier interface {
 	SearchTMEntries(ctx context.Context, arg SearchTMEntriesParams) ([]SearchTMEntriesRow, error)
 	// Same filter as CountTMEntriesSearch; @query only feeds the score.
 	SearchTMEntriesCursor(ctx context.Context, arg SearchTMEntriesCursorParams) ([]SearchTMEntriesCursorRow, error)
+	// Internal: the seed. Dates a membership's last use, warning and disable, to
+	// show the inactivity rules on demo data.
+	SeedMembershipIdle(ctx context.Context, arg SeedMembershipIdleParams) error
 	// Persist the job set resolved at run time onto a coalesced auto analysis.
 	// is_auto rows are created with job_ids='{}' and the worker resolves
 	// the project's jobs when it runs; writing them back keeps the row's stored
@@ -2654,6 +2844,11 @@ type Querier interface {
 	// Moves a dashboard between Shared (NULL) and one user's own. Name collisions
 	// surface as a unique violation, which the handler turns into a 409.
 	SetDashboardOwner(ctx context.Context, arg SetDashboardOwnerParams) (int64, error)
+	// Stores only a built-in or a live profile of the tenant of the format,
+	// holding a share lock on the profile row until the caller commits, so a
+	// concurrent delete either waits or runs first and this write stores nothing
+	// (0 rows).
+	SetFilterProfileDefault(ctx context.Context, arg SetFilterProfileDefaultParams) (int64, error)
 	// Internal: platform operators only (RequirePlatformAdmin). The org sees the
 	// assignee, so the issue counts as updated.
 	SetIssueAssignee(ctx context.Context, arg SetIssueAssigneeParams) (Issue, error)
@@ -2683,6 +2878,11 @@ type Querier interface {
 	// Tenant-scoped through the translation → project chain. Un-ignoring clears
 	// by/at so a later ignore starts clean.
 	SetQAResultIgnored(ctx context.Context, arg SetQAResultIgnoredParams) (QaResult, error)
+	// Internal: as ListSettingsFilterProfiles. Stores only a built-in or a live
+	// org profile of the format, holding a share lock on the profile row until
+	// the caller commits, so a concurrent delete either waits or runs first and
+	// this write stores nothing (0 rows).
+	SetSettingsFilterProfile(ctx context.Context, arg SetSettingsFilterProfileParams) (int64, error)
 	// Points a profile at a router (NULL = no machine translation for the
 	// profile). Tenant ownership of both is verified by the caller.
 	SetSettingsProfileMTRouter(ctx context.Context, arg SetSettingsProfileMTRouterParams) error
@@ -2752,6 +2952,7 @@ type Querier interface {
 	// share link is revoked in the same statement: a deleted chart must not stay
 	// readable to whoever holds the URL.
 	SoftDeleteDashboardChart(ctx context.Context, arg SoftDeleteDashboardChartParams) (int64, error)
+	SoftDeleteFilterProfile(ctx context.Context, arg SoftDeleteFilterProfileParams) (int64, error)
 	// Internal: platform operators only (RequirePlatformAdmin). Any org's issue.
 	SoftDeleteIssueForPlatform(ctx context.Context, id int64) (int64, error)
 	// Refuses while any project still carries one of the label's live values. The
@@ -2824,6 +3025,10 @@ type Querier interface {
 	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error
 	TouchChatConversation(ctx context.Context, arg TouchChatConversationParams) error
 	TouchOAuthToken(ctx context.Context, id int64) error
+	// The per-request gate of a vendor org: whether the caller's membership is
+	// disabled, and, when it is not, records the use at most once a day (which
+	// also withdraws a pending inactivity warning). No row: not a member.
+	TouchVendorMembership(ctx context.Context, arg TouchVendorMembershipParams) (bool, error)
 	TouchWorkflow(ctx context.Context, arg TouchWorkflowParams) error
 	// A user keeps at most @keep holds in a job: the ones renewed most recently.
 	TrimUserJobHolds(ctx context.Context, arg TrimUserJobHoldsParams) error
@@ -2890,6 +3095,10 @@ type Querier interface {
 	UpdateFileSegmentation(ctx context.Context, arg UpdateFileSegmentationParams) (File, error)
 	// Tenant-scoped through the file's project.
 	UpdateFileXLSXLayout(ctx context.Context, arg UpdateFileXLSXLayoutParams) (File, error)
+	// Name and options, only while updated_at still equals
+	// @expected_updated_at: a mismatch (someone saved in between) returns no
+	// row. The format never changes.
+	UpdateFilterProfile(ctx context.Context, arg UpdateFilterProfileParams) (int64, error)
 	// Internal: callers load and lock the issue first. A visible entry: bumps
 	// updated_at, sets who acted last when @last_activity_by is non-NULL, and,
 	// when @status is non-NULL, the new status. A new status clears the
@@ -2950,7 +3159,6 @@ type Querier interface {
 	// its default is TRUE, and `false` is a bool's zero value, so a struct literal
 	// that omits it would silently switch auto-completion off.
 	// tm_lookup_order is nil-keeps-stored so the same callers keep the stored mode.
-	// inline_html is nil-keeps-stored like auto_complete: its default is TRUE.
 	// linguist_terms is nil-keeps-stored like tm_lookup_order.
 	UpdateSettingsProfile(ctx context.Context, arg UpdateSettingsProfileParams) (SettingsProfile, error)
 	// Update a workflow step IN PLACE (keeps its id). Used by the diff-based
@@ -3151,6 +3359,10 @@ type Querier interface {
 	// the import path is unaffected.
 	UpsertTMPipelineEntry(ctx context.Context, arg UpsertTMPipelineEntryParams) (UpsertTMPipelineEntryRow, error)
 	UpsertUserAppearance(ctx context.Context, arg UpsertUserAppearanceParams) (UserAppearance, error)
+	// Internal: the inactivity sweep. A warning sent to someone whose vendor org
+	// or its client is not approved is withdrawn: its days run while the person
+	// cannot sign in. They are warned afresh, with full days, once it is usable.
+	WithdrawUnusableVendorWarnings(ctx context.Context) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

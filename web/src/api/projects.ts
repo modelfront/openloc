@@ -1,10 +1,17 @@
 import { request, getToken, logout, BASE } from './request';
 import { downloadFrom } from './download';
 import type { CreatorRef } from '../lib/creators';
+import type { DeadlineFilterBand } from '../lib/deadline';
 import type { LinguistTerms, TMLookupOrder } from '../lib/settings-values';
 import type { SegmentBulkAction, SegmentBulkResult } from '../lib/segment-bulk';
 import type { ReplaceCounts } from '../lib/find-replace';
 import type { XLSXLayout } from './xlsx-layout';
+import { editorApiPath, type EditorId } from '../lib/editor-scope';
+import type { FilterProfileChoice } from './filter-profiles';
+
+// A settings write's filter profile picks: per format, an id or null for the
+// format's Default; a format left out keeps its pick.
+export type FilterProfileIds = Record<string, number | null>;
 
 // Project lifecycle states. Mirrors the PG enum.
 // Keep in sync with `projectStatuses` in internal/project/handler_metadata.go.
@@ -34,8 +41,9 @@ export interface Project {
   // settings_profile and is flattened into GET /projects/{id}/settings —
   // it is NOT on the plain project list rows.
   auto_complete?: boolean;
-  // Strings of JSON, PO, TXT and XLSX uploads are HTML; settings payload only.
-  inline_html?: boolean;
+  // The filter profile per file format; a format left out uses its
+  // Default. Only on GET /projects/{id}/settings.
+  filter_profiles?: FilterProfileChoice[];
   linguist_terms?: LinguistTerms;
   // Library workflow the project's steps were copied from;
   // null for an inline workflow. Only on GET /projects/{id}/settings.
@@ -165,6 +173,8 @@ export interface ProjectListFilters {
   target?: string;
   created_by?: number;
   q?: string;
+  /** Projects in any of these deadline bands. */
+  deadline?: DeadlineFilterBand[];
 }
 
 export const listProjectsFilteredPage = (filters: ProjectListFilters, cursor = 0, limit = 50) => {
@@ -177,6 +187,7 @@ export const listProjectsFilteredPage = (filters: ProjectListFilters, cursor = 0
   if (filters.target) qs.set('target', filters.target);
   if (filters.created_by != null) qs.set('created_by', String(filters.created_by));
   if (filters.q) qs.set('q', filters.q);
+  if (filters.deadline?.length) qs.set('deadline', filters.deadline.join(','));
   return request<ProjectsPage>(`/projects?${qs.toString()}`);
 };
 
@@ -223,7 +234,7 @@ export interface ProjectCreatePayload {
     mt_on_upload?: boolean;
     tm_on_upload?: boolean;
     auto_complete?: boolean;
-    inline_html?: boolean;
+    filter_profile_ids?: FilterProfileIds;
     linguist_terms?: LinguistTerms;
     qa_profile_id?: number | null;
     segmentation_profile_id?: number;
@@ -334,7 +345,7 @@ export type ProjectWorkflowStep = import('../types/generated').WorkflowStep & {
 export const getProjectSettings = (projectId: number) =>
   request<{ data: ProjectSettings }>(`/projects/${projectId}/settings`).then(r => r.data);
 
-export const updateProjectSettings = (projectId: number, data: { fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; inline_html?: boolean; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null }) =>
+export const updateProjectSettings = (projectId: number, data: { fuzzy_threshold?: number; sublanguage_penalty_pct?: number; near_exact_penalty_pct?: number; tm_lookup_order?: TMLookupOrder; mt_on_upload?: boolean; tm_on_upload?: boolean; auto_complete?: boolean; filter_profile_ids?: FilterProfileIds; linguist_terms?: LinguistTerms; qa_profile_id?: number | null; segmentation_profile_id?: number; tm_profile_id?: number; mt_router_id?: number | null }) =>
   request<{ data: Project }>(`/projects/${projectId}/settings`, {
     method: 'PATCH',
     body: JSON.stringify(data),
@@ -389,6 +400,9 @@ export interface UploadFileOptions {
   analyze?: boolean;
   /** The columns of an Excel workbook without language codes in row 1. */
   xlsxLayout?: XLSXLayout;
+  /** The filter profile this one file is parsed with, instead of the
+   *  project's for its format. */
+  filterProfileId?: number;
 }
 
 /**
@@ -404,7 +418,7 @@ export const uploadFile = (
   projectId: number,
   file: File,
   onUploadProgress?: (pct: number) => void,
-  { analyze, xlsxLayout }: UploadFileOptions = {},
+  { analyze, xlsxLayout, filterProfileId }: UploadFileOptions = {},
 ): Promise<UploadResult> => {
   return new Promise<UploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -414,6 +428,9 @@ export const uploadFile = (
     }
     if (xlsxLayout) {
       form.append('xlsx_layout', JSON.stringify(xlsxLayout));
+    }
+    if (filterProfileId !== undefined) {
+      form.append('filter_profile_id', String(filterProfileId));
     }
     form.append('file', file);
     xhr.open('POST', `${BASE}/projects/${projectId}/files`);
@@ -678,6 +695,10 @@ export const completeJob = (jobId: number) =>
 // the `invalidateJobContext` refetch is not enough: a user re-activating a
 // propagated sibling before it lands captures a stale `baselineUpdatedAtRef`,
 // then 409s on the next save.
+/**
+ * Copy a confirmed translation onto the same-source segments of its file, or,
+ * from a multi-file editor (`editorId` a scope), of every file it has open.
+ */
 export const propagateTranslation = (
   fileId: number,
   sourceText: string,
@@ -685,9 +706,12 @@ export const propagateTranslation = (
   humanText: string,
   excludeId: number,
   humanRichText?: string,
+  editorId?: EditorId,
 ) =>
-  // held: repetitions another user has open, left as they were.
-  request<{ data: { propagated: number; held: number; siblings: Translation[] } } & TaskReopenedFlag>(`/files/${fileId}/propagate`, {
+  // held: repetitions another user has open, left as they were; not_editable:
+  // repetitions in an open file whose task takes no edit.
+  request<{ data: { propagated: number; held: number; not_editable?: number; siblings: Translation[] } } & TaskReopenedFlag>(
+    typeof editorId === 'string' ? editorApiPath(editorId, 'propagate') : `/files/${fileId}/propagate`, {
     method: 'POST',
     body: JSON.stringify({
       source_text: sourceText,

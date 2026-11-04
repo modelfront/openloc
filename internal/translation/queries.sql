@@ -347,6 +347,15 @@ INSERT INTO translation_history (
 INSERT INTO translation_history (translation_id, kind, created_by, details)
 SELECT unnest(@translation_ids::bigint[]), 'cleared', @created_by::bigint, '{}'::jsonb;
 
+-- name: InsertPropagationHistoryBatch :exec
+-- One `propagation` event per sibling a propagation wrote, all with the same
+-- text and the same source translation in @details. Internal: the ids are
+-- rows PropagateTranslation just returned for a tenant-scoped scope.
+INSERT INTO translation_history (translation_id, kind, text, rich_text, created_by, details)
+SELECT unnest(@translation_ids::bigint[]), 'propagation',
+       sqlc.narg('text')::text, sqlc.narg('rich_text')::text, sqlc.narg('created_by')::bigint,
+       @details::jsonb;
+
 -- name: ListTranslationHistory :many
 -- Internal: translation_history has no tenant_id (it hangs off translations),
 -- so the caller MUST verify the parent with GetTranslationTenant first — see
@@ -611,7 +620,8 @@ RETURNING *;
 
 -- name: PropagateTranslation :many
 -- Auto-propagation: copy a confirmed translation onto every other segment in
--- the same file + target language whose source matches. Locked rows are left
+-- the files of @file_ids (the editor's open files) in the target language
+-- whose source matches. Locked rows are left
 -- alone: a lock means "don't touch". The check sits on the outer WHERE so a
 -- row locked while the statement waits is re-checked and skipped.
 --
@@ -622,6 +632,8 @@ RETURNING *;
 --
 -- A sibling a user other than @actor_id holds is skipped, like a locked one.
 -- The siblings are locked in id order, the order a counts recount locks them.
+-- The md5 test lets idx_segments_file_source_md5 find them; the plain
+-- equality keeps the match exact.
 UPDATE translations
 SET step_edited      = step_edited OR active_text IS DISTINCT FROM @human_text,
     qe_note          = CASE WHEN active_text IS DISTINCT FROM @human_text THEN NULL ELSE qe_note END,
@@ -634,8 +646,9 @@ WHERE locked = false
   AND id IN (
     SELECT t.id FROM translations t
     JOIN segments s ON s.id = t.segment_id
-    WHERE s.file_id = @file_id
-      AND s.source_text = @source_text
+    WHERE s.file_id = ANY(@file_ids::bigint[])
+      AND md5(s.source_text) = md5(@source_text::text)
+      AND s.source_text = @source_text::text
       AND t.target_language = @target_language
       AND t.id != @exclude_id
       AND NOT t.locked
@@ -652,8 +665,9 @@ SELECT count(*) FILTER (WHERE NOT translation_held_by_other(t.id, sqlc.narg('act
        count(*) FILTER (WHERE translation_held_by_other(t.id, sqlc.narg('actor_id')::bigint))::int     AS held
 FROM translations t
 JOIN segments s ON s.id = t.segment_id
-WHERE s.file_id = @file_id
-  AND s.source_text = @source_text
+WHERE s.file_id = ANY(@file_ids::bigint[])
+  AND md5(s.source_text) = md5(@source_text::text)
+  AND s.source_text = @source_text::text
   AND t.target_language = @target_language
   AND t.id != @exclude_id
   AND t.locked = false;
@@ -753,6 +767,8 @@ ORDER BY s.position, s.sub_position;
 -- the model reads is the one the editor shows.
 -- @review_all (a step round that re-runs its AI after a rollback) takes every
 -- unconfirmed, unlocked segment with text, people's text included.
+-- @every_translation (a comment-only review, which changes nothing) takes
+-- every segment with text, whatever its status or lock.
 SELECT t.id, t.segment_id, t.target_language, s.source_text, s.source_rich_text,
        t.active_text, t.active_rich_text, s.position, t.origin
 FROM translations t
@@ -760,11 +776,16 @@ JOIN segments s ON s.id = t.segment_id
 WHERE s.file_id = @file_id
   AND t.target_language = @target_language
   AND t.active_text IS NOT NULL
-  AND t.status = 'needs_review'
-  AND t.predict_outcome IS NULL
   AND (
-    (t.origin IS NOT NULL AND t.edited_by IS NULL)
-    OR (@review_all::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
+    (@every_translation::bool AND t.active_text <> '')
+    OR (
+      t.status = 'needs_review'
+      AND t.predict_outcome IS NULL
+      AND (
+        (t.origin IS NOT NULL AND t.edited_by IS NULL)
+        OR (@review_all::bool AND NOT t.locked AND coalesce(t.active_text, '') <> '')
+      )
+    )
   )
 ORDER BY s.position, s.sub_position;
 

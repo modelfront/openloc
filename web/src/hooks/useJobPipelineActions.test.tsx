@@ -180,7 +180,7 @@ describe('useJobPipelineActions', () => {
     result.current.runAIStep.mutate()
     await waitFor(() => expect(result.current.runAIStep.isSuccess).toBe(true))
     expect(mockRunAIStep).toHaveBeenCalledExactlyOnceWith(7)
-    expect(toastSuccess).toHaveBeenCalledWith('QE+APE step complete')
+    expect(toastSuccess).toHaveBeenCalledWith('AI step complete')
   })
 
   it('on failure, the error toast shows the backend message verbatim', async () => {
@@ -295,7 +295,7 @@ describe('useJobPipelineActions', () => {
   it.each([
     ['applyTM', 'TM lookup complete'],
     ['applyMT', 'MT applied'],
-    ['runAIStep', 'QE+APE step complete'],
+    ['runAIStep', 'AI step complete'],
   ] as const)('%s without task_reopened announces no reopen and leaves the task list alone', async (action, successToast) => {
     const { result, invalidateSpy } = setup()
     result.current[action].mutate()

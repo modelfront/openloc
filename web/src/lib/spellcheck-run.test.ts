@@ -4,6 +4,7 @@
 // DOM involved, so this runs under `node` (see pm-offset.test.ts).
 import { describe, it, expect, vi } from 'vitest'
 import {
+  checkByJob,
   chunk,
   runSpellcheck,
   isIgnored,
@@ -89,7 +90,7 @@ function emptyResult(overrides: Partial<SpellcheckJobResult> = {}): SpellcheckJo
 describe('runSpellcheck', () => {
   it('chunks the id list and aggregates every chunk', async () => {
     const seen: number[][] = []
-    const check = vi.fn(async (_job: number, ids: number[]) => {
+    const check = vi.fn(async (ids: number[]) => {
       seen.push(ids)
       return emptyResult({
         results: ids.map(id => ({
@@ -107,7 +108,7 @@ describe('runSpellcheck', () => {
 
     const ids = Array.from({ length: 5 }, (_, i) => i + 1)
     const out = await runSpellcheck({
-      jobId: 7, translationIds: ids, chunkSize: 2,
+      translationIds: ids, chunkSize: 2,
       ignoredWords: new Set(),
       check,
     })
@@ -120,7 +121,7 @@ describe('runSpellcheck', () => {
   it('reports progress as chunks complete', async () => {
     const progress: number[] = []
     await runSpellcheck({
-      jobId: 1, translationIds: [1, 2, 3, 4], chunkSize: 2,
+      translationIds: [1, 2, 3, 4], chunkSize: 2,
       ignoredWords: new Set(),
       check: async () => emptyResult(),
       onProgress: done => progress.push(done),
@@ -136,7 +137,7 @@ describe('runSpellcheck', () => {
     })
 
     const out = await runSpellcheck({
-      jobId: 1, translationIds: [1, 2, 3, 4, 5, 6], chunkSize: 2,
+      translationIds: [1, 2, 3, 4, 5, 6], chunkSize: 2,
       ignoredWords: new Set(),
       check,
       signal: controller.signal,
@@ -149,7 +150,7 @@ describe('runSpellcheck', () => {
 
   it('drops matches whose word is already in the ignore set', async () => {
     const out = await runSpellcheck({
-      jobId: 1, translationIds: [1], chunkSize: 10,
+      translationIds: [1], chunkSize: 10,
       ignoredWords: new Set(['Adresse']),
       check: async () => emptyResult({
         results: [{
@@ -169,7 +170,7 @@ describe('runSpellcheck', () => {
 
   it('carries the failed count through so the UI can report it', async () => {
     const out = await runSpellcheck({
-      jobId: 1, translationIds: [1, 2, 3, 4], chunkSize: 2,
+      translationIds: [1, 2, 3, 4], chunkSize: 2,
       ignoredWords: new Set(),
       check: async () => emptyResult({ failed: 2 }),
     })
@@ -178,7 +179,7 @@ describe('runSpellcheck', () => {
 
   it('records the flagged word so Ignore all and Change all can group by it', async () => {
     const out = await runSpellcheck({
-      jobId: 1, translationIds: [1], chunkSize: 10,
+      translationIds: [1], chunkSize: 10,
       ignoredWords: new Set(),
       check: async () => emptyResult({
         results: [{
@@ -198,5 +199,17 @@ describe('runSpellcheck', () => {
     // The review shows the checked target and its source from the result.
     expect(out.errors[0].targetText).toBe('die adresse hier')
     expect(out.errors[0].sourceText).toBe('the address here')
+  })
+})
+
+describe('checkByJob', () => {
+  it('sends each translation to its own job and puts the results together', async () => {
+    const seg = (id: number) => ({ translation_id: id, text: 't', source_text: 's', matches: [] })
+    const checkJob = vi.fn(async (_jobId: number, ids: number[]) => emptyResult({ results: ids.map(seg), failed: 1 }))
+    const check = checkByJob(id => (id < 20 ? 1 : id < 99 ? 2 : undefined), checkJob)
+    const out = await check([10, 20, 11, 21, 99])
+    expect(checkJob.mock.calls.map(c => [c[0], c[1]])).toEqual([[1, [10, 11]], [2, [20, 21]]])
+    expect(out.results.map(r => r.translation_id)).toEqual([10, 11, 20, 21])
+    expect(out.failed).toBe(2)
   })
 })

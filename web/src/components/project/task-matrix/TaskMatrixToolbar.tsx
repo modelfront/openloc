@@ -101,12 +101,15 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
 
   // Each filter once: its chip's value and its option rows, which the chip and
   // the page's AddFilterMenu both show.
-  const option = (selected: boolean, param: string, value: string | null, close: () => void, label: ReactNode, key?: string | number) => (
-    <FilterOption key={key} selected={selected} onClick={() => { setParam(param, value); close() }}>{label}</FilterOption>
+  // `keywords` is what the list's search matches for a label that is not plain text.
+  const option = (selected: boolean, param: string, value: string | null, close: () => void, label: ReactNode, key?: string | number, keywords?: string) => (
+    <FilterOption key={key} selected={selected} keywords={keywords} onClick={() => { setParam(param, value); close() }}>{label}</FilterOption>
   )
-  const defs: Record<TaskFilterKey, { testId: string; value: string | null; options: (close: () => void) => ReactNode }> = {
+  // State and due are short fixed lists, so their options get no search box.
+  const defs: Record<TaskFilterKey, { testId: string; value: string | null; options: (close: () => void) => ReactNode; searchable?: boolean }> = {
     state: {
       testId: 'task-filter-status',
+      searchable: false,
       value: filters.state ? TASK_STATE_DISPLAY[filters.state].label : null,
       options: close => (
         <>
@@ -127,7 +130,7 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
               {/* Names repeat across uploads; the date tells them apart. */}
               <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">{formatDate(f.uploadedAt)}</span>
             </span>
-          ), f.id))}
+          ), f.id, f.name))}
         </>
       ),
     },
@@ -154,6 +157,7 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
     },
     due: {
       testId: 'task-filter-due',
+      searchable: false,
       value: filters.due ? DUE_FILTER_LABELS[filters.due] : null,
       options: close => (
         <>
@@ -169,7 +173,7 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
       {!fullScreen && available.some(k => !isSet(k)) && (
         <AddFilterMenu
           testId="task-filter-menu"
-          filters={available.filter(k => !isSet(k)).map(k => ({ key: k, label: filterLabel(k), options: defs[k].options }))}
+          filters={available.filter(k => !isSet(k)).map(k => ({ key: k, label: filterLabel(k), options: defs[k].options, searchable: defs[k].searchable }))}
         />
       )}
       {shown.map(k => (
@@ -181,6 +185,7 @@ export function TaskMatrixToolbar({ matrix, tasks, targets, files, onExpand, ful
           // On the page the × clears the filter, which takes the chip off.
           onRemove={fullScreen ? undefined : () => setParam(filterParam(k), null)}
           render={defs[k].options}
+          searchable={defs[k].searchable}
         />
       ))}
     </>

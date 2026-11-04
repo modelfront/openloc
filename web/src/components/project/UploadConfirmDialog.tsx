@@ -1,6 +1,7 @@
 // Shown when uploading file(s) to a project: confirm what is about to be
-// uploaded and whether to analyze it, and, for each Excel workbook without
-// language codes in row 1, what to translate in it. Open while `files` is set.
+// uploaded and whether to analyze it, the filter profile of each file that has
+// one, and, for each Excel workbook without language codes in row 1, what to
+// translate in it. Open while `files` is set.
 // Confirm → upload; Cancel → discard the queued files.
 
 import { useState } from 'react'
@@ -19,22 +20,32 @@ import { Alert } from '@/components/ui/alert'
 import { LoadFailed } from '@/components/layout/LoadFailed'
 import { CheckboxField } from '@/components/ui/checkbox-field'
 import { useLastNonNull } from '@/hooks/useLastNonNull'
+import type { FilterProfileChoice } from '@/api'
 import type { LayoutAnswer } from '@/hooks/useUploadQueue'
+import { useUploadFilterPicks } from '@/hooks/useUploadFilterPicks'
 import { useXLSXUploadChoices } from '@/hooks/useXLSXUploadChoices'
 import { XLSXColumnsFields } from '@/components/project/files/XLSXColumnsFields'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { XLSXColumnsInfo } from '@/components/project/files/XLSXLayoutDialog'
+import { UploadFilterProfileRows } from '@/components/project/files/UploadFilterProfileRows'
 
 interface Props {
   projectId: number
   /** The queued files; null closes the dialog. */
   files: File[] | null
   onOpenChange: (open: boolean) => void
-  /** Called with whether the upload should be auto-analyzed, and the Excel answers. */
-  onConfirm: (analyze: boolean, layouts: ReadonlyMap<File, LayoutAnswer>) => void
+  /** The project's filter profile per format; a format left out uses its Default. */
+  filterChoices: FilterProfileChoice[] | null | undefined
+  /** Called with whether the upload should be auto-analyzed, the Excel
+   *  answers, and the filter profiles picked other than the project's. */
+  onConfirm: (
+    analyze: boolean,
+    layouts: ReadonlyMap<File, LayoutAnswer>,
+    filterProfiles: ReadonlyMap<File, number>,
+  ) => void
 }
 
-export function UploadConfirmDialog({ projectId, files: queued, onOpenChange, onConfirm }: Props) {
+export function UploadConfirmDialog({ projectId, files: queued, filterChoices, onOpenChange, onConfirm }: Props) {
   const open = queued !== null
   // Rendered through the close animation, after the parent clears the queue.
   const files = useLastNonNull(queued) ?? []
@@ -43,18 +54,19 @@ export function UploadConfirmDialog({ projectId, files: queued, onOpenChange, on
   const [analyze, setAnalyze] = useState(true)
 
   useOnChange([open], () => { if (open) setAnalyze(true) })
-  const xlsx = useXLSXUploadChoices(projectId, files, open)
+  const filters = useUploadFilterPicks(files, filterChoices, open)
+  const xlsx = useXLSXUploadChoices(projectId, files, open, filters.overrideOf)
   const asking = xlsx.entries.filter(e => e.pending || e.failed || e.choices)
 
   const confirm = () => {
-    onConfirm(analyze, xlsx.answers())
+    onConfirm(analyze, xlsx.answers(), filters.overrides())
     onOpenChange(false)
   }
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
-        className={asking.length > 0 ? 'data-[size=default]:sm:max-w-lg' : undefined}
+        className={asking.length > 0 || filters.picks.length > 0 ? 'data-[size=default]:sm:max-w-lg' : undefined}
         // The Excel block starts with an info icon; focused on open, its
         // tooltip would show by itself.
         initialFocus={asking.length > 0 ? false : undefined}
@@ -73,6 +85,8 @@ export function UploadConfirmDialog({ projectId, files: queued, onOpenChange, on
             {files.map(f => f.name).join(', ')}
           </p>
         )}
+
+        <UploadFilterProfileRows picks={filters.picks} />
 
         {asking.length > 0 && (
           <div className="max-h-[50vh] space-y-3 overflow-y-auto" data-testid="upload-xlsx-columns">

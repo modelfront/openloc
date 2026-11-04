@@ -176,6 +176,7 @@ func (h *Handler) HandleUpdateConnection(w http.ResponseWriter, r *http.Request)
 		httputil.ServerError(w, "update", "connection")
 		return
 	}
+	h.catalog.Forget(tenantID, provider)
 	// token_count is what tells a caller whether this connection is live,
 	// so it has to be the real number here — a hardcoded
 	// zero would report an endpoint with keys as unusable.

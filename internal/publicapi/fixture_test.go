@@ -101,7 +101,7 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 	// A member no key belongs to, so changing or removing it leaves the
 	// callers intact.
 	target := testutil.SeedUserWithRole(t, q, tenantID, fmt.Sprintf("target-%d@example.com", tenantID), "pass", "linguist")
-	inv, err := q.CreateInvite(ctx, db.CreateInviteParams{TenantID: tenantID, Email: fmt.Sprintf("new-%d@example.com", tenantID),
+	inv, err := q.CreateInvite(ctx, db.CreateInviteParams{Kind: "member", TenantID: tenantID, Email: fmt.Sprintf("new-%d@example.com", tenantID),
 		Role: "linguist", InvitedBy: owner, Token: fmt.Sprintf("invite-token-%d", tenantID),
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}})
 	must(err)
@@ -120,6 +120,10 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 		SourceLanguages: []string{"en"}, Definition: []byte(`{"mode":"sentence","rules":[],"abbreviations":[],"number_abbreviations":[]}`)})
 	must(err)
 
+	filterProfile, err := q.CreateFilterProfile(ctx, db.CreateFilterProfileParams{TenantID: tenantID, Name: "House sheet",
+		Format: "xlsx", Options: []byte(`{"inline_html":true,"xlsx":{"sheets":[],"header_row":false,"columns":[]}}`)})
+	must(err)
+
 	return map[string]int64{
 		"translationID":    tr.ID,
 		"commentID":        comment.ID,
@@ -136,6 +140,7 @@ func seedItems(t *testing.T, q db.Querier, f *fixture) map[string]int64 {
 		"promptID":         prompt.ID,
 		"engineID":         engine.ID,
 		"profileID":        segmentationProfile,
+		"filterProfileID":  filterProfile,
 		// Not a path parameter: the AI connection an engine body names.
 		"tokenID": seedCustomProviderToken(t, q, tenantID),
 	}

@@ -8,11 +8,13 @@
 // the data fetch. One parser eliminates that drift class entirely.
 //
 // The parsed shape is `ProjectListFilters` from api/projects.ts. Keys are
-// added in a fixed order (status → customer_id → source → target → created_by → q)
+// added in a fixed order (status → customer_id → source → target → created_by →
+// q → deadline), and deadline bands in DEADLINE_FILTER_BANDS order,
 // so consumers that JSON.stringify() the result for cache keys get a stable
 // string regardless of which params were set.
 
 import { PROJECT_STATUSES, type ProjectStatus, type ProjectListFilters } from '../api'
+import { DEADLINE_FILTER_BANDS } from './deadline'
 
 export function parseProjectFilters(params: URLSearchParams): ProjectListFilters {
   const f: ProjectListFilters = {}
@@ -30,5 +32,9 @@ export function parseProjectFilters(params: URLSearchParams): ProjectListFilters
   if (createdBy) f.created_by = Number(createdBy)
   const q = params.get('q')
   if (q) f.q = q
+  // ?deadline=overdue,approaching — unknown bands are dropped.
+  const picked = params.get('deadline')?.split(',') ?? []
+  const deadline = DEADLINE_FILTER_BANDS.filter(b => picked.includes(b))
+  if (deadline.length) f.deadline = deadline
   return f
 }

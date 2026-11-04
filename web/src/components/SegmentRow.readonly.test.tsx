@@ -41,6 +41,7 @@ vi.mock('sonner', () => ({
 
 import { editorText, renderSegmentRow, rowTranslation } from '../test/segment-row'
 import type { Translation } from '../api'
+import { queryKeys } from '../lib/query-keys'
 
 const translation = rowTranslation({ edited_by: 3 })
 
@@ -121,6 +122,27 @@ describe('SegmentRow — Clear', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Clear' }))
 
     await waitFor(() => expect(mockClear).toHaveBeenCalledWith(11, 99))
+  })
+
+  // The row's translation comes from the editor's row cache, and the job
+  // refetch after a clear can be slow. Until it returns, the row must already
+  // know nothing is saved, or a quick retype-and-Clear asks to confirm.
+  it('a confirmed clear updates the cached row at once, so a retype clears without asking', async () => {
+    const { queryClient, rerender } = renderRow(false)
+    const rowsKey = queryKeys.job.editorRows(7)
+    queryClient.setQueryData(rowsKey, [{ translation }])
+    await waitFor(() => expect(editorText()).toBe('Hallo Welt'))
+
+    fireEvent.click(screen.getByTestId('clear-translation-btn'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear' }))
+    await waitFor(() => expect(editorText()).toBe(''))
+
+    const cached = queryClient.getQueryData<{ translation: Translation }[]>(rowsKey)?.[0].translation
+    expect(cached?.active_text).toBeNull()
+    rerender({ translation: cached })
+    fireEvent.click(screen.getByTestId('clear-translation-btn'))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(mockClear).toHaveBeenCalledTimes(1)
   })
 })
 

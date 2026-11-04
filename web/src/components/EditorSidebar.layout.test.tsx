@@ -25,6 +25,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('./CommentPanel', () => ({ default: () => <div data-testid="comment-panel-stub" /> }))
 vi.mock('./SegmentRow.shared', () => ({
   SegmentText: ({ text }: { text: string }) => <span>{text}</span>,
+  historyKindColor: () => 'yellow',
 }))
 
 function renderSidebar() {
@@ -90,11 +91,11 @@ describe('EditorSidebar layout', () => {
   it('renders sections in the default order when nothing is stored', () => {
     renderSidebar()
     // References is absent: the active segment has none, so it never mounts.
-    expect(renderedSectionIds()).toEqual(['tm', 'mt', 'terminology', 'history', 'qa', 'comments'])
+    expect(renderedSectionIds()).toEqual(['tm', 'fuzzy', 'mt', 'terminology', 'history', 'qa', 'comments'])
   })
 
   it('follows the stored order and skips hidden sections', () => {
-    seed({ order: ['comments', 'terminology', 'tm', 'mt', 'history', 'qa', 'references'], hidden: ['mt', 'qa'] })
+    seed({ order: ['comments', 'terminology', 'tm', 'fuzzy', 'mt', 'history', 'qa', 'references'], hidden: ['mt', 'qa', 'fuzzy'] })
     renderSidebar()
     expect(renderedSectionIds()).toEqual(['comments', 'terminology', 'tm', 'history'])
     expect(screen.queryByTestId('mt-suggestion-section')).toBeNull()
@@ -111,7 +112,7 @@ describe('EditorSidebar layout', () => {
     await waitFor(() => expect(screen.queryByTestId('comments-section')).toBeNull())
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as SidebarLayout
     expect(stored.hidden).toEqual(['comments'])
-    expect(stored.order).toEqual(['tm', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'])
+    expect(stored.order).toEqual(['tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'])
 
     // Tick it back on: visible again, storage cleared of it.
     fireEvent.click(within(popover).getByTestId('sidebar-section-toggle-comments'))
@@ -120,7 +121,7 @@ describe('EditorSidebar layout', () => {
   })
 
   it('keeps the last visible section on — its checkbox is disabled', async () => {
-    seed({ order: ['tm', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'], hidden: ['mt', 'terminology', 'references', 'history', 'qa', 'comments'] })
+    seed({ order: ['tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'], hidden: ['fuzzy', 'mt', 'terminology', 'references', 'history', 'qa', 'comments'] })
     renderSidebar()
     expect(renderedSectionIds()).toEqual(['tm'])
 
@@ -131,14 +132,14 @@ describe('EditorSidebar layout', () => {
   })
 
   it('lists every section in the popover in the stored order, hidden ones unticked', async () => {
-    seed({ order: ['qa', 'tm', 'mt', 'terminology', 'references', 'history', 'comments'], hidden: ['references'] })
+    seed({ order: ['qa', 'tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'comments'], hidden: ['references'] })
     renderSidebar()
     fireEvent.click(screen.getByTestId('sidebar-customize-trigger'))
     const popover = await screen.findByTestId('sidebar-customize-popover')
 
     const rows = Array.from(popover.querySelectorAll<HTMLElement>('[data-testid^="sidebar-section-row-"]'))
       .map(el => el.dataset.testid!.replace('sidebar-section-row-', ''))
-    expect(rows).toEqual(['qa', 'tm', 'mt', 'terminology', 'references', 'history', 'comments'])
+    expect(rows).toEqual(['qa', 'tm', 'fuzzy', 'mt', 'terminology', 'references', 'history', 'comments'])
     expect(within(popover).getByTestId('sidebar-section-toggle-references')).not.toBeChecked()
     expect(within(popover).getByTestId('sidebar-section-toggle-qa')).toBeChecked()
   })

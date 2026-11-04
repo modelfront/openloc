@@ -78,7 +78,7 @@ export function useJobPipelineActions(jobId: number, projectId: number) {
   const runAIStep = useMutationWithToast({
     mutationKey: runRequest,
     mutationFn: () => runJobAIStep(jobId),
-    successMessage: data => applied(data, 'QE+APE step complete'),
+    successMessage: data => applied(data, 'AI step complete'),
     onSuccess: data => afterApply(data, 'No segments to score'),
     ...failure,
   })

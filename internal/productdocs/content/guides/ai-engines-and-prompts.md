@@ -3,7 +3,7 @@ title: "AI engines and prompts"
 summary: "Set up the AI engines that check and post-edit translations, the routers that pick an engine for each target language, and the prompts that tell the model what to send back."
 order: 75
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-02
 sources:
   - web/src/pages/ai/**
   - web/src/components/ai/AIRoutersSection.tsx
@@ -81,16 +81,19 @@ Every system prompt has an **output** — the kind of answer it asks for. The **
 | QE | Judges each translation and approves or rejects it with a score. |
 | QE+APE | Judges each translation and post-edits it when it needs fixing. |
 | APE | Post-edits every translation, correcting defects in place. It never approves anything, so a person reviews every segment it touches. |
+| Comment only | Leaves comments for the linguist; never changes text or status. It gives no score and approves nothing. |
 | MT | Translates the source segment from scratch. |
 
 The output decides what the engine can be used for, so you never pick that separately: a prompt that only translates makes a translation engine, and anything else makes a quality-review engine. This is fixed once the engine is created.
 
+A **Comment only** engine runs on a Hybrid or AI step and reviews every segment that has text, including ones a person translated, confirmed or locked. It only adds AI comments: text, status, score and history stay as they are, and nothing is approved, so nothing goes to the translation memory. Find its remarks with the editor's **Commented** filter; see [Comment on a segment](/docs/guides/cat-editor#comment-on-a-segment).
+
 ## Write your own system prompt
 
-The **Prompts** tab lists your own prompts. Some deployments also supply built-in ones; those are read-only — open one and use **Duplicate** to get a copy you can edit. A prompt opens on its own page, so you can link to it.
+The **Prompts** tab lists your own prompts. Built-in ones, such as **Default Comment only** (which sends the translation memory match and the glossary terms with each segment), are read-only — open one and use **Duplicate** to get a copy you can edit. A prompt opens on its own page, so you can link to it.
 
 1. Click **New prompt**, or **Duplicate** on a prompt that is close to what you want.
-2. Click one of the **What this prompt does** cards: **Quality estimation**, **Quality estimation and automatic post-editing**, or **Automatic post-editing**. The type becomes a fixed label — the chip shown in the list — and the remaining fields appear with matching starter instructions. A duplicate starts with the original type and instructions.
+2. Click one of the **What this prompt does** cards: **Quality estimation**, **Quality estimation and automatic post-editing**, **Automatic post-editing** or **Comment only**. The type becomes a fixed label — the chip shown in the list — and the remaining fields appear with matching starter instructions. A duplicate starts with the original type and instructions.
 3. Keep the name the type gives it, or type your own.
 4. Write the **Base prompt** in plain words. Collapse it when you want to focus on the other sections. Use the small **Insert** buttons to drop `<source_lang>` and `<target_lang>` into the text: each is replaced with the job's language when the prompt runs, as a name and a code — an English to Austrian German job sends `English (en)` and `Austrian German (de-AT)`. Hover over a token, or focus it with the keyboard, for help.
 5. Click **Create**. The type is fixed after creation and appears as a label when you reopen the prompt.

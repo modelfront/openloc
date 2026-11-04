@@ -6,7 +6,8 @@
 //   - admin            : full operational power, minus owner-only deletes
 //   - project_manager  : admin minus delete-project/TM/TB; own tasks only
 //   - linguist         : restricted — Tasks + the CAT editor for jobs assigned to
-//                        them. The role every vendor invite creates.
+//                        them.
+// A vendor is its own org (see isVendorOrg), not a role.
 //
 // Keep these in sync with the backend (internal/auth/roles.go + api.validRoles).
 
@@ -17,6 +18,9 @@ export const ROLE_LABELS: Record<string, string> = {
   project_manager: 'Project manager',
   linguist: 'Linguist',
 }
+
+/** The four roles, most powerful first. */
+export const ROLE_ORDER = ['owner', 'admin', 'project_manager', 'linguist'] as const
 
 /** Polished label for a role value; falls back to the raw value if unknown. */
 export function roleLabel(role: string | undefined | null): string {
@@ -43,4 +47,27 @@ export function isManagerRole(role: string | undefined | null): boolean {
  */
 export function isLinguistRole(role: string | undefined | null): boolean {
   return role === 'linguist'
+}
+
+/**
+ * A vendor org: its own org, linked to one client org. Its admins manage
+ * members, its project managers see Projects and Tasks, its linguists see
+ * Tasks only; nobody creates projects or resources. The server enforces the
+ * same limits; this only shapes the UI.
+ */
+export function isVendorOrg(me: { tenant_kind?: string } | undefined | null): boolean {
+  return me?.tenant_kind === 'vendor'
+}
+
+/** The roles a member can be given. A vendor org has no owner. */
+export function memberRoles(vendorOrg: boolean): string[] {
+  return ROLE_ORDER.filter(r => !vendorOrg || r !== 'owner')
+}
+
+/**
+ * The roles Invite member offers. In a vendor org an admin is made by
+ * promoting a member, so invites bring project managers and linguists.
+ */
+export function inviteRoles(vendorOrg: boolean): [string, ...string[]] {
+  return vendorOrg ? ['project_manager', 'linguist'] : ['admin', 'project_manager', 'linguist']
 }

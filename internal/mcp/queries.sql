@@ -231,7 +231,7 @@ LEFT JOIN LATERAL (
     SELECT array_agg(ulp.source_lang || '→' || ulp.target_lang
                      ORDER BY ulp.source_lang, ulp.target_lang) AS pairs
     FROM user_language_pairs ulp
-    WHERE ulp.user_id = u.id
+    WHERE ulp.user_id = u.id AND ulp.tenant_id = m.tenant_id
 ) lp ON true
 LEFT JOIN LATERAL (
     SELECT count(*) AS active_jobs

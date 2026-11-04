@@ -7,6 +7,7 @@ import { useId, useMemo, useState } from 'react'
 
 import type { XLSXInspection, XLSXSheetInfo } from '@/api'
 import { columnLabel, sheetColumns, sheetSummary, type SheetChoice } from '@/lib/xlsx-columns'
+import { targetColumnLabel } from '@/lib/filter-options'
 import { CheckboxField } from '@/components/ui/checkbox-field'
 import { MultiCombobox, type ComboboxOption } from '@/components/ui/combobox'
 import { DisclosureToggle } from '@/components/ui/disclosure-toggle'
@@ -58,6 +59,7 @@ function SheetRow({ choice: c, sheet, canLeaveOut, onChange, testId }: SheetRowP
     [columns],
   )
   const count = columns.length
+  const multilingual = c.target_columns.length > 0
   // Select all picks every column the sheet offers; once all are picked, Clear
   // empties the field, which translates the whole sheet.
   const allPicked = count > 0 && c.columns.length >= count
@@ -97,7 +99,7 @@ function SheetRow({ choice: c, sheet, canLeaveOut, onChange, testId }: SheetRowP
       </div>
       {open && c.included && (
         <div id={bodyId} className="mt-2 space-y-2 pl-6">
-          <FormField label="Columns to translate" action={selectAll || undefined}>
+          <FormField label={multilingual ? 'Source column' : 'Columns to translate'} action={(!multilingual && selectAll) || undefined}>
             <MultiCombobox
               options={options}
               className="w-full"
@@ -108,6 +110,12 @@ function SheetRow({ choice: c, sheet, canLeaveOut, onChange, testId }: SheetRowP
               data-testid={`${testId}-columns`}
             />
           </FormField>
+          {multilingual && (
+            <p className="text-xs text-muted-foreground" data-testid={`${testId}-targets`}>
+              The filter profile writes each language into its own column and keeps the source text:{' '}
+              {c.target_columns.map(t => targetColumnLabel(t, ' in ')).join(', ')}.
+            </p>
+          )}
           <CheckboxField
             size="compact"
             checked={c.header_row}

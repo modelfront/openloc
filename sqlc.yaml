@@ -15,6 +15,7 @@ sql:
       - "internal/job/queries.sql"
       - "internal/auth/queries.sql"
       - "internal/invite/queries.sql"
+      - "internal/vendoridle/queries.sql"
       - "internal/terminology/queries.sql"
       - "internal/qa/queries.sql"
       - "internal/spellcheck/queries.sql"
@@ -52,6 +53,7 @@ sql:
       - "internal/taskedit/queries.sql"
       - "internal/editor/queries.sql"
       - "internal/segmentationapi/queries.sql"
+      - "internal/filterprofile/queries.sql"
     gen:
       go:
         package: "db"
@@ -76,6 +78,20 @@ sql:
               type: "RawMessage"
             nullable: true
             go_struct_tag: 'json:"-"'
+          # A file's filter profile snapshot (filterprofile.Snapshot), kept out
+          # of file rows sent to clients like the segmentation snapshot.
+          - column: "files.filter_profile"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+            nullable: true
+            go_struct_tag: 'json:"-"'
+          # NULL on an org profile; sqlc reads the view's first UNION branch only.
+          - column: "filter_profile_catalog.builtin_key"
+            go_type:
+              type: "string"
+              pointer: true
+            nullable: true
           # NULL on an org profile; sqlc reads the view's first UNION branch only.
           - column: "segmentation_profile_catalog.builtin_key"
             go_type:

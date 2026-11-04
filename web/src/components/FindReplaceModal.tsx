@@ -2,10 +2,11 @@ import { useState, useEffect, useEffectEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { findReplace, findMatches, replaceOne, type ApiError, type FindOptions, type ReplaceResult } from '../api'
-import { replaceSummary, sumReplaceCounts } from '../lib/find-replace'
-import { mapChunks } from '../lib/segment-bulk'
-import { isTaskLockedError } from '../lib/task-edit'
+import { findReplace, findMatches, replaceOne, type ApiError, type FindOptions } from '../api'
+import { replaceSummary } from '../lib/find-replace'
+import {
+  findInJobs, replaceAllInJobs, replaceOneInJob, scopeReplaceSummary, type FindReplaceJobs, type ScopeReplaceResult,
+} from '../lib/find-replace-scope'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CheckboxField } from '@/components/ui/checkbox-field'
@@ -25,14 +26,15 @@ type FindReplaceFormValues = z.infer<typeof findReplaceSchema>
 interface Props {
   open: boolean
   onClose: () => void
-  jobId: number
+  /** The editor's jobs: one, or the files opened together. */
+  jobs: FindReplaceJobs
   onHighlight: (term: string | null) => void
   onScrollToTranslation: (translationId: number) => void
   onDeactivate: () => void
-  /** A replace landed. */
-  onComplete: (result: ReplaceResult) => void
-  /** The task-edit guard refused a replace; without it the refusal is a plain error toast. */
-  onTaskLocked?: (err: ApiError) => void
+  /** A replace landed in at least one file. */
+  onComplete: (result: ScopeReplaceResult) => void
+  /** A job's task-edit guard refused a replace; without it the refusal is a plain error toast. */
+  onTaskLocked?: (err: ApiError, jobId: number) => void
   /** Find only: the task cannot be edited, so the replace field and buttons are hidden. */
   readOnly?: boolean
   /** The editor's segment selection on screen (translation ids). When present,
@@ -51,7 +53,7 @@ interface Props {
  * Replace (single + advance), Replace all (batch).
  */
 export default function FindReplaceModal({
-  open, onClose, jobId, onHighlight, onScrollToTranslation, onDeactivate, onComplete, onTaskLocked,
+  open, onClose, jobs, onHighlight, onScrollToTranslation, onDeactivate, onComplete, onTaskLocked,
   readOnly = false, selectedIds = [], initialInSelection = false, canReplaceLocked = false,
 }: Props) {
   const {
@@ -81,16 +83,16 @@ export default function FindReplaceModal({
     }
   }, [open, reset, initialInSelection])
 
-  // Runs fn on the whole job, or on the selection in chunks the server
-  // accepts. With "In selection" ticked and nothing selected on screen it
-  // refuses (null) rather than widen the scope to the whole job.
-  const inScope = async <R,>(fn: (ids?: number[]) => Promise<R>): Promise<R[] | null> => {
-    if (!getValues().inSelection) return [await fn(undefined)]
+  // The rows to work on: every row (undefined), or the selection. With "In
+  // selection" ticked and nothing selected on screen it refuses (null)
+  // rather than widen the scope to every row.
+  const scopeIds = (): readonly number[] | undefined | null => {
+    if (!getValues().inSelection) return undefined
     if (!hasSelection) {
-      toast.warning('No selected segments on screen. Untick "In selection" to search the whole job.')
+      toast.warning('No selected segments on screen. Untick "In selection" to search every segment.')
       return null
     }
-    return mapChunks(selectedIds, fn)
+    return selectedIds
   }
 
   const findOptions = (): FindOptions => {
@@ -99,8 +101,9 @@ export default function FindReplaceModal({
   }
 
   const searchIds = async (findText: string): Promise<number[] | null> => {
-    const results = await inScope(ids => findMatches(jobId, findText, findOptions(), ids))
-    return results && results.flatMap(r => r.translation_ids ?? [])
+    const ids = scopeIds()
+    if (ids === null) return null
+    return findInJobs(jobs, (jobId, part) => findMatches(jobId, findText, findOptions(), part).then(r => r.translation_ids ?? []), ids)
   }
 
   const handleClose = () => {
@@ -136,8 +139,18 @@ export default function FindReplaceModal({
   })
 
   const replaceFailed = (err: unknown, fallback: string) => {
-    if (isTaskLockedError(err) && onTaskLocked) onTaskLocked(err)
-    else toast.error((err instanceof Error && err.message) || fallback)
+    toast.error((err instanceof Error && err.message) || fallback)
+  }
+  // Each file whose task refused the write says so; false when no file was
+  // written, and then a file that failed for another reason says why too.
+  const reportLocked = (out: ScopeReplaceResult) => {
+    for (const { jobId, err } of out.locked) {
+      if (onTaskLocked) onTaskLocked(err, jobId)
+      else toast.error(err.message)
+    }
+    if (out.writtenJobs.length > 0) return true
+    if (out.failed.length > 0) replaceFailed(out.failed[0], 'Replace failed')
+    return false
   }
 
   const doFindAll = async () => {
@@ -210,9 +223,10 @@ export default function FindReplaceModal({
     setBusy(true)
     try {
       const targetId = matchIds[currentIdx]
-      const result = await replaceOne(jobId, findText, replaceText, findOptions(), targetId)
+      const out = await replaceOneInJob(jobs, targetId, (jobId, id) => replaceOne(jobId, findText, replaceText, findOptions(), id))
+      if (!reportLocked(out)) return
       // A match left alone (locked, crosses a tag, changed meanwhile) says why.
-      if (result.segments === 0) toast.warning(replaceSummary(result))
+      if (out.result.segments === 0) toast.warning(replaceSummary(out.result))
 
       const remaining = matchIds.filter(id => id !== targetId)
       setMatchIds(remaining)
@@ -226,7 +240,7 @@ export default function FindReplaceModal({
         onHighlight(null)
         toast.success('All matches replaced')
       }
-      onComplete(result)
+      onComplete(out)
     } catch (err) {
       replaceFailed(err, 'Replace failed')
     } finally {
@@ -239,15 +253,17 @@ export default function FindReplaceModal({
     if (!findText.trim()) return
     setBusy(true)
     try {
-      const parts = await inScope(ids => findReplace(jobId, findText, replaceText, findOptions(), ids))
-      if (!parts) return
-      const result: ReplaceResult = { ...sumReplaceCounts(parts), taskReopened: parts.some(p => p.taskReopened) }
-      if (result.segments > 0) toast.success(replaceSummary(result))
-      else toast.warning(replaceSummary(result))
+      const ids = scopeIds()
+      if (ids === null) return
+      const out = await replaceAllInJobs(jobs, (jobId, part) => findReplace(jobId, findText, replaceText, findOptions(), part), ids)
+      if (!reportLocked(out)) return
+      const summary = scopeReplaceSummary(out)
+      if (out.result.segments > 0 && out.locked.length + out.failed.length === 0) toast.success(summary)
+      else toast.warning(summary)
       setMatchIds([])
       setCurrentIdx(-1)
       onHighlight(null)
-      onComplete(result)
+      onComplete(out)
       onClose()
     } catch (err) {
       replaceFailed(err, 'Replace all failed')

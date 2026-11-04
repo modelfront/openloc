@@ -108,7 +108,7 @@ export async function uploadChatFile(file: File, signal?: AbortSignal): Promise<
   if (token && token !== '__cookie_auth__') headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/chat/uploads`, { method: 'POST', credentials: 'same-origin', headers, body: form, signal });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, errorMessageFromBody(body, res.statusText), body);
+  if (!res.ok) throw responseError(res, body);
   return (body as { data: ChatUpload }).data;
 }
 
@@ -130,10 +130,7 @@ export async function fetchTourSpeech(body: string, say: string | undefined, sig
   const res = await fetch(`${BASE}/chat/speech`, {
     method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ body, say: say ?? '' }), signal,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errorMessageFromBody(err, res.statusText), err);
-  }
+  if (!res.ok) throw responseError(res, await res.json().catch(() => ({})));
   return res.blob();
 }
 
@@ -205,6 +202,16 @@ export function errorMessageFromBody(body: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * The ApiError for a failed response. A body without a message (a load
+ * balancer's HTML error page) gets a sentence of ours: statusText is empty
+ * over HTTP/2 and a bare phrase like "Bad Gateway" over HTTP/1.1. The status
+ * code stays on the error, out of the text.
+ */
+function responseError(res: Response, body: unknown): ApiError {
+  return new ApiError(res.status, errorMessageFromBody(body, 'The server could not answer. Try again.'), body);
+}
+
 /** Thrown on HTTP 412: no API key is connected for the chat model's provider. */
 export class NoClaudeKeyError extends Error {
   constructor() {
@@ -213,10 +220,17 @@ export class NoClaudeKeyError extends Error {
   }
 }
 
+/** What the panel shows when the stream stops before a done or error event. */
+const STREAM_INTERRUPTED = 'The connection to the assistant was interrupted. Try again.';
+
+/** What the panel shows when the request gets no answer at all. */
+const UNREACHABLE = 'The assistant could not be reached. Send the message again.';
+
 /**
  * Sends one message and consumes the SSE stream. Resolves when the stream
- * ends (after done/error). The AbortSignal cancels generation server-side —
- * the backend's context dies with the connection.
+ * ends; a connection that fails or breaks before done/error is reported
+ * through onError. The AbortSignal cancels generation server-side — the
+ * backend's context dies with the connection.
  */
 export async function sendChatMessage(
   body: {
@@ -236,19 +250,26 @@ export async function sendChatMessage(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token && token !== '__cookie_auth__') headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}/chat`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/chat`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    // fetch rejects only when no answer came at all (network down, server
+    // restarting), with the browser's own text ("Failed to fetch"). The
+    // server may not hold the message, so this is no interruption to retry.
+    handlers.onError(UNREACHABLE);
+    return;
+  }
 
   if (res.status === 412) throw new NoClaudeKeyError();
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errorMessageFromBody(err, res.statusText), err);
-  }
+  if (!res.ok) throw responseError(res, await res.json().catch(() => ({})));
   if (!res.body) throw new Error('streaming not supported');
 
   const reader = res.body.getReader();
@@ -273,7 +294,7 @@ export async function sendChatMessage(
         chunk = await reader.read();
       } catch (err) {
         // A dropped connection rejects the read with the browser's own text
-        // ("Error in input stream" in Safari); the user gets ours instead.
+        // ("Error in input stream" in Firefox); the user gets ours instead.
         if (signal?.aborted) throw err;
         break;
       }
@@ -287,12 +308,10 @@ export async function sendChatMessage(
       for (const frame of frames) dispatchFrame(frame, wrapped);
     }
     if (buffer.trim()) dispatchFrame(buffer, wrapped);
-    // A stream that ends without done/error was cut mid-flight (proxy idle
-    // timeout, backend crash, network drop). Report it, or the panel hangs
-    // with no explanation.
-    if (!terminal) {
-      handlers.onError('connection to the assistant was interrupted — try again', { interrupted: true });
-    }
+    // A stream that ends or breaks without done/error was cut mid-flight
+    // (proxy idle timeout, backend crash, network drop). Report it, or the
+    // panel hangs with no explanation.
+    if (!terminal) handlers.onError(STREAM_INTERRUPTED, { interrupted: true });
   } finally {
     reader.releaseLock();
   }

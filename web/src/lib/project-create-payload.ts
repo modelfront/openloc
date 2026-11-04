@@ -1,6 +1,7 @@
 import type { ProjectCreatePayload } from '../api'
 import type { SettingsValues } from '../components/SettingsEditor'
 import { workflowStepsToPayload } from './workflow-steps'
+import { FILTER_FORMATS, type FilterFormat } from './filter-formats'
 
 export interface ProjectCreateForm {
   name: string
@@ -56,7 +57,7 @@ export function buildProjectSetupPayload(workflowId: string, s: SettingsValues) 
       mt_on_upload: s.mtOnUpload,
       tm_on_upload: s.tmOnUpload,
       auto_complete: s.autoComplete,
-      inline_html: s.inlineHTML,
+      filter_profile_ids: filterProfileIdsPayload(s.filterProfileIds),
       linguist_terms: s.linguistTerms,
       qa_profile_id: s.qaProfileId,
       segmentation_profile_id: s.segmentationProfileId ?? undefined,
@@ -74,4 +75,10 @@ export function buildProjectSetupPayload(workflowId: string, s: SettingsValues) 
     })),
     workflow_steps: s.workflowSteps.length > 0 ? workflowStepsToPayload(s.workflowSteps) : undefined,
   }
+}
+
+/** Every format's pick, null for its Default: the form sends what it shows,
+ *  so a template's pick the user set back to Default is not kept. */
+export function filterProfileIdsPayload(ids: SettingsValues['filterProfileIds']): Record<FilterFormat, number | null> {
+  return Object.fromEntries(FILTER_FORMATS.map(f => [f, ids[f] ?? null])) as Record<FilterFormat, number | null>
 }

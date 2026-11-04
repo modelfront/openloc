@@ -25,11 +25,15 @@ const (
 	// The support team resolved an issue of the recipient's org, reported by
 	// someone else. For the org's owners, admins and project managers; bell only.
 	EventIssueResolved EventType = "issue_resolved"
+
+	// A vendor org made one of its people an admin. For the client's owners
+	// and admins, who see the vendor's admins in their Vendors list; bell only.
+	EventVendorAdminAdded EventType = "vendor_admin_added"
 )
 
 // bellOnly reports whether an event skips the org rules and email.
 func (t EventType) bellOnly() bool {
-	return t == EventJobFailed || t == EventMTFailed || t == EventIssueResolved
+	return t == EventJobFailed || t == EventMTFailed || t == EventIssueResolved || t == EventVendorAdminAdded
 }
 
 // skipsOrgRules reports whether the org's admin switches do not apply.
@@ -59,6 +63,11 @@ type Event struct {
 	IssueTitle  string
 	IssueStatus string // the new status's label, when the status changed
 	Link        string // absolute URL the email links to
+
+	// Vendor org events: the vendor org and the member it is about.
+	VendorOrgID   int64
+	VendorOrgName string
+	MemberName    string
 
 	// Thread puts the email in a conversation with the other emails about
 	// the same thing; the zero Thread is none.

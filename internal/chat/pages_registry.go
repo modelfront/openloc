@@ -295,7 +295,7 @@ var pages = []pageDef{
 		describe: "the AI engines page (QE+APE review engines)",
 		path:     "/ai/engines",
 		anchors: []Anchor{
-			{"ai_engines.list", "the AI engines", "each review engine: its provider, model, prompt and mode (QE, QE+APE or APE)"},
+			{"ai_engines.list", "the AI engines", "each review engine: its provider, model, prompt and mode (QE, QE+APE, APE or Comment only)"},
 		},
 	},
 	{
@@ -314,7 +314,7 @@ var pages = []pageDef{
 		describe: "the editor of AI prompt %s",
 		path:     "/ai/prompts/%d",
 		anchors: []Anchor{
-			{"ai_prompt.form", "the prompt editor", "what the prompt does (QE, QE+APE or APE), its base prompt and extra prompts per target language"},
+			{"ai_prompt.form", "the prompt editor", "what the prompt does (QE, QE+APE, APE or Comment only), its base prompt and extra prompts per target language"},
 			{"ai_prompt.instructions", "the base prompt", "the full instructions, in plain words, that the model follows"},
 			{"ai_prompt.languages", "the language rules", "extra instructions for single target languages, such as a formal register"},
 			{"ai_prompt.context", "the segment context", "what each segment brings to the model, such as TM matches and glossary terms"},
@@ -433,16 +433,6 @@ var pages = []pageDef{
 		path:     "/dashboards/pinned/%d",
 	},
 	{
-		name:     "vendors",
-		pattern:  regexp.MustCompile(`^/org/vendors$`),
-		describe: "the Vendors tab of the Organization page (linguist members and invites; owners, admins and project managers)",
-		path:     "/org/vendors",
-		anchors: []Anchor{
-			{"vendors.list", "the vendor list", "linguists of the organization and pending invites"},
-			{"vendors.invite", "the invite form", "invite an external translator by email"},
-		},
-	},
-	{
 		name:     "workflows",
 		pattern:  regexp.MustCompile(`^/workflows$`),
 		describe: "the workflow library",
@@ -465,12 +455,14 @@ var pages = []pageDef{
 	{
 		name:     "org",
 		pattern:  regexp.MustCompile(`^/org$`),
-		describe: "the Members tab of the Organization page (members, roles and invites; owner/admin only)",
+		describe: "the Members tab of the Organization page (members, roles, language pairs, the vendor organizations it invited, and invites; owner/admin only)",
 		path:     "/org",
 		anchors: []Anchor{
-			{"org.tabs", "the tabs of the Organization page", "Members, Settings and Vendors"},
-			{"org.members", "the members list", "everyone in the organization and their role"},
-			{"org.invite", "the invite form", "invite a member with a role"},
+			{"org.tabs", "the tabs of the Organization page", "Members and Settings"},
+			{"org.members", "the members list", "everyone in the organization, the most powerful role first, with their role and language pairs; search by name or email, filter by role or language; 10 per page, page numbers under the list"},
+			{"org.vendor_orgs", "the vendors list", "the vendor organizations this organization invited, with their admins and languages; search by name or admin email, filter by source or target language; 10 per page"},
+			{"org.invite", "the Invite member button in the members list header", "opens a window to invite a member by email with a role"},
+			{"org.vendor_invite", "the Invite vendor button in the vendors list header", "opens a window to set up a vendor organization: its name and the email of its admin"},
 		},
 	},
 	{
@@ -498,6 +490,25 @@ var pages = []pageDef{
 		anchors: []Anchor{
 			{"segmentation.rules", "the rules table", "ordered break and no-break rules; the first rule that matches a position decides"},
 			{"segmentation.preview", "the preview", "sample text split with the rules as they are now, with the rule behind each break"},
+		},
+	},
+	{
+		name:     "filter_profiles",
+		pattern:  regexp.MustCompile(`^/file-configurations/filter-profiles$`),
+		describe: "the Filter profiles tab of the File configurations page (how uploaded files of one format are read: HTML, Excel, JSON, PO, plain text or XML; the built-in profiles and the organization's own; each project and template picks one per format; owners, admins and project managers)",
+		path:     "/file-configurations/filter-profiles",
+		anchors: []Anchor{
+			{"filter_profiles.list", "the profile list", "built-in and organization filter profiles with their format and a summary of their options"},
+		},
+	},
+	{
+		name:     "filter_profile",
+		pattern:  regexp.MustCompile(`^/file-configurations/filter-profiles/(\d+)$`),
+		idParams: []string{"filter_profile_id"},
+		describe: "filter profile %s (its format and import options)",
+		path:     "/file-configurations/filter-profiles/%d",
+		anchors: []Anchor{
+			{"filter_profiles.options", "the import options", "whether strings contain HTML, and for Excel which sheets and columns to translate and whether row 1 is a header"},
 		},
 	},
 	{
@@ -552,15 +563,28 @@ var routesWithoutPage = map[string]string{
 	"/*":                     "layout wrapper",
 	"*":                      "signed out: anything but the help redirects to /login",
 	"/engines":               "redirects to /mt/engines",
-	"/vendors":               "redirects to /org/vendors",
+	"/vendors":               "redirects to /org",
+	"/org/vendors":           "redirects to /org",
 	"/dashboards":            "redirects to /dashboards/pinned or /dashboards/organization",
 	"/ai/engines/new":        "create mode of ai_engines",
 	"/ai/new":                "create mode of ai_routers",
 	"/workflows/steps/new":   "create mode of workflow_steps",
 	"/file-configurations":   "redirects to /file-configurations/segmentation-profiles",
 	"/file-configurations/segmentation-profiles/new": "create mode of segmentation_profiles",
+	"/file-configurations/filter-profiles/new":       "create mode of filter_profiles",
 	"/workflows/:workflowId":                         "redirects into the workflow editor",
 	"/templates/:templateId/workflow":                "tab of template",
 	"/debug/*":                                       "developer gallery",
 	"/debug/llm":                                     "developer tool",
+}
+
+// describedPages are pages the assistant is told about but cannot open: their
+// address carries a list the model has no way to build (the multi-file
+// editor's `?jobs=`). Like platformPages they have no name and no anchors.
+var describedPages = []pageDef{
+	{
+		pattern:  regexp.MustCompile(`^/projects/(\d+)/edit$`),
+		idParams: []string{"project_id"},
+		describe: "the CAT editor for several files of project %s opened together (one segment grid, repetitions and propagation across the open files, one Complete step for all of them)",
+	},
 }

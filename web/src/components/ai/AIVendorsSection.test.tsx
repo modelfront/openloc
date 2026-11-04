@@ -4,15 +4,17 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { AIVendorsSection } from './AIVendorsSection'
+import { queryKeys } from '../../lib/query-keys'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 const listAIVendors = vi.fn()
 const listMTEngineCatalog = vi.fn()
+const updateAIConnection = vi.fn()
 vi.mock('../../api', () => ({
   listAIVendors: () => listAIVendors(),
   listMTEngineCatalog: () => listMTEngineCatalog(),
-  createAIConnection: vi.fn(), updateAIConnection: vi.fn(),
+  createAIConnection: vi.fn(), updateAIConnection: (...args: unknown[]) => updateAIConnection(...args),
   uploadExtension: vi.fn(), deleteExtension: vi.fn(),
   createVendorToken: vi.fn(), updateVendorToken: vi.fn(), deleteVendorToken: vi.fn(),
   listEnginesUsingKey: vi.fn(), listKeylessEngines: vi.fn(), attachKeyToEngines: vi.fn(),
@@ -25,8 +27,7 @@ const OPENAI = {
 }
 const CATALOG = [{ engine_type: 'libretranslate', name: 'LibreTranslate', needs_token: false, params: [] }]
 
-function renderSection() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+function renderSection(qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })) {
   return render(
     <MemoryRouter><QueryClientProvider client={qc}><AIVendorsSection defaultOpen canWrite /></QueryClientProvider></MemoryRouter>,
   )
@@ -68,5 +69,23 @@ describe('AIVendorsSection while loading', () => {
     await waitFor(() => expect(listMTEngineCatalog).toHaveBeenCalled())
     await new Promise(r => setTimeout(r, 0))
     expect(screen.queryByTestId('ai-connections')).not.toBeInTheDocument()
+  })
+})
+
+// A new endpoint changes which models the key reaches, so the chat's list
+// is reloaded too.
+describe('AIVendorsSection connection edit', () => {
+  it('saving an endpoint reloads the chat model list', async () => {
+    updateAIConnection.mockResolvedValue({ ...OPENAI.connections[0], base_url: 'https://acme.openai.azure.com/openai' })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    qc.setQueryData(queryKeys.chat.models, [])
+    const user = userEvent.setup()
+    renderSection(qc)
+    await user.click(await screen.findByTestId('ai-connection-tile-5'))
+    await user.type(await screen.findByTestId('ai-connection-base-url'), 'https://acme.openai.azure.com/openai')
+    await user.click(screen.getByTestId('ai-connection-save'))
+
+    await waitFor(() => expect(updateAIConnection).toHaveBeenCalled())
+    await waitFor(() => expect(qc.getQueryState(queryKeys.chat.models)?.isInvalidated).toBe(true))
   })
 })

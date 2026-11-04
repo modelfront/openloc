@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { test, expect, sessionAs } from "./helpers";
-import { SEED_VENDOR_EMAIL } from "../seed-identity";
+import { SEED_LINGUIST_EMAIL } from "../seed-identity";
 
 // A browser session of another user (`sessionAs`) costs no page load, and its
 // context closes after the test, on the after-hooks clock: the runner exports
@@ -16,23 +16,23 @@ let bodyDone = false;
 let exportedAfterBody = false;
 
 test("signing in as another user loads no page, and the page calls the API as that user", async ({ browser }) => {
-  const { page, context, token } = await sessionAs(browser, SEED_VENDOR_EMAIL);
+  const { page, context, token } = await sessionAs(browser, SEED_LINGUIST_EMAIL);
   expect(page.url(), "the token is stored without opening the app").toBe("about:blank");
   expect(context.pages()).toHaveLength(1);
   const me = await context.request.get("/api/auth/me");
   expect(me.ok(), `the session's cookie signs in: ${me.status()}`).toBe(true);
-  expect((await me.json()).data.email).toBe(SEED_VENDOR_EMAIL);
+  expect((await me.json()).data.email).toBe(SEED_LINGUIST_EMAIL);
   // The app's own first call carries the stored token, not only the cookie.
   const loaded = page.waitForResponse(r => r.url().endsWith("/api/auth/me"));
   await page.goto("/issues");
   const res = await loaded;
   expect(await res.request().headerValue("authorization"), "the page sends the session's token").toBe(`Bearer ${token}`);
-  expect((await res.json()).data.email, "the page signs in as the user").toBe(SEED_VENDOR_EMAIL);
+  expect((await res.json()).data.email, "the page signs in as the user").toBe(SEED_LINGUIST_EMAIL);
   await expect(page.getByTestId("issues-report")).toBeVisible();
 });
 
 test("the session's context closes after the test, with its trace export there", async ({ browser }) => {
-  const { context } = await sessionAs(browser, SEED_VENDOR_EMAIL);
+  const { context } = await sessionAs(browser, SEED_LINGUIST_EMAIL);
   context.on("close", () => { closed = true; });
   // The runner stops the trace right before a close: after the body if the
   // fixture closes the context, during it if the test did.

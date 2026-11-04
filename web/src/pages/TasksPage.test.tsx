@@ -338,3 +338,32 @@ describe('TasksPage when the list fails to load', () => {
     expect(await screen.findByTestId('task-row-22')).toBeInTheDocument()
   })
 })
+
+// Ticking cards of one project and one target language opens them in one
+// editor grid; ticking never opens the card itself.
+describe('TasksPage open together', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('opens the ticked files in one editor, in list order', async () => {
+    listTasksPageMock.mockResolvedValue(page([task(1, null), task(2, null), task(3, null)]))
+    const open = vi.spyOn(window, 'open').mockReturnValue({} as Window)
+    renderPage()
+
+    fireEvent.click(await screen.findByTestId('task-select-3'))
+    fireEvent.click(screen.getByTestId('task-select-1'))
+    expect(open, 'ticking a card does not open it').not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-selected-count').textContent).toBe('2 tasks selected')
+
+    fireEvent.click(screen.getByTestId('tasks-open-editor-btn'))
+    expect(open).toHaveBeenCalledWith('/projects/1/edit?jobs=1,3', '_blank')
+  })
+
+  it('offers nothing for files of two target languages', async () => {
+    listTasksPageMock.mockResolvedValue(page([task(1, null), { ...task(2, null), target_language: 'de' }]))
+    renderPage()
+
+    fireEvent.click(await screen.findByTestId('task-select-1'))
+    fireEvent.click(screen.getByTestId('task-select-2'))
+    expect(screen.getByTestId('tasks-open-editor-btn')).toBeDisabled()
+  })
+})

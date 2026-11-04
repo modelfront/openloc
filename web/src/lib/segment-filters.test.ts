@@ -7,7 +7,7 @@ function row(segmentId: number, translationId: number | null, over: Partial<Inde
   return {
     segmentId, translationId, position: segmentId - 1, subPosition: 0, joinsNext: false, wordCount: 2,
     status: 'needs_review', hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null,
-    locked: false, inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, ...over,
+    locked: false, inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, fileIdx: 0, ...over,
   }
 }
 

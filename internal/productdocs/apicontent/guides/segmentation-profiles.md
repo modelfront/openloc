@@ -3,7 +3,7 @@ title: "Segmentation profiles"
 summary: "Copy a built-in segmentation profile, change it, and create projects that split their uploads with it."
 order: 10
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-27
+updated_at: 2026-10-29
 sources:
   - internal/publicapi/segmentation.go
   - internal/publicapi/projects.go
@@ -98,6 +98,9 @@ curl {app_url}/api/v1/projects \
 The project needs a workflow too, as in [your first project](/api-docs/getting-started/first-project). A profile that does not suit the source language answers `400`. Leave
 `segmentation_profile_id` out and the project takes its template's profile when
 it suits the language, else the built-in profile for the language.
+
+`filter_profile_ids` picks the import options per file format in the same
+request; see [Filter profiles](/api-docs/guides/filter-profiles).
 
 ## SRX
 

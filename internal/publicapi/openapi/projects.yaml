@@ -24,6 +24,21 @@ paths:
           in: query
           description: Text search in the project name.
           schema: { type: string }
+        - name: deadline
+          in: query
+          description: |
+            Projects in any of these deadline bands, comma-separated, for
+            example `overdue,approaching`. `overdue`: the deadline has passed.
+            `approaching`: due within 24 hours. `soon`: due in 1 to 7 days.
+            `far`: due later. `none`: no deadline. A completed project is in
+            no band except `none`, and only when it has no deadline.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [overdue, approaching, soon, far, none]
       responses:
         "200":
           description: One page of projects.
@@ -195,6 +210,17 @@ components:
             The segmentation profile uploads are split with; it must suit the source language. Left
             out, the project takes the template's profile when it suits the language, else the
             built-in profile for the language.
+        filter_profile_ids:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            nullable: true
+          description: >-
+            The filter profile per file format (`html`, `xlsx`, `json_i18n`, `po`, `txt`, `xml`), from
+            `GET /filter-profiles`. A format left out takes the template's profile, else the format's
+            Default; null picks the Default.
+          example: { xlsx: 412 }
     ProjectUpdate:
       type: object
       properties:

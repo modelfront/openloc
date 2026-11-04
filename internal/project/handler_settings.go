@@ -11,6 +11,7 @@ import (
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/settings"
 )
@@ -36,8 +37,10 @@ type ProjectSettings struct {
 	NearExactPenaltyPct     int32   `json:"near_exact_penalty_pct"`
 	TMLookupOrder           string  `json:"tm_lookup_order"`
 	AutoComplete            bool    `json:"auto_complete"`
-	InlineHTML              bool    `json:"inline_html"`
-	LinguistTerms           string  `json:"linguist_terms"`
+	// FilterProfiles are the project's filter profile per format; a format
+	// left out uses its Default.
+	FilterProfiles []filterprofile.Choice `json:"filter_profiles"`
+	LinguistTerms  string                 `json:"linguist_terms"`
 	// Library workflow the steps were copied from; nil
 	// for an inline workflow. The name resolves even for a retired library row.
 	WorkflowID   *int64  `json:"workflow_id"`
@@ -67,13 +70,15 @@ func (h *Handler) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		SublanguagePenaltyPct *int32          `json:"sublanguage_penalty_pct"`
 		NearExactPenaltyPct   *int32          `json:"near_exact_penalty_pct"`
 		AutoComplete          *bool           `json:"auto_complete"`
-		InlineHTML            *bool           `json:"inline_html"`
 		LinguistTerms         *string         `json:"linguist_terms"`
 		TMLookupOrder         *string         `json:"tm_lookup_order"`
 		TMProfileID           json.RawMessage `json:"tm_profile_id"`
 		MTRouterID            json.RawMessage `json:"mt_router_id"`
 		// Absent or null keeps the current profile.
 		SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+		// Per format; a null id goes back to the Default, a format left out
+		// keeps its choice.
+		FilterProfileIDs map[string]*int64 `json:"filter_profile_ids"`
 	}
 	if err := httputil.Decode(r, &req); err != nil {
 		httputil.BadRequest(w, "invalid request body")
@@ -87,10 +92,10 @@ func (h *Handler) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		SublanguagePenaltyPct: req.SublanguagePenaltyPct,
 		NearExactPenaltyPct:   req.NearExactPenaltyPct,
 		AutoComplete:          req.AutoComplete,
-		InlineHTML:            req.InlineHTML,
 		LinguistTerms:         req.LinguistTerms,
 		TMLookupOrder:         req.TMLookupOrder,
 		SegmentationProfileID: req.SegmentationProfileID,
+		FilterProfileIDs:      req.FilterProfileIDs,
 	}
 	if len(req.QAProfileID) > 0 {
 		var n int64
@@ -144,7 +149,11 @@ func WriteServiceError(w http.ResponseWriter, err error, verb, resource string) 
 	httputil.ServiceError(w, err, verb, resource)
 }
 
-func (h *Handler) newProjectSettings(ctx context.Context, tenantID int64, project db.Project, p db.SettingsProfile) ProjectSettings {
+func (h *Handler) newProjectSettings(ctx context.Context, tenantID int64, project db.Project, p db.SettingsProfile) (ProjectSettings, error) {
+	filters, err := filterprofile.Choices(ctx, h.queries, p.ID)
+	if err != nil {
+		return ProjectSettings{}, err
+	}
 	return ProjectSettings{
 		Project:                 project,
 		FuzzyThreshold:          p.FuzzyThreshold,
@@ -156,7 +165,7 @@ func (h *Handler) newProjectSettings(ctx context.Context, tenantID int64, projec
 		SublanguagePenaltyPct:   p.SublanguagePenaltyPct,
 		NearExactPenaltyPct:     p.NearExactPenaltyPct,
 		AutoComplete:            p.AutoComplete,
-		InlineHTML:              p.InlineHtml,
+		FilterProfiles:          filters,
 		LinguistTerms:           p.LinguistTerms,
 		TMLookupOrder:           p.TmLookupOrder,
 		WorkflowID:              p.WorkflowID,
@@ -164,7 +173,7 @@ func (h *Handler) newProjectSettings(ctx context.Context, tenantID int64, projec
 		WorkflowEdited:          p.WorkflowEdited,
 		MTRouterID:              p.MtRouterID,
 		MTRouterName:            settings.MTRouterName(ctx, h.queries, tenantID, p.MtRouterID),
-	}
+	}, nil
 }
 
 // mtRouterName resolves a router id from a settings diff to its display

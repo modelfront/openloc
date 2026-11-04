@@ -64,12 +64,13 @@ DELETE FROM translation_holds
 WHERE tenant_id = @tenant_id AND translation_id = @translation_id AND user_id = @user_id;
 
 -- name: ListJobHolds :many
--- Tenant-scoped: the live holds in a job, with the holders' names.
+-- Tenant-scoped: the live holds in the jobs of @job_ids, with the holders'
+-- names.
 SELECT h.translation_id, h.user_id, COALESCE(NULLIF(u.name, ''), u.email) AS holder_name,
        h.acquired_at, h.expires_at
 FROM translation_holds h
 JOIN users u ON u.id = h.user_id
-WHERE h.job_id = @job_id AND h.tenant_id = @tenant_id AND h.expires_at > now()
+WHERE h.job_id = ANY(@job_ids::bigint[]) AND h.tenant_id = @tenant_id AND h.expires_at > now()
 ORDER BY h.translation_id;
 
 -- name: DeleteUserHoldsInTenant :exec

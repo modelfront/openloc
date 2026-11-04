@@ -19,6 +19,13 @@ type Sender interface {
 // email provider is configured (dev / local).
 type ConsoleSender struct{}
 
+// Delivers reports whether s gets email to people. The console fallback, used
+// when no email is configured, only logs; the dev outbox counts as delivery.
+func Delivers(s Sender) bool {
+	_, console := s.(*ConsoleSender)
+	return s != nil && !console
+}
+
 func (s *ConsoleSender) SendEmail(ctx context.Context, to, subject string, body emaillayout.Email) error {
 	logging.Info(ctx, "dev email not sent: no provider configured", "notification-dev-email", logging.Label("to", to), logging.Label("subject", subject))
 	return nil

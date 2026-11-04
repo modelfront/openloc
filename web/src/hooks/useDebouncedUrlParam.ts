@@ -7,7 +7,8 @@ import { useSearchParams } from 'react-router-dom'
  * for the input. The input keeps its own state, so a list filtered in the
  * browser filters on `value` and narrows as you type; a server-backed list
  * reads the URL param. An empty value removes the param. Other params are left
- * alone.
+ * alone, except `resetKeys`: a write also removes those (a list's page number,
+ * so a new search starts on page 1).
  *
  * The router applies a URL change as a transition, so the URL can still show a
  * value this hook wrote while the user types on. `written` holds those values
@@ -19,7 +20,7 @@ import { useSearchParams } from 'react-router-dom'
  * and `prev` can be a stale snapshot, so a no-op write on mount pulls back a
  * page that another component (a guided tour) just left.
  */
-export function useDebouncedUrlParam(key: string, delay = 300) {
+export function useDebouncedUrlParam(key: string, delay = 300, resetKeys: readonly string[] = []) {
   const [params, setParams] = useSearchParams()
   const urlValue = params.get(key) ?? ''
   const [value, setValue] = useState(urlValue)
@@ -40,6 +41,8 @@ export function useDebouncedUrlParam(key: string, delay = 300) {
   }
 
   const expected = written.at(-1) ?? urlValue
+  // A string, so a caller's new array each render does not restart the timer.
+  const resetKey = resetKeys.join('|')
   useEffect(() => {
     if (value === expected) return
     const timer = setTimeout(() => {
@@ -48,11 +51,12 @@ export function useDebouncedUrlParam(key: string, delay = 300) {
         const next = new URLSearchParams(prev)
         if (value) next.set(key, value)
         else next.delete(key)
+        for (const k of resetKey.split('|').filter(Boolean)) next.delete(k)
         return next
       }, { replace: true })
     }, delay)
     return () => clearTimeout(timer)
-  }, [value, expected, key, delay, setParams])
+  }, [value, expected, key, delay, setParams, resetKey])
 
   return [value, setValue] as const
 }

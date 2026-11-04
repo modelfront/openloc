@@ -5,6 +5,7 @@ import type { EditorIndexData, IndexRow } from './editor-index'
 import type { JobLeverage, LeverageBand } from '../api/analyses'
 import { advanceTranslationInCache } from './query-invalidation'
 import { queryKeys } from './query-keys'
+import { editorIdsHolding } from './editor-scope'
 
 // Band keys mirror the GetSavedAnalysisBands SQL CASE in
 // internal/analysis/queries.sql. Keep these in sync — if the SQL bands
@@ -112,10 +113,11 @@ function shiftLeverage(
 }
 
 /**
- * Apply the canonical post-save sync for a CAT translation row. Three callers
+ * Apply the canonical post-save sync for a CAT translation row. Its callers
  * in `SegmentRow.tsx` need to do the SAME four things on a successful save —
  * `saveMut.onSuccess` (Cmd+Enter), `saveDraft` inner success (auto-save /
- * blur-flush), and the conflict banner's "Use mine" handler.
+ * blur-flush), the conflict banner's "Use mine" handler, and both Clear paths
+ * with the cleared row.
  *
  * One helper that does the four steps every time. Each caller layers its own
  * extras (saveMut adds propagation + auto-QA, saveDraft adds the "saved!"
@@ -239,7 +241,9 @@ function adjustLeverageForSiblings(
  * typing.
  */
 export function applyAcquiredRow(queryClient: QueryClient, jobId: number, row: Translation): void {
-  const current = queryClient.getQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(jobId) })
+  // The row sits in the job's own editor or in a multi-file editor holding it.
+  const current = editorIdsHolding(queryClient, jobId)
+    .flatMap(id => queryClient.getQueriesData<EditorRow[]>({ queryKey: queryKeys.job.editorRows(id) }))
     .flatMap(([, rows]) => rows ?? [])
     .find(r => r.translation?.id === row.id)?.translation
   if (!current || !(Date.parse(row.updated_at ?? '') > Date.parse(current.updated_at ?? ''))) return

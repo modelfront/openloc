@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { addSpellcheckDictionaryWord, EDITOR_MAX_ROWS, getEditorRows, getWordCandidates, type EditorRow, type Job } from '../api'
+import { addSpellcheckDictionaryWord, EDITOR_MAX_ROWS, getEditorRows, getWordCandidates, type EditorRow } from '../api'
 import { errorText } from '@/lib/error-text'
 import { queryKeys } from '../lib/query-keys'
-import { invalidateJobContext } from '../lib/query-invalidation'
+import { invalidateJobsContext } from '../lib/query-invalidation'
+import type { EditorId } from '../lib/editor-scope'
 import { chunk, type SpellError } from '../lib/spellcheck-run'
 import {
   countScope, scopeIncludesLocked, selectScopeTargets, wordOffsets,
@@ -16,20 +17,22 @@ import { useMutationWithToast } from './use-mutation-with-toast'
 
 /**
  * The CAT editor's spell corrections: the review dialog's writes and the word
- * actions of the inline fix menu. `activeTranslationId` is the open segment,
- * which the menu fixes through its own editor.
+ * actions of the inline fix menu, in one file or in several opened together.
+ * Each write goes to its translation's file. `activeTranslationId` is the
+ * open segment, which the menu fixes through its own editor.
  */
-export function useSpellFixes({ jid, pid, job, isAdmin, activeTranslationId }: {
-  jid: number
+export function useSpellFixes({ editorId, pid, fileOf, targetLanguage, isAdmin, activeTranslationId }: {
+  editorId: EditorId
   pid: number
-  job: Pick<Job, 'file_id' | 'project_id' | 'target_language'> | undefined
+  /** A translation's file and job; undefined until the editor has loaded. */
+  fileOf: (translationId: number) => { jobId: number; fileId: number } | undefined
+  /** The editor's target language: the project dictionary's. */
+  targetLanguage: string | undefined
   isAdmin: boolean
   activeTranslationId: number | undefined
 }) {
   const queryClient = useQueryClient()
-  const fileId = job?.file_id ?? 0
-  const projectId = job?.project_id
-  const targetLanguage = job?.target_language
+  const projectId = pid
 
   /**
    * Apply spell corrections through the bulk draft endpoint.
@@ -41,10 +44,11 @@ export function useSpellFixes({ jid, pid, job, isAdmin, activeTranslationId }: {
    * Routed through `useMutationWithToast` per the project convention; the success
    * message is a function of the result because the count isn't known until the
    * write returns. Conflict / unfixable warnings are raised inside the mutation
-   * because they're partial-success notes, not failures. Resolves null when
-   * the task refused the write, which handleTaskLocked has already reported.
+   * because they're partial-success notes, not failures. `applied` is null
+   * when every file's task refused the write, which handleTaskLocked has
+   * already reported.
    */
-  const spellFixMut = useMutationWithToast<number | null, {
+  const spellFixMut = useMutationWithToast<{ applied: number | null; jobIds: number[] }, {
     errors: SpellError[]
     replacement: string
     includeLocked: boolean
@@ -53,32 +57,34 @@ export function useSpellFixes({ jid, pid, job, isAdmin, activeTranslationId }: {
       const segmentIds = [...new Set(errors.map(e => e.segmentId))]
       const current = new Map<number, EditorRow['translation']>()
       for (const ids of chunk(segmentIds, EDITOR_MAX_ROWS)) {
-        for (const row of await getEditorRows(jid, ids)) {
+        for (const row of await getEditorRows(editorId, ids)) {
           if (row.translation) current.set(row.translation.id, row.translation)
         }
       }
-      return writeSpellFixes({
-        fileId,
+      const applied = await writeSpellFixes({
+        fileOf,
         errors,
         replacement,
         includeLocked,
         lookup: id => current.get(id) ?? undefined,
-        onTaskLocked: err => handleTaskLocked(queryClient, pid, jid, err),
-        onTaskReopened: () => handleTaskReopened(queryClient, pid, jid),
+        onTaskLocked: (err, jobId) => handleTaskLocked(queryClient, pid, jobId, err),
+        onTaskReopened: jobId => handleTaskReopened(queryClient, pid, jobId),
       })
+      const jobIds = [...new Set(errors.flatMap(e => fileOf(e.translationId)?.jobId ?? []))]
+      return { applied, jobIds }
     },
-    successMessage: applied =>
+    successMessage: ({ applied }) =>
       applied === null ? null : `Corrected ${applied} segment${applied === 1 ? '' : 's'}`,
     errorMessage: 'Could not apply the correction',
-    // One call covers the job's translations, detail and analysis caches.
-    onSuccess: () => invalidateJobContext(queryClient, pid, jid),
+    // One call covers each job's translations, detail and analysis caches.
+    onSuccess: ({ jobIds }) => invalidateJobsContext(queryClient, pid, jobIds),
   })
 
   const applySpellFixes = useCallback(async (
     errors: SpellError[], replacement: string, includeLocked: boolean,
   ): Promise<number> => {
     if (errors.length === 0) return 0
-    return (await spellFixMut.mutateAsync({ errors, replacement, includeLocked })) ?? 0
+    return (await spellFixMut.mutateAsync({ errors, replacement, includeLocked })).applied ?? 0
   }, [spellFixMut])
 
   // --- Word-level fixes from the inline right-click menu ---
@@ -90,9 +96,9 @@ export function useSpellFixes({ jid, pid, job, isAdmin, activeTranslationId }: {
   // The translations whose target holds a word somewhere, from the server; the
   // whole-word checks below narrow them.
   const wordCandidates = useCallback((word: string) => queryClient.fetchQuery({
-    queryKey: queryKeys.job.editorWord(jid, word),
-    queryFn: () => getWordCandidates(jid, word),
-  }), [queryClient, jid])
+    queryKey: queryKeys.job.editorWord(editorId, word),
+    queryFn: () => getWordCandidates(editorId, word),
+  }), [queryClient, editorId])
 
   const spellFixActions = useMemo<SpellFixActions>(() => ({
     // The server writes through a lock for owners and admins only — the same

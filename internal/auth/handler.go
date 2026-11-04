@@ -102,9 +102,13 @@ func (h *Handler) meResponse(r *http.Request, user db.User) map[string]any {
 		// Operator "logged in as" this org. The SPA hides the platform
 		// surface + shows an impersonation banner while true.
 		resp["impersonating"] = claims.Impersonated
-		if t, err := h.queries.GetTenant(r.Context(), claims.TenantID); err == nil {
+		if t, err := h.queries.GetTenantProfile(r.Context(), claims.TenantID); err == nil {
 			resp["tenant_name"] = t.Name
 			resp["tenant_slug"] = t.Slug
+			resp["tenant_kind"] = t.TenantKind
+			if t.ClientOrgName != nil {
+				resp["client_org_name"] = *t.ClientOrgName
+			}
 			// Signal a not-yet-approved org so the SPA routes to the
 			// blocked screen instead of the app. /me is identity-scoped so it
 			// keeps working while the org is gated, unlike app routes which the
@@ -112,6 +116,19 @@ func (h *Handler) meResponse(r *http.Request, user db.User) map[string]any {
 			// (under review vs disabled).
 			resp["org_pending"] = t.Status != statusApproved
 			resp["tenant_status"] = t.Status
+			// A vendor org works only while its client does; the gate answers
+			// client_inactive, so the SPA shows the blocked screen.
+			if t.Status == statusApproved && t.TenantKind == TenantKindVendor && (t.ClientStatus == nil || *t.ClientStatus != statusApproved) {
+				resp["org_pending"] = true
+				resp["tenant_status"] = "client_inactive"
+			}
+			// A vendor org disabled this membership for disuse: the SPA shows
+			// the blocked screen, as the gate refuses every org route.
+			if t.TenantKind == TenantKindVendor {
+				if m, err := h.queries.GetMembership(r.Context(), db.GetMembershipParams{UserID: claims.UserID, TenantID: claims.TenantID}); err == nil && m.DisabledAt.Valid {
+					resp["membership_disabled"] = true
+				}
+			}
 		}
 		// A demo visit: the profile is the demo guide's;
 		// demo_return_org_name names the org that leaving the demo returns to.
@@ -333,6 +350,12 @@ func (h *Handler) HandleDevSetRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if !devSwitchableRoles[req.Role] {
 		httputil.BadRequest(w, "invalid role")
+		return
+	}
+	// The org's kind limits the roles, as for a member role change: a vendor
+	// org has no owner.
+	if err := checkAssignableRole(r.Context(), h.queries, tenantID, req.Role); err != nil {
+		WriteMemberError(w, err)
 		return
 	}
 

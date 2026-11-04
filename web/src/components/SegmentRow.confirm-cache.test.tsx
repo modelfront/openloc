@@ -75,7 +75,7 @@ async function confirmRow(propagated = 0) {
     { segmentId: tr.segment_id, translationId: tr.id, status: tr.status, origin: '', tmMatch: null },
     { segmentId: 100, translationId: 100, status: 'needs_review', origin: '', tmMatch: null },
   ] as IndexRow[]
-  qc.setQueryData(queryKeys.job.editorIndex(JOB_ID), { rows: indexRows, repetitionStats: { segments: 0, words: 0, characters: 0 }, lookup: indexLookup(indexRows) })
+  qc.setQueryData(queryKeys.job.editorIndex(JOB_ID), { rows: indexRows, repetitionStats: { segments: 0, words: 0, characters: 0 }, lookup: indexLookup(indexRows), files: [] })
   qc.setQueryData(queryKeys.job.leverage(JOB_ID), LEVERAGE)
   qc.setQueryData(queryKeys.job.detail(JOB_ID), { cached: true })
   await waitFor(() => expect(r.insertRef.current.confirm).toBeTypeOf('function'))

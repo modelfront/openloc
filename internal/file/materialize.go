@@ -100,6 +100,7 @@ func (h *Handler) importXLSXTargets(ctx context.Context, txq *db.Queries, in ing
 	}
 	xlsxTargets, err := parser.XLSX{PlainText: !in.file.InlineHtml, Layout: layout}.ExtractTargets(in.content, in.project.TargetLanguages)
 	if err != nil {
+		logging.Warn(ctx, err, "workbook targets unreadable", "upload-xlsx-targets-unreadable", logging.FileID(in.file.ID))
 		return nil
 	}
 	uploader := auth.UserIDFromContext(ctx)
@@ -375,7 +376,7 @@ func (h *Handler) materializeStoredFile(ctx context.Context, project db.Project,
 		doneIngest(err)
 		return err
 	}
-	opts, err := parser.FileOptions(f.InlineHtml, f.XlsxLayout, segmentationJSON)
+	opts, err := parser.FileOptions(f.InlineHtml, f.XlsxLayout, segmentationJSON, f.FilterProfile)
 	if err != nil {
 		doneIngest(err)
 		return err

@@ -10,6 +10,7 @@ import (
 
 	"openloc/internal/auth"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
 	"openloc/internal/parser"
@@ -49,6 +50,22 @@ func (h *Handler) HandleInspectXLSX(w http.ResponseWriter, r *http.Request) {
 		logging.Warn(r.Context(), err, "xlsx inspect failed", "upload-xlsx-inspect-failed")
 		httputil.BadRequest(w, "could not read the xlsx file — check that the file is well-formed")
 		return
+	}
+	// The Excel filter profile the upload would use (the form's pick, else
+	// the project's) suggests its rules' layout when they fit the workbook.
+	filterID, err := formID(r, "filter_profile_id")
+	if err != nil {
+		httputil.BadRequest(w, "invalid filter_profile_id")
+		return
+	}
+	filter, err := filterprofile.Resolve(r.Context(), h.queries, up.project.TenantID, up.project.SettingsProfileID, "xlsx", filterID)
+	if httputil.ServiceError(w, err, "inspect", "Excel file") {
+		return
+	}
+	if rules := filter.Options.XLSX; rules != nil && !rules.Empty() {
+		if l := in.LayoutFor(rules.Sheets, rules.HeaderRow, rules.Columns, rules.TargetColumns); l != nil {
+			in.Suggested = l
+		}
 	}
 	httputil.Data(w, in)
 }
@@ -179,7 +196,7 @@ func (h *Handler) storedContent(ctx context.Context, f db.File) ([]byte, error) 
 // segments with the parse it gives, in one transaction.
 func (h *Handler) relayoutDraftFile(r *http.Request, f db.File, content []byte, layout *parser.XLSXLayout, stored []byte, tenantID int64) (db.File, error) {
 	ctx := r.Context()
-	opts, err := parser.FileOptions(f.InlineHtml, nil, f.Segmentation)
+	opts, err := parser.FileOptions(f.InlineHtml, nil, f.Segmentation, f.FilterProfile)
 	if err != nil {
 		return db.File{}, err
 	}

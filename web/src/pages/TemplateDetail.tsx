@@ -36,7 +36,8 @@ import { SubNav } from '@/components/layout/SubNav'
 import { TemplateMetadataForm, type TemplateMetadata } from '../components/template/TemplateMetadataForm'
 import { type LabelPick } from '../components/project/ProjectLabelFields'
 import { SettingsEditor } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_PENALTY_PCT, toLinguistTerms, toTMLookupOrder } from '@/lib/settings-values'
+import { choicesToMap } from '@/hooks/useFilterProfiles'
 import { usePageTitle } from '../hooks/usePageTitle'
 import { errorText } from '@/lib/error-text'
 
@@ -200,7 +201,7 @@ export default function TemplateDetail() {
               mtOnUpload: t.mt_on_upload,
               tmOnUpload: t.tm_on_upload,
               autoComplete: t.auto_complete ?? DEFAULT_AUTO_COMPLETE,
-              inlineHTML: t.inline_html ?? DEFAULT_INLINE_HTML,
+              filterProfileIds: choicesToMap(t.filter_profiles),
               linguistTerms: toLinguistTerms(t.linguist_terms),
               qaProfileId: t.qa_profile_id ?? null,
               segmentationProfileId: t.segmentation_profile_id ?? null,
@@ -246,7 +247,7 @@ export default function TemplateDetail() {
                 near_exact_penalty_pct: scalarData.near_exact_penalty_pct,
                 tm_lookup_order: scalarData.tm_lookup_order,
                 auto_complete: scalarData.auto_complete,
-                inline_html: scalarData.inline_html,
+                filter_profile_ids: scalarData.filter_profile_ids,
                 linguist_terms: scalarData.linguist_terms,
                 qa_profile_id: scalarData.qa_profile_id !== undefined ? scalarData.qa_profile_id : t.qa_profile_id,
                 segmentation_profile_id: scalarData.segmentation_profile_id,

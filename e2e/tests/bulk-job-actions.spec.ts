@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { login, getSeedProjectId, createIsolatedCATJob, openBulkPretranslate, openTaskSteps, setProjectWorkflowStepsViaAPI } from "./helpers";
+import { login, getSeedProjectId, createIsolatedCATJob, expectSelectionBarPins, openBulkPretranslate, openTaskSteps, setProjectWorkflowStepsViaAPI } from "./helpers";
 
 // Bulk actions on the project page's Tasks tab: selecting task cells reveals
 // the bar above the matrix; Apply TM / Apply MT queue the selection in one
@@ -39,6 +39,16 @@ test.describe("Bulk job actions", () => {
     await expect(bar).toHaveCount(0);
     await expect(cells(page).nth(0)).not.toBeChecked();
     await expect(cells(page).nth(2)).not.toBeChecked();
+  });
+
+  test("the bar stays solid and flush under the header while the task list scrolls, with square top corners", async ({ page }) => {
+    // A short window, so the Demo Project's task list scrolls.
+    await page.setViewportSize({ width: 1280, height: 420 });
+    const projectId = await getSeedProjectId(page, "Demo Project");
+    await page.goto(`/projects/${projectId}`);
+    await openTaskSteps(page);
+    await cells(page).nth(0).click();
+    await expectSelectionBarPins(page, page.getByTestId("bulk-actions-bar"));
   });
 
   test("bulk Apply MT queues exactly the selected tasks' jobs in one request", async ({ page }) => {

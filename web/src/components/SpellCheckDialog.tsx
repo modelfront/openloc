@@ -11,7 +11,7 @@ import {
 } from '../lib/spellcheck-scope'
 import { count } from '../lib/plural'
 import SpellFixFields from './SpellFixFields'
-import { checkJobSpelling } from '../api'
+import type { SpellcheckJobResult } from '../api/spellcheck'
 
 /**
  * Spell check review dialog — walk each finding, one at a time.
@@ -39,7 +39,12 @@ const EMPTY_SELECTION: ReadonlySet<number> = new Set()
 export interface SpellCheckDialogProps {
   open: boolean
   onClose: () => void
-  jobId: number
+  /**
+   * Checks one chunk of translation ids against the server: one job's
+   * endpoint, or each file's own in a multi-file editor (checkByJob). The
+   * server skips locked segments unless `includeLocked` is set.
+   */
+  check: (ids: number[], signal: AbortSignal | undefined, opts: { includeLocked: boolean }) => Promise<SpellcheckJobResult>
   /**
    * Word-level actions shared with the inline fix panel. The dictionary write
    * goes through here rather than being called directly, so both surfaces
@@ -75,7 +80,7 @@ export interface SpellCheckDialogProps {
 
 export default function SpellCheckDialog(props: SpellCheckDialogProps) {
   const {
-    open, onClose, jobId, spellFixActions, segmentIds, filteredIndices,
+    open, onClose, check, spellFixActions, segmentIds, filteredIndices,
     translationBySegment, filterActive, beforeRun,
     onNavigate, onApply, onApplyAll, readOnly = false,
     selectedIds = EMPTY_SELECTION, initialScope = DEFAULT_RUN_SCOPE,
@@ -151,10 +156,9 @@ export default function SpellCheckDialog(props: SpellCheckDialogProps) {
 
     try {
       const result = await runSpellcheck({
-        jobId,
         translationIds: ids,
         ignoredWords: ignoredWords.current,
-        check: (job, chunkIds, signal) => checkJobSpelling(job, chunkIds, signal, { includeLocked }),
+        check: (chunkIds, signal) => check(chunkIds, signal, { includeLocked }),
         segmentIdFor: id => segmentIdByTranslation.get(id) ?? 0,
         segmentIndexFor: id => segmentIndexByTranslation.get(id) ?? -1,
         signal: controller.signal,

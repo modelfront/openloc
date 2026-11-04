@@ -37,6 +37,32 @@ const DAY_MS = 24 * HOUR_MS;
  */
 export type DeadlineBand = 'overdue' | 'approaching' | 'soon' | 'far' | 'done' | 'none';
 
+/** Each band's chip colour, shared by the chip and the list filters' options. */
+export const DEADLINE_BAND_COLORS: Record<DeadlineBand, ChipColor> = {
+  overdue: 'red',
+  approaching: 'yellow',
+  soon: 'blue',
+  far: 'grey',
+  done: 'grey',
+  none: 'grey',
+};
+
+/**
+ * The bands a list can filter by, in the order the filter offers them. `done`
+ * is not one: finished work is the Status filter's job. The project list's
+ * server-side filter (ListProjectsFiltered) draws the same band edges.
+ */
+export type DeadlineFilterBand = Exclude<DeadlineBand, 'done'>;
+export const DEADLINE_FILTER_BANDS: DeadlineFilterBand[] = ['overdue', 'approaching', 'soon', 'far', 'none'];
+
+export const DEADLINE_FILTER_LABELS: Record<DeadlineFilterBand, string> = {
+  overdue: 'Overdue',
+  approaching: 'Due within 24h',
+  soon: 'Due in 1–7 days',
+  far: 'Due later',
+  none: 'No due date',
+};
+
 export interface DeadlineChip {
   band: DeadlineBand;
   text: string;
@@ -57,19 +83,19 @@ export function computeDeadlinePill(
   done = false,
 ): DeadlineChip {
   if (!deadline) {
-    return { band: 'none', text: 'No due date', color: 'grey', title: 'No due date' };
+    return { band: 'none', text: 'No due date', color: DEADLINE_BAND_COLORS.none, title: 'No due date' };
   }
 
   const target = new Date(deadline);
   if (isNaN(target.getTime())) {
-    return { band: 'none', text: '—', color: 'grey', title: 'Invalid deadline' };
+    return { band: 'none', text: '—', color: DEADLINE_BAND_COLORS.none, title: 'Invalid deadline' };
   }
 
   const diffMs = target.getTime() - now.getTime();
   const fullLocal = formatDeadline(deadline);
 
   if (done) {
-    return { band: 'done', text: `Due ${shortDate(target, now)}`, color: 'grey', title: `Deadline ${fullLocal}` };
+    return { band: 'done', text: `Due ${shortDate(target, now)}`, color: DEADLINE_BAND_COLORS.done, title: `Deadline ${fullLocal}` };
   }
 
   if (diffMs < 0) {
@@ -77,7 +103,7 @@ export function computeDeadlinePill(
     return {
       band: 'overdue',
       text: `Overdue ${formatRelativeMagnitude(-diffMs)}`,
-      color: 'red',
+      color: DEADLINE_BAND_COLORS.overdue,
       title: `Deadline was ${fullLocal}`,
     };
   }
@@ -86,7 +112,7 @@ export function computeDeadlinePill(
     return {
       band: 'approaching',
       text: diffMs < 60 * 1000 ? 'Due now' : `Due in ${formatApproachingMagnitude(diffMs)}`,
-      color: 'yellow',
+      color: DEADLINE_BAND_COLORS.approaching,
       title: `Deadline ${fullLocal}`,
     };
   }
@@ -94,10 +120,10 @@ export function computeDeadlinePill(
     // 1–7 days out: visible but not urgent. Always "in Nd" — day precision
     // only, since anything under 24h is the approaching band's job.
     const days = Math.ceil(diffMs / DAY_MS);
-    return { band: 'soon', text: `Due in ${days}d`, color: 'blue', title: `Deadline ${fullLocal}` };
+    return { band: 'soon', text: `Due in ${days}d`, color: DEADLINE_BAND_COLORS.soon, title: `Deadline ${fullLocal}` };
   }
   // > 7 days out: show the exact date, neutral colour.
-  return { band: 'far', text: `Due ${shortDate(target, now)}`, color: 'grey', title: `Deadline ${fullLocal}` };
+  return { band: 'far', text: `Due ${shortDate(target, now)}`, color: DEADLINE_BAND_COLORS.far, title: `Deadline ${fullLocal}` };
 }
 
 /** "Sep 18", with the year when it is not this year's. */

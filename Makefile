@@ -1,4 +1,4 @@
-.PHONY: dev dev-down dev-restart dev-logs seed-spellcheck seed-task-matrix seed-task-statuses seed-ai-steps seed-analysis seed-all seed-docs docs-screenshots journeys-parallel ports-free \
+.PHONY: dev dev-down dev-restart dev-logs seed-spellcheck seed-task-matrix seed-task-statuses seed-ai-steps seed-analysis seed-multi-file seed-all seed-docs docs-screenshots journeys-parallel ports-free \
        run watch test test-short test-integration ci-go ci-types check-sqlc ci-web ci-images ci-lint ci-e2e ci-journeys check-go-short check-tsc check-licenses scan-secrets scan-vulns lint fmt vet \
        migrate-up migrate-down migrate-status migrate-create \
        sqlc types frontend build clean check e2e reset reset-storage seed \
@@ -257,11 +257,15 @@ seed-ai-steps: ## Create the "AI step states" project: Hybrid → AI workflow, a
 seed-analysis: ## Create the "Analysis export demo" project: 5 files × 5 languages and one completed analysis with realistic numbers (run by `make reset`)
 	go run ./cmd/seed-analysis
 
-seed-all: ## Seed the full demo set `make reset` loads (seed, task statuses, AI steps, analysis)
+seed-multi-file: ## Create the "App strings (many small files)" project: 40 short screens × 2 languages for the multi-file editor (run by `make reset`)
+	go run ./cmd/seed-multi-file
+
+seed-all: ## Seed the full demo set `make reset` loads (seed, task statuses, AI steps, analysis, many small files)
 	@$(MAKE) seed
 	@$(MAKE) seed-task-statuses
 	@$(MAKE) seed-ai-steps
 	@$(MAKE) seed-analysis
+	@$(MAKE) seed-multi-file
 
 # `make reset` refuses to drop a database something is still connected to (a
 # dev server, a psql session) and says so; FORCE=1 ends those sessions and drops

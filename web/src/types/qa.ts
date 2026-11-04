@@ -52,6 +52,29 @@ export interface ReportDTO {
   profile_assigned: boolean;
 }
 /**
+ * ScopeRunDone: the job's rows were checked.
+ */
+export const ScopeRunDone = "done";
+/**
+ * ScopeRunNoProfile: the project has no QA profile, so nothing ran.
+ */
+export const ScopeRunNoProfile = "no_profile";
+/**
+ * ScopeRunFailed: the run failed; the other jobs still ran.
+ */
+export const ScopeRunFailed = "failed";
+/**
+ * ScopeRunJob is what a scope QA run did on one job.
+ */
+export interface ScopeRunJob {
+  job_id: number /* int64 */;
+  outcome: string;
+  /**
+   * Issues is the number of findings written, ignored ones included.
+   */
+  issues: number /* int */;
+}
+/**
  * RegexRuleConfig is the stored config of a regex rule. Pattern is matched
  * against the target, or against the source in source_must_not_match mode;
  * SourcePattern is used only by source_match_target_not. Text is matched as the

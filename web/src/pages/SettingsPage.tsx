@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Mail, UserRound } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -33,6 +34,7 @@ export default function SettingsPage() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting, isDirty },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -70,35 +72,43 @@ export default function SettingsPage() {
     <PageContainer>
       <PageHeader title="Settings" />
 
-      {/* Profile */}
-      <SettingsCard title="Profile" className="mb-6" data-guide="settings.profile">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <FormField label="Name" error={errors.name?.message} required>
-            <Input {...register('name')} placeholder="Your name" readOnly={impersonating} maxLength={200} />
-          </FormField>
-          <FormField label="Email">
-            <Input readOnly value={email} type="email" />
-          </FormField>
-          <Button
-            type="submit"
-            disabled={isSubmitting || impersonating || !isDirty}
-            disabledReason={
-              impersonating ? "The profile can't be changed while you are logged in as an organization."
-                : !isDirty ? NOTHING_CHANGED_REASON
-                  : undefined
-            }
-          >
-            {isSubmitting ? 'Saving...' : 'Save changes'}
-          </Button>
-        </form>
-      </SettingsCard>
+      {/* The sections, a fixed gap apart. */}
+      <div className="space-y-5">
+        {/* Profile */}
+        <SettingsCard
+          title="Profile"
+          icon={<UserRound />}
+          summary={email ? `${watch('name') || 'No name'} · ${email}` : undefined}
+          data-guide="settings.profile"
+        >
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <FormField label="Name" error={errors.name?.message} required>
+              <Input {...register('name')} placeholder="Your name" readOnly={impersonating} maxLength={200} />
+            </FormField>
+            <FormField label="Email">
+              <Input readOnly value={email} type="email" />
+            </FormField>
+            <Button
+              type="submit"
+              disabled={isSubmitting || impersonating || !isDirty}
+              disabledReason={
+                impersonating ? "The profile can't be changed while you are logged in as an organization."
+                  : !isDirty ? NOTHING_CHANGED_REASON
+                    : undefined
+              }
+            >
+              {isSubmitting ? 'Saving...' : 'Save changes'}
+            </Button>
+          </form>
+        </SettingsCard>
 
-      {/* Notifications */}
-      <NotificationPreferencesSection />
+        {/* Notifications */}
+        <NotificationPreferencesSection />
 
-      {/* Appearance */}
-      <AppearanceSection />
+        {/* Appearance */}
+        <AppearanceSection />
 
+      </div>
     </PageContainer>
   )
 }
@@ -110,6 +120,13 @@ const NOTIF_EVENTS = [
   { key: 'email_deadline' as const, label: 'Deadline approaching', description: 'When a job deadline is within 24 hours' },
   { key: 'email_issue_updates' as const, label: 'Issue updates', description: 'When the support team replies to or updates an issue you reported' },
 ]
+
+function prefsSummary(prefs: NotificationPreferences) {
+  const muted = NOTIF_EVENTS.filter(e => !prefs[e.key])
+  if (muted.length === 0) return `All ${NOTIF_EVENTS.length} emails on`
+  if (muted.length === NOTIF_EVENTS.length) return 'All emails muted'
+  return `${NOTIF_EVENTS.length - muted.length} of ${NOTIF_EVENTS.length} on · muted: ${muted.map(e => e.label).join(', ')}`
+}
 
 function NotificationPreferencesSection() {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null)
@@ -143,7 +160,8 @@ function NotificationPreferencesSection() {
   return (
     <SettingsCard
       title="Email notifications"
-      className="mb-6"
+      icon={<Mail />}
+      summary={prefsSummary(prefs)}
       data-guide="settings.notifications"
       description="Opt out of email notifications for specific events. Your organization admin controls which notifications are enabled — you can only mute events they've turned on."
     >

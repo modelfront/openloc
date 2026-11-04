@@ -222,6 +222,10 @@ func mapLLMPredictResult(r ai.PredictResult, mode string, currentText, currentRi
 	}
 
 	switch {
+	case mode == ai.ModeComment:
+		// The comment is the whole answer: no verdict, no score, no postedit,
+		// whatever the model volunteers.
+		score = nil
 	case mode == ai.ModeAPE:
 		// Every fix is applied, nothing is approved and nothing is scored.
 		// mapped.Approved stays false and PosteditApproved stays nil —

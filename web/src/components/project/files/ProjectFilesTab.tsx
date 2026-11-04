@@ -133,6 +133,7 @@ export function ProjectFilesTab({
             label="Status"
             value={filters.readiness ? FILE_READINESS_DISPLAY[filters.readiness].label : null}
             testId="file-filter-status"
+            searchable={false}
             render={close => (
               <>
                 <FilterOption selected={!filters.readiness} onClick={() => { setParam('file_status', null); close() }}>All</FilterOption>

@@ -93,7 +93,7 @@ type mockQuerier struct {
 	// this slice.
 	upsertTMCalls []db.UpsertTMPipelineEntryParams
 	// AI-authored segment comments from the QE+APE step.
-	createAICommentCalls []db.CreateAICommentParams
+	createAICommentCalls []db.CreateAICommentUnlessDuplicateParams
 	// Translation ids whose stale QA findings a phase dropped after rewriting
 	// their target, flattened across calls.
 	droppedQAResultIDs []int64
@@ -730,7 +730,6 @@ func (m *mockQuerier) addFileProjectTenant(fileID, projectID, tenantID int64, te
 	m.settingsProfiles[projectID] = db.SettingsProfile{
 		ID:             projectID,
 		FuzzyThreshold: 0.75,
-		InlineHtml:     true,
 	}
 	// Point the profile at a Mock MT router. The pipeline skips MT entirely
 	// when the profile has no router, so unit tests asserting MT calls need
@@ -941,9 +940,9 @@ func (m *mockQuerier) setAIProviderConn(tenantID int64, provider, apiKey string)
 	m.firstTokens[fmt.Sprintf("%d:%s", tenantID, provider)] = db.GetFirstVendorTokenRow{ID: tokID, Name: "Default", ApiKeyEncrypted: apiKey}
 }
 
-func (m *mockQuerier) CreateAIComment(_ context.Context, arg db.CreateAICommentParams) (db.SegmentComment, error) {
+func (m *mockQuerier) CreateAICommentUnlessDuplicate(_ context.Context, arg db.CreateAICommentUnlessDuplicateParams) (int64, error) {
 	m.createAICommentCalls = append(m.createAICommentCalls, arg)
-	return db.SegmentComment{ID: int64(len(m.createAICommentCalls)), TranslationID: arg.TranslationID, Content: arg.Content}, nil
+	return 1, nil
 }
 
 // addAIRouterStep puts a workflow step on a fresh AI router whose default is

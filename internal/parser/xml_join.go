@@ -6,7 +6,7 @@ import "slices"
 // of them is one segment over their combined source range, so an element in
 // a gap between two sentences (a <br/>) becomes one of its chips.
 func (p XML) SentenceBlocks(original []byte) ([]SentenceBlock, error) {
-	doc, err := parseXMLDoc(original)
+	doc, err := p.parse(original)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func xmlBlocks(specs []xmlSegmentSpec) [][]xmlSegmentSpec {
 // combined source range and everything inline in it.
 func xmlRunContent(doc *xmlDoc, refs referenceIndex, sentences []xmlSegmentSpec, i, j int) xmlContent {
 	rng := TextRange{Start: sentences[i].rng.Start, End: sentences[j].rng.End}
-	return buildXMLContent(doc.src, rng, sentences[i].node, refs)
+	return buildXMLContent(doc.src, rng, sentences[i].node, refs, doc.rules)
 }
 
 // xmlRunEdits writes each translation stored under a range key over its run

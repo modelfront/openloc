@@ -4,6 +4,7 @@ import { Clock, LogOut } from 'lucide-react'
 import { getMe, logout } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { Button } from '../components/ui/button'
+import { TextLink } from '../components/ui/text-link'
 import { usePageTitle } from '../hooks/usePageTitle'
 
 // Shown while a self-serve org signup is awaiting operator approval.
@@ -17,10 +18,12 @@ export default function AwaitingApproval() {
     queryFn: getMe,
     refetchInterval: 15000,
   })
-  usePageTitle('Awaiting approval')
+  // A vendor org whose client org is not approved is closed with it.
+  const clientInactive = me?.tenant_status === 'client_inactive'
+  usePageTitle(me?.membership_disabled ? 'Access disabled' : clientInactive ? 'Not available' : 'Awaiting approval')
 
   // Approved (or the org was never gated) → drop into the app.
-  const approved = !!me && !!me.tenant_id && !me.org_pending
+  const approved = !!me && !!me.tenant_id && !me.org_pending && !me.membership_disabled
   useEffect(() => {
     if (approved) window.location.assign('/')
   }, [approved])
@@ -29,6 +32,14 @@ export default function AwaitingApproval() {
   // A disabled/declined org gets a different message than one under review.
   const disabled = me?.tenant_status === 'suspended' || me?.tenant_status === 'rejected'
   const orgName = me?.tenant_name ?? 'Your organization'
+  // A vendor org disabled this person's access after 90 days without use.
+  const memberDisabled = !!me?.membership_disabled
+  // A person blocked in one org may still work in another.
+  const otherOrgs = (
+    <p className="text-sm mt-4">
+      <TextLink to="/select-org">Open another organization</TextLink>
+    </p>
+  )
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -37,7 +48,29 @@ export default function AwaitingApproval() {
           <span className="flex items-center justify-center w-12 h-12 mx-auto rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 mb-4">
             <Clock className="w-6 h-6" />
           </span>
-          {disabled ? (
+          {memberDisabled ? (
+            <>
+              <h1 className="text-xl font-normal text-gray-900 dark:text-gray-100">
+                Your access to {orgName} is disabled
+              </h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                Access ends after 90 days without use. Ask an admin of {orgName} to
+                enable it. This page updates once they do.
+              </p>
+              {otherOrgs}
+            </>
+          ) : clientInactive ? (
+            <>
+              <h1 className="text-xl font-normal text-gray-900 dark:text-gray-100">
+                {orgName} is not available
+              </h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                The organization this vendor works for is not active right now.
+                This page updates once it is.
+              </p>
+              {otherOrgs}
+            </>
+          ) : disabled ? (
             <>
               <h1 className="text-xl font-normal text-gray-900 dark:text-gray-100">
                 {orgName} is not active

@@ -20,9 +20,36 @@ const (
 	OwnerEmail = "owner@" + EmailDomain
 	OwnerName  = "Olivia Owner"
 
-	// VendorEmail is a linguist in the seed organization.
-	VendorEmail = "vendor@" + EmailDomain
-	VendorName  = "Val Vendor"
+	// LinguistEmail is an in-house linguist in the seed organization, a
+	// member of it, unlike the vendor org's people below.
+	LinguistEmail = "linguist@" + EmailDomain
+	LinguistName  = "Ivy Inhouse"
+
+	// VendorOrgName and VendorOrgSlug identify the seed vendor organization,
+	// a vendor org of the seed organization.
+	VendorOrgName = "Acme Vendors"
+	VendorOrgSlug = "acme-vendors"
+
+	// VendorOrgEmailDomain is the vendor org's people's domain. It is not
+	// EmailDomain, whose open registration would also make them members of
+	// the seed organization, their client.
+	VendorOrgEmailDomain = "vendors." + EmailDomain
+
+	// The vendor org's admin (it has no owner), project manager and linguist.
+	VendorAdminEmail    = "vendor-admin@" + VendorOrgEmailDomain
+	VendorAdminName     = "Vera Admin"
+	VendorPMEmail       = "vendor-pm@" + VendorOrgEmailDomain
+	VendorPMName        = "Pablo Manager"
+	VendorLinguistEmail = "vendor-linguist@" + VendorOrgEmailDomain
+	VendorLinguistName  = "Lina Linguist"
+	// Idle vendor people: an admin and a linguist disabled after 90 days
+	// without use, and a linguist the next sweep warns.
+	VendorIdleAdminEmail    = "vendor-admin-idle@" + VendorOrgEmailDomain
+	VendorIdleAdminName     = "Dana Dormant"
+	VendorIdleLinguistEmail = "vendor-linguist-idle@" + VendorOrgEmailDomain
+	VendorIdleLinguistName  = "Lars Lapsed"
+	VendorDueLinguistEmail  = "vendor-linguist-due@" + VendorOrgEmailDomain
+	VendorDueLinguistName   = "Wanda Waiting"
 
 	// OperatorEmail is the dev and test platform admin (PLATFORM_ADMIN_EMAILS
 	// in the Makefile and the e2e runners), who reads reported issues. An

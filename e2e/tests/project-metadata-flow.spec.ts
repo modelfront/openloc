@@ -388,4 +388,57 @@ test.describe('Project metadata flow', () => {
     await expect(page.getByTestId('project-created-by').getByTestId('creator-label-empty')).toHaveCount(0)
     expect(listCalls, 'the project page must not load the project list').toEqual([])
   })
+
+  // The Deadline chip takes several bands, sends them to the server, and the
+  // list shows only the projects in those bands.
+  test('Deadline filter: picked bands reach the server and narrow the list', async ({ page }) => {
+    const create = async (name: string, deadline: string) => {
+      const res = await page.request.post('/api/projects', {
+        headers,
+        data: { name, source_language: 'en', target_languages: ['de'], deadline, workflow_id: await standardWorkflowId(page) },
+      })
+      expect(res.ok()).toBe(true)
+      const id: number = (await res.json()).data.id
+      createdProjects.push(id)
+      return id
+    }
+    const day = 24 * 60 * 60 * 1000
+    const overdueId = await create(`Deadline overdue ${TS}`, new Date(Date.now() - 2 * day).toISOString())
+    const laterId = await create(`Deadline later ${TS}`, new Date(Date.now() + 30 * day).toISOString())
+
+    await page.goto('/projects')
+    const overdueRow = page.getByTestId(`project-row-${overdueId}`)
+    const laterRow = page.getByTestId(`project-row-${laterId}`)
+    await expect(overdueRow).toBeVisible()
+    await expect(laterRow).toBeVisible()
+
+    const listed = (bands: string) => page.waitForResponse(r =>
+      new URL(r.url()).pathname === '/api/projects' && new URL(r.url()).searchParams.get('deadline') === bands)
+
+    await page.getByTestId('filter-deadline').click()
+    let resp = listed('overdue')
+    await page.getByTestId('filter-deadline-overdue').click()
+    expect((await resp).ok()).toBe(true)
+    await expect(overdueRow).toBeVisible()
+    await expect(laterRow).toBeHidden()
+
+    resp = listed('overdue,far')
+    await page.getByTestId('filter-deadline-far').click()
+    expect((await resp).ok()).toBe(true)
+    await expect(laterRow).toBeVisible()
+    await expect(page.getByTestId('filter-deadline')).toContainText('Overdue, Due later')
+  })
+
+  // A bar is one height: a removable chip's border sits on the frame around
+  // it and its ×, and the filter icon is drawn as an idle chip of the same size.
+  test('Projects filter bar: chips, a removable chip and the filter icon are all 30px', async ({ page }) => {
+    await page.goto('/projects?source=en')
+    await expect(page.getByTestId('filter-source')).toBeVisible()
+    const heights = {
+      status: (await page.getByTestId('filter-status').boundingBox())!.height,
+      removableSource: (await page.getByTestId('filter-source').locator('..').boundingBox())!.height,
+      filterIcon: (await page.getByTestId('project-filter-menu').boundingBox())!.height,
+    }
+    for (const [name, h] of Object.entries(heights)) expect(h, name).toBeCloseTo(30, 0)
+  })
 })

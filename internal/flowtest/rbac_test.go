@@ -450,3 +450,55 @@ func TestIntegrationRBACSegmentationProfiles(t *testing.T) {
 	rec = testutil.DoRequestWithRole(t, router, "DELETE", profilePath, nil, pm.ID, tenant.ID, "project_manager")
 	testutil.AssertStatus(t, rec, http.StatusNoContent)
 }
+
+// TestIntegrationRBACFilterProfiles pins the filter profile gates: every
+// member reads; owners, admins and project managers create, edit, delete and
+// set the org default.
+func TestIntegrationRBACFilterProfiles(t *testing.T) {
+	pool, q, cleanup := testutil.SetupTestDB(t)
+	defer cleanup()
+	router := testutil.NewTestRouter(pool)
+	tenant := testutil.SeedTenant(t, q, "RBACFilterProfiles")
+	pm := testutil.SeedUserWithRole(t, q, tenant.ID, "pm@filter-rbac.test", "pass", "project_manager")
+	linguist := testutil.SeedUserWithRole(t, q, tenant.ID, "ling@filter-rbac.test", "pass", "linguist")
+	body := map[string]any{"name": "Columns B and C", "format": "xlsx", "options": map[string]any{"xlsx": map[string]any{"columns": []string{"B", "C"}}}}
+
+	rec := testutil.DoRequestWithRole(t, router, "POST", "/api/filter-profiles", body, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusCreated)
+	var created struct {
+		Data struct {
+			ID        int64  `json:"id"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"data"`
+	}
+	testutil.DecodeJSON(t, rec, &created)
+	profilePath := fmt.Sprintf("/api/filter-profiles/%d", created.Data.ID)
+
+	for _, path := range []string{"/api/filter-profiles", "/api/filter-profiles?format=xlsx", profilePath} {
+		rec := testutil.DoRequestWithRole(t, router, "GET", path, nil, linguist.ID, tenant.ID, "linguist")
+		testutil.AssertStatus(t, rec, http.StatusOK)
+	}
+	update := map[string]any{"name": "Column B", "options": map[string]any{"xlsx": map[string]any{"columns": []string{"B"}}}, "updated_at": created.Data.UpdatedAt}
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", "/api/filter-profiles", map[string]any{"name": "Mine", "format": "html", "options": map[string]any{}}},
+		{"PUT", profilePath, update},
+		{"DELETE", profilePath, nil},
+		{"PUT", "/api/filter-profiles/defaults", map[string]any{"format": "xlsx", "filter_profile_id": created.Data.ID}},
+	} {
+		rec := testutil.DoRequestWithRole(t, router, c.method, c.path, c.body, linguist.ID, tenant.ID, "linguist")
+		testutil.AssertStatus(t, rec, http.StatusForbidden)
+	}
+
+	// The project manager does all of it, the org default included.
+	rec = testutil.DoRequestWithRole(t, router, "PUT", profilePath, update, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusOK)
+	for _, id := range []any{created.Data.ID, nil} {
+		rec = testutil.DoRequestWithRole(t, router, "PUT", "/api/filter-profiles/defaults", map[string]any{"format": "xlsx", "filter_profile_id": id}, pm.ID, tenant.ID, "project_manager")
+		testutil.AssertStatus(t, rec, http.StatusOK)
+	}
+	rec = testutil.DoRequestWithRole(t, router, "DELETE", profilePath, nil, pm.ID, tenant.ID, "project_manager")
+	testutil.AssertStatus(t, rec, http.StatusNoContent)
+}

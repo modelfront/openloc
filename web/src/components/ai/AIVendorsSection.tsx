@@ -5,7 +5,7 @@ import {
   type AIProviderId, type AIConnection, type AIConnectionInput, type AIVendorExtension, type AIVendorStatus,
 } from '../../api'
 import { toast } from 'sonner'
-import { queryKeys } from '../../lib/query-keys'
+import { aiKeyChangeKeys, queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
 import { ProviderTile, ProviderTileRow } from './ProviderTile'
 import {
@@ -174,7 +174,7 @@ function ConnectionsGrid({ connections, tokens, builtInTypes, extensions, canWri
     mutationFn: ({ provider, id, input }: { provider: AIProviderId; id: number; input: AIConnectionInput }) =>
       updateAIConnection(provider, id, input),
     successMessage: 'Connection updated', errorMessage: 'Update failed',
-    invalidateKeys: [queryKeys.aiVendors.all],
+    invalidateKeys: [...aiKeyChangeKeys],
     // Deliberately does NOT close: enabling or updating is rarely the last
     // thing you do here — the keys are right below and usually the next step.
   })

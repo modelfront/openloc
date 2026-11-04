@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/ptr"
 	"openloc/internal/settings"
 	"openloc/internal/sliceutil"
@@ -77,10 +78,14 @@ func (b *directBackend) templateDetail(ctx context.Context, tenantID int64, t db
 	if err != nil {
 		return TemplateDetail{}, err
 	}
+	filters, err := filterprofile.Choices(ctx, b.q, own.ID)
+	if err != nil {
+		return TemplateDetail{}, err
+	}
 	out := TemplateDetail{
-		TemplateSummary: configTemplateSummary(t),
-		FuzzyThreshold:  p.FuzzyThreshold, MtOnUpload: p.MtOnUpload, TmOnUpload: p.TmOnUpload,
-		AutoComplete: p.AutoComplete, InlineHTML: p.InlineHtml, SublanguagePenaltyPct: p.SublanguagePenaltyPct,
+		TemplateSummary: configTemplateSummary(t), FilterProfiles: filters,
+		FuzzyThreshold: p.FuzzyThreshold, MtOnUpload: p.MtOnUpload, TmOnUpload: p.TmOnUpload,
+		AutoComplete: p.AutoComplete, SublanguagePenaltyPct: p.SublanguagePenaltyPct,
 		LinguistTerms:       p.LinguistTerms,
 		NearExactPenaltyPct: p.NearExactPenaltyPct, QAProfileID: ptr.Deref(p.QaProfileID),
 		SegmentationProfileID: ptr.Deref(p.SegmentationProfileID),
@@ -102,12 +107,16 @@ func (b *directBackend) CreateTemplate(ctx context.Context, in CreateTemplateIn)
 	if err := b.needPool("creating a template"); err != nil {
 		return TemplateDetail{}, err
 	}
+	filters, err := filterChoices(ctx, b.q, in.InlineHTML, in.FilterProfileIDs)
+	if err != nil {
+		return TemplateDetail{}, configErr(err)
+	}
 	t, profile, err := tmpl.Create(ctx, b.q, b.pool, tenantID, tmpl.CreateInput{
 		Name: in.Name, MtOnUpload: in.MtOnUpload, TmOnUpload: in.TmOnUpload, FuzzyThreshold: in.FuzzyThreshold,
 		ProjectName: ptr.NilIfZero(in.ProjectName), SourceLanguage: ptr.NilIfZero(in.SourceLanguage),
 		TargetLanguages: in.TargetLanguages, CustomerID: ptr.NilIfZero(in.CustomerID), Domain: ptr.NilIfZero(in.Domain),
 		Setup: settings.Setup{
-			AutoComplete: in.AutoComplete, InlineHTML: in.InlineHTML, LinguistTerms: in.LinguistTerms, WorkflowID: ptr.NilIfZero(in.WorkflowID),
+			AutoComplete: in.AutoComplete, LinguistTerms: in.LinguistTerms, FilterProfileIDs: filters, WorkflowID: ptr.NilIfZero(in.WorkflowID),
 			MTRouterID: ptr.NilIfZero(in.MTRouterID), QaProfileID: ptr.NilIfZero(in.QAProfileID),
 			TMProfileID: ptr.NilIfZero(in.TMProfileID), SegmentationProfileID: ptr.NilIfZero(in.SegmentationProfileID),
 		},
@@ -139,10 +148,10 @@ func configNullableID(id *int64) tmpl.NullableID {
 	return tmpl.NullableID{Set: true, ID: ptr.NilIfZero(*id)}
 }
 
-func (in UpdateTemplateIn) service() tmpl.UpdateInput {
+func (in UpdateTemplateIn) service(filters map[string]*int64) tmpl.UpdateInput {
 	return tmpl.UpdateInput{
 		Name: in.Name, MtOnUpload: in.MtOnUpload, TmOnUpload: in.TmOnUpload, AutoComplete: in.AutoComplete,
-		InlineHTML: in.InlineHTML, LinguistTerms: in.LinguistTerms, FuzzyThreshold: in.FuzzyThreshold, SublanguagePenaltyPct: in.SublanguagePenaltyPct,
+		FilterProfiles: filters, LinguistTerms: in.LinguistTerms, FuzzyThreshold: in.FuzzyThreshold, SublanguagePenaltyPct: in.SublanguagePenaltyPct,
 		NearExactPenaltyPct: in.NearExactPenaltyPct, QAProfile: configNullableID(in.QAProfileID),
 		MTRouter: configNullableID(in.MTRouterID), LinkTMProfile: in.TMProfileID, Customer: configNullableID(in.CustomerID),
 		SegmentationProfile: in.SegmentationProfileID,
@@ -169,7 +178,11 @@ func (b *directBackend) PreviewUpdateTemplate(ctx context.Context, in UpdateTemp
 	if in.TMProfileID != nil && *in.TMProfileID <= 0 {
 		return Preview{}, invalidf("tm_profile_id must be a TM profile id; leaving a TM profile is done in the template settings")
 	}
-	plan, err := tmpl.PlanUpdate(ctx, b.q, tenantID, in.TemplateID, in.service())
+	filters, err := filterChoices(ctx, b.q, in.InlineHTML, in.FilterProfileIDs)
+	if err != nil {
+		return Preview{}, configErr(err)
+	}
+	plan, err := tmpl.PlanUpdate(ctx, b.q, tenantID, in.TemplateID, in.service(filters))
 	if err != nil {
 		return Preview{}, configErr(err)
 	}
@@ -191,9 +204,27 @@ func (b *directBackend) UpdateTemplate(ctx context.Context, in UpdateTemplateIn)
 	if in.TMProfileID != nil && *in.TMProfileID <= 0 {
 		return TemplateDetail{}, invalidf("tm_profile_id must be a TM profile id; leaving a TM profile is done in the template settings")
 	}
-	t, profile, err := tmpl.Update(ctx, b.q, b.pool, tenantID, in.TemplateID, in.service())
+	filters, err := filterChoices(ctx, b.q, in.InlineHTML, in.FilterProfileIDs)
+	if err != nil {
+		return TemplateDetail{}, configErr(err)
+	}
+	t, profile, err := tmpl.Update(ctx, b.q, b.pool, tenantID, in.TemplateID, in.service(filters))
 	if err != nil {
 		return TemplateDetail{}, configErr(err)
 	}
 	return b.templateDetail(ctx, tenantID, t, profile)
+}
+
+// filterChoices turns an MCP call's filter profile picks into settings
+// choices: 0 is the format's Default, and the older inline_html switch
+// fills the string formats it leaves out.
+func filterChoices(ctx context.Context, q db.Querier, inlineHTML *bool, ids map[string]int64) (map[string]*int64, error) {
+	explicit := make(map[string]*int64, len(ids))
+	for format, id := range ids {
+		explicit[format] = ptr.NilIfZero(id)
+	}
+	if inlineHTML == nil {
+		return explicit, nil
+	}
+	return filterprofile.InlineHTMLChoices(ctx, q, *inlineHTML, explicit)
 }

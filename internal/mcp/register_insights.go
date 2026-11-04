@@ -169,7 +169,9 @@ func registerInsightTeam(s *Server, srv *sdk.Server, managerTier bool, b Backend
 		title: "List invites",
 		description: "List the organization's invites the user may handle, with email, role, status " +
 			"(pending, accepted, expired) and who sent them. Owners see every invite, admins all but " +
-			"owner invites, project managers only linguist invites. Invite links are never returned.",
+			"owner invites, project managers only linguist invites. kind is member, or vendor_org: an " +
+			"invite that sets up a linked vendor organization named vendor_org_name, with the invitee " +
+			"as its admin. Invite links are never returned.",
 		requireManager: true,
 	}, b.ListInvites)
 
@@ -178,7 +180,8 @@ func registerInsightTeam(s *Server, srv *sdk.Server, managerTier bool, b Backend
 		title: "Invite member",
 		description: "Invite a person by email; they get a link valid for 7 days. Role is linguist " +
 			"by default. An owner or admin may invite admins and project managers; a project " +
-			"manager may only invite linguists. Ask for the email and role if the user did not say. Two calls: the first previews, the second (with confirm_token, after the user approves) sends the invite.",
+			"manager may only invite linguists. It cannot set up a vendor organization: that is Invite " +
+			"vendor on the Members tab of the Organization page. Ask for the email and role if the user did not say. Two calls: the first previews, the second (with confirm_token, after the user approves) sends the invite.",
 		requireManager: true,
 		openWorld:      true,
 	}, b.PreviewInviteMember, b.InviteMember)

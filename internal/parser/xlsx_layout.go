@@ -26,6 +26,10 @@ type XLSXSheetLayout struct {
 	// Columns are the letters ("B") of the columns to translate; none for
 	// every text cell of the sheet.
 	Columns []string `json:"columns,omitempty"`
+	// TargetColumns, when set, make the sheet multilingual: Columns holds the
+	// one source column and the export writes each language into its own
+	// column (see xlsx_targets.go).
+	TargetColumns []XLSXTargetColumn `json:"target_columns,omitempty"`
 }
 
 // XLSXLayoutError is a layout the uploader can fix. Msg is shown as is and
@@ -55,7 +59,8 @@ func ParseXLSXLayout(raw []byte) (*XLSXLayout, error) {
 	return &l, nil
 }
 
-// Normalize upper-cases the columns and drops repeats.
+// Normalize upper-cases the columns, drops repeats and normalizes the target
+// columns.
 func (l *XLSXLayout) Normalize() {
 	for i := range l.Sheets {
 		s := &l.Sheets[i]
@@ -69,12 +74,15 @@ func (l *XLSXLayout) Normalize() {
 			}
 		}
 		s.Columns = cols
+		if len(s.TargetColumns) > 0 {
+			s.TargetColumns = NormalizeXLSXTargets(s.TargetColumns)
+		}
 	}
 }
 
 // Validate checks the layout against the workbook: at least one sheet, every
-// sheet exists, is visible and is listed once, and every column is a real
-// one. It runs checkXLSX, which reads the sheet list, and never opens the
+// sheet exists, is visible and is listed once, every column is a real one,
+// and its target columns pass ValidateXLSXTargets. It runs checkXLSX, which reads the sheet list, and never opens the
 // workbook.
 func (l XLSXLayout) Validate(content []byte) (err error) {
 	defer recoverXLSX(context.Background(), "xlsx layout", &err)
@@ -106,6 +114,9 @@ func (l XLSXLayout) Validate(content []byte) (err error) {
 			if !validColumn(c) {
 				return layoutErrorf("Sheet %q: %q is not a column.", s.Name, c)
 			}
+		}
+		if err := ValidateXLSXTargets(s.Columns, s.TargetColumns); err != nil {
+			return layoutErrorf("Sheet %q: %s", s.Name, err.Error())
 		}
 	}
 	return nil

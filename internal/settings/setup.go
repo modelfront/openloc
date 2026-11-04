@@ -16,6 +16,7 @@ import (
 
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/segmentationapi"
 )
@@ -30,8 +31,6 @@ type Setup struct {
 	// nil keeps the stored value (on by default, or
 	// whatever the applied template carries).
 	AutoComplete *bool `json:"auto_complete"`
-	// InlineHTML: strings of JSON/PO/TXT/XLSX files are HTML; nil keeps stored.
-	InlineHTML *bool `json:"inline_html"`
 	// LinguistTerms: whether linguists may add terms from the editor, and their status ("off", "pending", "approved"); nil keeps stored.
 	LinguistTerms *string `json:"linguist_terms"`
 	// TM match penalties; nil keeps the stored value.
@@ -63,6 +62,10 @@ type Setup struct {
 	// keeps the stored one while it fits Language, else takes the suggested
 	// profile for Language, so a project or template always has one.
 	SegmentationProfileID *int64 `json:"segmentation_profile_id"`
+	// FilterProfileIDs picks the filter profile per file format
+	// (filterprofile.Formats); a null id goes back to the format's Default and
+	// a format left out keeps its choice.
+	FilterProfileIDs map[string]*int64 `json:"filter_profile_ids"`
 	// Language is the project's or template's source language, set by the
 	// caller.
 	Language string `json:"-"`
@@ -71,7 +74,7 @@ type Setup struct {
 // HasSettings reports whether any scalar is set (an UpdateSettingsProfile is needed).
 func (c Setup) HasSettings() bool {
 	return c.FuzzyThreshold != nil || c.MtOnUpload != nil || c.TmOnUpload != nil ||
-		c.QaProfileID != nil || c.ClearQAProfile || c.AutoComplete != nil || c.InlineHTML != nil || c.LinguistTerms != nil ||
+		c.QaProfileID != nil || c.ClearQAProfile || c.AutoComplete != nil || c.LinguistTerms != nil ||
 		c.SublanguagePenaltyPct != nil || c.NearExactPenaltyPct != nil ||
 		c.TMLookupOrder != nil
 }
@@ -110,6 +113,9 @@ func ValidateSetup(ctx context.Context, q db.Querier, tenantID int64, cfg Setup)
 			return err
 		}
 	}
+	if err := filterprofile.ValidateChoices(ctx, q, tenantID, cfg.FilterProfileIDs); err != nil {
+		return err
+	}
 	if cfg.MTRouterID != nil {
 		if _, err := q.GetMTRouter(ctx, db.GetMTRouterParams{ID: *cfg.MTRouterID, TenantID: tenantID}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -142,6 +148,9 @@ func ValidateSetup(ctx context.Context, q db.Querier, tenantID int64, cfg Setup)
 // assignment replace is individually transactional via the shared helpers.
 func ApplySetup(ctx context.Context, pool database.TxBeginner, q db.Querier, tenantID, profileID int64, cfg Setup) error {
 	if err := SetSegmentationProfile(ctx, q, tenantID, profileID, cfg.SegmentationProfileID, cfg.Language); err != nil {
+		return err
+	}
+	if err := filterprofile.SetChoices(ctx, q, tenantID, profileID, cfg.FilterProfileIDs); err != nil {
 		return err
 	}
 	if cfg.HasSettings() {
@@ -183,7 +192,6 @@ func ApplySetup(ctx context.Context, pool database.TxBeginner, q db.Querier, ten
 			// nil-keeps-stored, so an absent field leaves the template's (or
 			// column's) value rather than silently switching it off.
 			AutoComplete:          cfg.AutoComplete,
-			InlineHtml:            cfg.InlineHTML,
 			LinguistTerms:         cfg.LinguistTerms,
 			SublanguagePenaltyPct: ClampPctPtr(cfg.SublanguagePenaltyPct),
 			NearExactPenaltyPct:   ClampPctPtr(cfg.NearExactPenaltyPct),

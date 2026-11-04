@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,8 @@ func TestDescribePath(t *testing.T) {
 		{"/platform/orgs", "support team's Organizations page"},
 		{"/platform/issues", "support team's Reported issues queue"},
 		{"/platform/issues/12", "issue 12 in the support team's queue"},
+		// The multi-file editor is described, never opened.
+		{"/projects/42/edit", "several files of project 42 opened together"},
 		// Unknown, malformed, or hostile paths yield NOTHING — no junk line.
 		{"/projects/42/jobs/7/edit/whatever", ""},
 		{"/platform/issues/12/extra", ""},
@@ -101,12 +104,13 @@ func TestPagesMatchRealRouterPaths(t *testing.T) {
 	}
 }
 
-// The support team's pages are described, never opened or pointed at: anyone
-// else who lands there is sent back to the projects list.
-func TestPlatformPagesAreDescribeOnly(t *testing.T) {
-	for _, p := range platformPages {
+// The support team's pages and the multi-file editor are described, never
+// opened or pointed at: the first sends anyone else back to the projects list,
+// the second needs a job list the model cannot build.
+func TestDescribedPagesAreDescribeOnly(t *testing.T) {
+	for _, p := range slices.Concat(platformPages, describedPages) {
 		if p.name != "" || p.path != "" || len(p.anchors) > 0 {
-			t.Errorf("platform page %s has a name, path or anchors; it must only be described", p.pattern)
+			t.Errorf("page %s has a name, path or anchors; it must only be described", p.pattern)
 		}
 	}
 	for _, name := range PageNames() {

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query'
 import {
   invalidateJobContext,
+  invalidateJobsContext,
+  invalidateQAReports,
   invalidateSegmentSaveContext,
   invalidateProjectStatus,
   invalidateTMContext,
@@ -115,6 +117,42 @@ describe('invalidateJobContext', () => {
 
     for (const key of fresh) expect(isInvalidated(qc, key), `${JSON.stringify(key)} should stay fresh`).toBe(false)
     for (const key of stale) expect(isInvalidated(qc, key), `${JSON.stringify(key)} should go stale`).toBe(true)
+  })
+
+  // A multi-file editor's Complete step names every file: each job's own
+  // caches go stale, the shared ones and the editor's caches once.
+  it('invalidates the shared and editor caches once for several jobs', () => {
+    const qc = new QueryClient()
+    const scope = `${PROJECT_ID}:${JOB_ID},999`
+    qc.setQueryData(queryKeys.job.editorIndex(scope), 'cached')
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+
+    invalidateJobsContext(qc, PROJECT_ID, [JOB_ID, 999])
+
+    const calls = spy.mock.calls.map(c => JSON.stringify((c[0] as { queryKey: readonly unknown[] }).queryKey))
+    const count = (key: readonly unknown[]) => calls.filter(c => c === JSON.stringify(key)).length
+    expect(count(queryKeys.job.translations(scope))).toBe(1)
+    expect(count(queryKeys.comments.allCounts)).toBe(1)
+    expect(count(queryKeys.jobs.byProject(PROJECT_ID))).toBe(1)
+    expect(count(queryKeys.job.qaReport(JOB_ID))).toBe(1)
+    expect(count(queryKeys.job.qaReport(999))).toBe(1)
+    // The multi-file editor's QA report covers both jobs.
+    expect(count(queryKeys.job.qaReport(scope))).toBe(1)
+    expect(isInvalidated(qc, queryKeys.job.editorIndex(scope))).toBe(true)
+  })
+
+  // A multi-file editor holding the job reloads with it; one that does not
+  // hold it stays as it is.
+  it('reaches every multi-file editor that holds the job', () => {
+    const qc = new QueryClient()
+    const holding = queryKeys.job.editorIndex(`${PROJECT_ID}:${JOB_ID},999`)
+    const other = queryKeys.job.editorIndex(`${PROJECT_ID}:998,999`)
+    for (const key of [holding, other]) qc.setQueryData(key, 'cached')
+
+    invalidateJobContext(qc, PROJECT_ID, JOB_ID)
+
+    expect(isInvalidated(qc, holding)).toBe(true)
+    expect(isInvalidated(qc, other)).toBe(false)
   })
 })
 
@@ -440,9 +478,22 @@ describe('advanceTranslationInCache', () => {
   const indexRow = (id: number, extra: Partial<IndexRow> = {}): IndexRow => ({
     segmentId: id, translationId: id, position: id, subPosition: 0, joinsNext: false, wordCount: 1, status: 'needs_review',
     hasText: false, stepEdited: false, predicted: false, origin: '', tmMatch: null, locked: false,
-    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, ...extra,
+    inFlight: '', confirmedVia: '', qeNoteHead: '', repetition: 0, fileIdx: 0, ...extra,
   })
   const jobId = 42
+
+  // A multi-file editor keeps its pages under its scope id; a row there
+  // patches it by its own job id.
+  it('patches a multi-file editor that holds the job, and none that does not', () => {
+    const qc = new QueryClient()
+    qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage('7:41,42', 0, '1'), [row(makeTr(1, 'T0', { active_text: 'original' }))])
+    qc.setQueryData<EditorRow[]>(queryKeys.job.editorPage('7:40,43', 0, '1'), [row(makeTr(1, 'T0', { active_text: 'original' }))])
+
+    advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'edited' }))
+
+    expect(qc.getQueryData<EditorRow[]>(queryKeys.job.editorPage('7:41,42', 0, '1'))![0].translation!.active_text).toBe('edited')
+    expect(qc.getQueryData<EditorRow[]>(queryKeys.job.editorPage('7:40,43', 0, '1'))![0].translation!.active_text).toBe('original')
+  })
 
   // The cache shapes MUST mirror what the editor stores: a page holds
   // EditorRow[], the index IndexRow[]. A helper that checks for the wrong
@@ -466,7 +517,7 @@ describe('advanceTranslationInCache', () => {
 
   it('moves the index row to the saved status, so counts and filters follow', () => {
     const qc = new QueryClient()
-    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), { rows: [indexRow(1), indexRow(2)], repetitionStats: { segments: 0, words: 0, characters: 0 }, lookup: indexLookup([indexRow(1), indexRow(2)]) })
+    qc.setQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId), { rows: [indexRow(1), indexRow(2)], repetitionStats: { segments: 0, words: 0, characters: 0 }, lookup: indexLookup([indexRow(1), indexRow(2)]), files: [] })
 
     const before = qc.getQueryData<EditorIndexData>(queryKeys.job.editorIndex(jobId))!.lookup
     advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'edited', step_edited: true, locked: true, qe_note: 'a long note' }))
@@ -481,8 +532,8 @@ describe('advanceTranslationInCache', () => {
   it('updates the target of a cross-reference that points at the saved segment', () => {
     const qc = new QueryClient()
     qc.setQueryData<EditorRef[]>(queryKeys.job.editorRefs(jobId), [
-      { key: 'a', segment_id: 1, source: 'Dry', target: '' },
-      { key: 'b', segment_id: 2, source: 'Wet', target: 'Nass' },
+      { file_id: 1, key: 'a', segment_id: 1, source: 'Dry', target: '' },
+      { file_id: 1, key: 'b', segment_id: 2, source: 'Wet', target: 'Nass' },
     ])
     advanceTranslationInCache(qc, jobId, makeTr(1, 'T1', { active_text: 'Trocken' }))
     const refs = qc.getQueryData<EditorRef[]>(queryKeys.job.editorRefs(jobId))
@@ -677,5 +728,20 @@ describe('removeTMEntryFromCache', () => {
     expect(qc.getQueryState(queryKeys.tm.langPairs(5))?.isInvalidated).toBe(true)
     expect(qc.getQueryState(['tm-entry-history', 5, 1])?.isInvalidated).toBe(true)
     expect(qc.getQueryState(entries)?.isInvalidated).toBe(false)
+  })
+})
+
+describe('invalidateQAReports', () => {
+  // A save propagated to repetitions in other files of a multi-file editor:
+  // the editor's one QA report covers them all.
+  it('reaches the job\'s own report and every multi-file editor holding the job', () => {
+    const qc = new QueryClient()
+    const scope = `${PROJECT_ID}:${JOB_ID},999`
+    qc.setQueryData(queryKeys.job.editorIndex(scope), 'cached')
+    for (const id of [JOB_ID, scope, 999]) qc.setQueryData(queryKeys.job.qaReport(id), 'cached')
+    invalidateQAReports(qc, JOB_ID)
+    expect(isInvalidated(qc, queryKeys.job.qaReport(JOB_ID))).toBe(true)
+    expect(isInvalidated(qc, queryKeys.job.qaReport(scope))).toBe(true)
+    expect(isInvalidated(qc, queryKeys.job.qaReport(999))).toBe(false)
   })
 })

@@ -163,7 +163,7 @@ func decide(st State, role string, opts Opts) (verdict, *LockedError) {
 	return 0, errTaskNotStarted
 }
 
-func stateFromJob(r db.GetTaskEditStateRow) State {
+func stateFromJob(r db.ListTaskEditStatesRow) State {
 	return State{
 		JobID: r.JobID, JobStatus: r.JobStatus, JobCurrentStep: r.JobCurrentStep,
 		TargetLanguage: r.TargetLanguage, FileID: r.FileID, FileName: r.FileName, ProjectID: r.ProjectID,
@@ -175,5 +175,5 @@ func stateFromJob(r db.GetTaskEditStateRow) State {
 }
 
 func stateFromTranslation(r db.GetTaskEditStateForTranslationRow) State {
-	return stateFromJob(db.GetTaskEditStateRow(r))
+	return stateFromJob(db.ListTaskEditStatesRow(r))
 }

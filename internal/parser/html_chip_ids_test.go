@@ -56,7 +56,7 @@ func TestHTMLFormattingOnlyRichTextOfABlock(t *testing.T) {
 	if len(segs) == 0 || segs[0].RichText == legacyLinksRich {
 		t.Fatalf("the run's own rich text must differ from the formatting-only one: %+v", segs)
 	}
-	units := collectHTMLUnits(mustParseHTML(t, legacyLinksSource), 0)
+	units := collectHTMLUnits(mustParseHTML(t, legacyLinksSource), 0, defaultHTMLConfig)
 	if _, got, _ := formattingOnlyChips(units[0].block); got != legacyLinksRich {
 		t.Fatalf("formatting-only rich text = %q, want %q", got, legacyLinksRich)
 	}
@@ -202,7 +202,7 @@ func TestHTMLStoredBlockWithTextOutsideTheRunReplacesTheBlock(t *testing.T) {
 func TestHTMLStoredChipOverUntranslatedElementKeepsIt(t *testing.T) {
 	src := `<html><body><p>Use <span translate="no" class="brand">Acme <b>Pro</b></span> today.</p></body></html>`
 	stored := `Use <g id="1" ctype="x-html-span" original_markup="&lt;span translate=&quot;no&quot; class=&quot;brand&quot;&gt;">Acme <g id="2" ctype="bold">Pro</g></g> today.`
-	units := collectHTMLUnits(mustParseHTML(t, src), 0)
+	units := collectHTMLUnits(mustParseHTML(t, src), 0, defaultHTMLConfig)
 	if _, got, _ := formattingOnlyChips(units[0].block); got != stored {
 		t.Fatalf("formatting-only rich text = %q, want %q", got, stored)
 	}

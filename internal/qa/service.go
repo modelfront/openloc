@@ -427,5 +427,9 @@ func (s *Service) RunAndPersistJob(ctx context.Context, jobID, tenantID int64) (
 		return JobRunResult{NoRules: true}, nil
 	}
 
-	return s.runJobPages(ctx, job, js)
+	terms, err := s.loadRunTerms(ctx, js)
+	if err != nil {
+		return JobRunResult{}, err
+	}
+	return s.runJobPages(ctx, job, js, terms)
 }

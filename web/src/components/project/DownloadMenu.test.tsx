@@ -128,6 +128,22 @@ describe('DownloadMenu', () => {
     expect(sel.fileIds).toEqual([10])
   })
 
+  it('counts a multilingual workbook once: its languages come back in one file', async () => {
+    const multi = (id: number) => ({ ...done(id, 10), file_multilingual: true })
+    await open([multi(1), multi(2), multi(3)], [10])
+    const item = screen.getByTestId('download-source')
+    expect(item).toHaveTextContent('Translated file')
+    expect(item).not.toHaveTextContent('(3)')
+    expect(item).not.toHaveTextContent('one .zip')
+
+    cleanup()
+    await open([multi(1), multi(2), done(3, 11)], [10, 11])
+    expect(screen.getByTestId('download-source')).toHaveTextContent('Translated files (2)')
+    // Every job still goes to the server, which writes each language into its column.
+    await userEvent.click(screen.getByTestId('download-source'))
+    expect(downloadFiles.mock.calls[0][2].jobIds).toEqual([1, 2, 3])
+  })
+
   it('warns that a multi-item pick arrives as one zip', async () => {
     await open([done(1, 10), done(2, 11)], [10, 11])
     const item = screen.getByTestId('download-source')

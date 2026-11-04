@@ -11,6 +11,7 @@ import (
 
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/mtrouter"
 	"openloc/internal/ptr"
@@ -55,6 +56,10 @@ func Create(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID int6
 		return db.Template{}, db.SettingsProfile{}, httputil.NewClientError(err.Error())
 	}
 	in.Setup.Language = ptr.Deref(sourceLang)
+	// A format the request leaves out starts with the org's default.
+	if in.Setup.FilterProfileIDs, err = filterprofile.WithOrgDefaults(ctx, q, tenantID, in.Setup.FilterProfileIDs); err != nil {
+		return db.Template{}, db.SettingsProfile{}, err
+	}
 	if err := settings.ValidateSetup(ctx, q, tenantID, in.Setup); err != nil {
 		return db.Template{}, db.SettingsProfile{}, err
 	}
@@ -133,7 +138,6 @@ type UpdateInput struct {
 	MtOnUpload            *bool
 	TmOnUpload            *bool
 	AutoComplete          *bool
-	InlineHTML            *bool
 	LinguistTerms         *string
 	FuzzyThreshold        *float32
 	SublanguagePenaltyPct *int32
@@ -144,6 +148,9 @@ type UpdateInput struct {
 	// SegmentationProfile picks the profile uploads are split with; nil keeps
 	// the stored one while it fits the template's language.
 	SegmentationProfile *int64
+	// FilterProfiles picks the filter profile per format: a nil id goes back
+	// to the format's Default, a format left out keeps its choice.
+	FilterProfiles map[string]*int64
 	// LinkTMProfile links the template to a TM profile. Leaving a profile goes
 	// through the detach endpoint, which copies its rows.
 	LinkTMProfile *int64
@@ -269,6 +276,9 @@ func PlanUpdate(ctx context.Context, q db.Querier, tenantID, id int64, in Update
 			return UpdatePlan{}, err
 		}
 	}
+	if err := filterprofile.ValidateChoices(ctx, q, tenantID, in.FilterProfiles); err != nil {
+		return UpdatePlan{}, err
+	}
 	return UpdatePlan{
 		Template: existing,
 		in:       in,
@@ -281,7 +291,6 @@ func PlanUpdate(ctx context.Context, q db.Querier, tenantID, id int64, in Update
 			SublanguagePenaltyPct: settings.ClampPctPtr(in.SublanguagePenaltyPct),
 			NearExactPenaltyPct:   settings.ClampPctPtr(in.NearExactPenaltyPct),
 			AutoComplete:          in.AutoComplete,
-			InlineHtml:            in.InlineHTML,
 			LinguistTerms:         in.LinguistTerms,
 			TmLookupOrder:         in.TMLookupOrder,
 		},
@@ -331,6 +340,9 @@ func Update(ctx context.Context, q db.Querier, pool *pgxpool.Pool, tenantID, id 
 			if err := settings.SetSegmentationProfile(ctx, q, tenantID, profileID, in.SegmentationProfile, newLang); err != nil {
 				return err
 			}
+		}
+		if err := filterprofile.SetChoices(ctx, q, tenantID, profileID, in.FilterProfiles); err != nil {
+			return err
 		}
 		if updated, err = q.GetSettingsProfile(ctx, profileID); err != nil {
 			return fmt.Errorf("get settings profile: %w", err)

@@ -271,9 +271,11 @@ components:
           - qe
           - qe_ape
           - ape
+          - comment
           - mt
           description: 'What the engine returns: `qe` a quality verdict, `qe_ape` a verdict and a fix,
-            `ape` a fix, `mt` a translation. Fixed at creation.'
+            `ape` a fix, `comment` a remark for the linguist (the segment is never changed), `mt` a
+            translation. Fixed at creation.'
         prompt_text:
           type: string
         segment_context:

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 
+	"openloc/internal/filterprofile"
 	"openloc/internal/parser"
 )
 
@@ -103,9 +104,11 @@ type ProjectSettingsOut struct {
 	TMOnUpload            bool    `json:"tm_on_upload"`
 	MTOnUpload            bool    `json:"mt_on_upload"`
 	AutoComplete          bool    `json:"auto_complete"`
-	InlineHTML            bool    `json:"inline_html"`
 	LinguistTerms         string  `json:"linguist_terms"`
 	QAProfileID           *int64  `json:"qa_profile_id"`
+	// FilterProfiles are the filter profile per format; a format left out
+	// uses its Default.
+	FilterProfiles []filterprofile.Choice `json:"filter_profiles"`
 	// SegmentationProfileID is the profile new uploads are split with.
 	SegmentationProfileID   *int64 `json:"segmentation_profile_id"`
 	SegmentationProfileName string `json:"segmentation_profile_name"`
@@ -165,19 +168,20 @@ type ProjectLabelsOut struct {
 }
 
 type UpdateProjectSettingsIn struct {
-	ProjectID             int64    `json:"project_id" jsonschema:"the project to configure"`
-	TMOnUpload            *bool    `json:"tm_on_upload,omitempty" jsonschema:"pre-translate new uploads from translation memory"`
-	MTOnUpload            *bool    `json:"mt_on_upload,omitempty" jsonschema:"pre-translate new uploads with machine translation"`
-	AutoComplete          *bool    `json:"auto_complete,omitempty" jsonschema:"complete the project automatically when its last job completes"`
-	InlineHTML            *bool    `json:"inline_html,omitempty" jsonschema:"strings in JSON, PO, TXT and Excel files are HTML: their tags become protected tags. Applies to files uploaded afterwards"`
-	LinguistTerms         *string  `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved"`
-	FuzzyThreshold        *float32 `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score to use, as a fraction: 0.75 is 75%. Refused while the project follows a TM profile."`
-	SublanguagePenaltyPct *int32   `json:"sublanguage_penalty_pct,omitempty" jsonschema:"TM penalty for a sublanguage match, 0-100. Refused while the project follows a TM profile."`
-	NearExactPenaltyPct   *int32   `json:"near_exact_penalty_pct,omitempty" jsonschema:"TM penalty for a near-exact match, 0-100. Refused while the project follows a TM profile."`
-	QAProfileID           *int64   `json:"qa_profile_id,omitempty" jsonschema:"QA profile to use; 0 removes it"`
-	MTRouterID            *int64   `json:"mt_router_id,omitempty" jsonschema:"MT router to use, from openloc_list_mt_routers; 0 removes it"`
-	TMProfileID           *int64   `json:"tm_profile_id,omitempty" jsonschema:"link the project to this TM profile: its TMs and match scoring then come from the profile"`
-	SegmentationProfileID *int64   `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile new uploads are split with, from openloc_list_segmentation_profiles with the project's source language; files already uploaded keep their segments"`
+	ProjectID             int64            `json:"project_id" jsonschema:"the project to configure"`
+	TMOnUpload            *bool            `json:"tm_on_upload,omitempty" jsonschema:"pre-translate new uploads from translation memory"`
+	MTOnUpload            *bool            `json:"mt_on_upload,omitempty" jsonschema:"pre-translate new uploads with machine translation"`
+	AutoComplete          *bool            `json:"auto_complete,omitempty" jsonschema:"complete the project automatically when its last job completes"`
+	InlineHTML            *bool            `json:"inline_html,omitempty" jsonschema:"older switch for strings in JSON, PO, TXT and Excel files: true picks each format's Default filter profile, false its Plain text strings profile. filter_profile_ids wins per format"`
+	LinguistTerms         *string          `json:"linguist_terms,omitempty" jsonschema:"whether linguists may add terms from the editor and the status their terms get: off, pending or approved"`
+	FilterProfileIDs      map[string]int64 `json:"filter_profile_ids,omitempty" jsonschema:"filter profile per file format (html, xlsx, json_i18n, po, txt, xml), from openloc_list_filter_profiles; 0 goes back to the format's Default. Applies to files uploaded afterwards"`
+	FuzzyThreshold        *float32         `json:"fuzzy_threshold,omitempty" jsonschema:"lowest TM match score to use, as a fraction: 0.75 is 75%. Refused while the project follows a TM profile."`
+	SublanguagePenaltyPct *int32           `json:"sublanguage_penalty_pct,omitempty" jsonschema:"TM penalty for a sublanguage match, 0-100. Refused while the project follows a TM profile."`
+	NearExactPenaltyPct   *int32           `json:"near_exact_penalty_pct,omitempty" jsonschema:"TM penalty for a near-exact match, 0-100. Refused while the project follows a TM profile."`
+	QAProfileID           *int64           `json:"qa_profile_id,omitempty" jsonschema:"QA profile to use; 0 removes it"`
+	MTRouterID            *int64           `json:"mt_router_id,omitempty" jsonschema:"MT router to use, from openloc_list_mt_routers; 0 removes it"`
+	TMProfileID           *int64           `json:"tm_profile_id,omitempty" jsonschema:"link the project to this TM profile: its TMs and match scoring then come from the profile"`
+	SegmentationProfileID *int64           `json:"segmentation_profile_id,omitempty" jsonschema:"segmentation profile new uploads are split with, from openloc_list_segmentation_profiles with the project's source language; files already uploaded keep their segments"`
 }
 
 type TMAssignmentIn struct {
@@ -298,7 +302,7 @@ type AttachUploadedFileIn struct {
 	UploadRef
 	Analyze bool `json:"analyze,omitempty" jsonschema:"run the automatic analysis once the jobs exist"`
 	// XLSXLayout picks the sheets and columns of an .xlsx without language codes in row 1.
-	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated. Translations are written back into their own cells"`
+	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet) and optional target_columns ([{language, column}] with exactly one source column: each language is written into its own column and the source text stays); without it every text cell of every visible sheet is translated. Translations are written back into their own cells"`
 }
 
 // MaxAttachFiles caps one openloc_attach_uploaded_files call; the assistant
@@ -313,7 +317,7 @@ type AttachUploadedFilesIn struct {
 
 type AttachUpload struct {
 	UploadRef
-	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet); without it every text cell of every visible sheet is translated"`
+	XLSXLayout *parser.XLSXLayout `json:"xlsx_layout,omitempty" jsonschema:"for an .xlsx without language codes in row 1: the sheets to translate, each with whether row 1 is a header and the columns to translate (letters such as B; none for every text cell of the sheet) and optional target_columns ([{language, column}] with exactly one source column: each language is written into its own column and the source text stays); without it every text cell of every visible sheet is translated"`
 }
 
 // AttachedFilesOut has one row per requested upload, in request order. Each

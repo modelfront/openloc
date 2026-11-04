@@ -15,6 +15,7 @@ import (
 
 	"openloc/internal/database"
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/settings"
 	"openloc/internal/systemworkflow"
 )
@@ -30,6 +31,14 @@ type SetupConfig = settings.Setup
 // validated before the transaction opens.
 func CreateWithSetup(ctx context.Context, pool *pgxpool.Pool, q db.Querier, tenantID, userID int64, p CreateParams, templateID *int64, cfg SetupConfig) (db.Project, error) {
 	cfg.Language = p.SourceLanguage
+	// Without a template, a format the request leaves out starts with the
+	// org's default; with one, the template's picks apply.
+	if templateID == nil {
+		var err error
+		if cfg.FilterProfileIDs, err = filterprofile.WithOrgDefaults(ctx, q, tenantID, cfg.FilterProfileIDs); err != nil {
+			return db.Project{}, err
+		}
+	}
 	if err := settings.ValidateSetup(ctx, q, tenantID, cfg); err != nil {
 		return db.Project{}, err
 	}

@@ -63,20 +63,41 @@ func (h *Handler) HandleRelease(w http.ResponseWriter, r *http.Request) {
 	httputil.NoContent(w)
 }
 
-// HandleList returns the job's live holds with the holders' names.
-// GET /api/jobs/{jobID}/holds
-func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
+// Jobs resolves the jobs a request reads holds for, already checked for the
+// caller. On failure it writes the response and returns false.
+type Jobs func(w http.ResponseWriter, r *http.Request) ([]int64, bool)
+
+// JobFromURL is the route's {jobID}, which the job route group checked.
+func JobFromURL(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
 	jobID, err := httputil.ParseID(r, "jobID")
 	if err != nil {
 		httputil.BadRequest(w, "invalid job ID")
-		return
+		return nil, false
 	}
-	ctx := r.Context()
-	holds, err := h.svc.List(ctx, auth.TenantIDFromContext(ctx), jobID)
-	if httputil.ServiceError(w, err, "list", "segment holds") {
-		return
+	return []int64{jobID}, true
+}
+
+// HandleList returns the job's live holds with the holders' names.
+// GET /api/jobs/{jobID}/holds
+func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
+	h.List(JobFromURL)(w, r)
+}
+
+// List returns a handler for the live holds of the jobs `jobs` resolves,
+// with the holders' names.
+func (h *Handler) List(jobs Jobs) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jobIDs, ok := jobs(w, r)
+		if !ok {
+			return
+		}
+		ctx := r.Context()
+		holds, err := h.svc.List(ctx, auth.TenantIDFromContext(ctx), jobIDs)
+		if httputil.ServiceError(w, err, "list", "segment holds") {
+			return
+		}
+		httputil.Data(w, holds)
 	}
-	httputil.Data(w, holds)
 }
 
 // WriteHeld answers a refusal because another user holds the segment: 409

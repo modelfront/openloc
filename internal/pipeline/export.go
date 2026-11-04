@@ -62,52 +62,79 @@ func (s *Service) downloadOriginal(ctx context.Context, storagePath string) ([]b
 // Tenant scoping: caller passes tenantID;
 // the file lookup is tenant-scoped via GetFileTenant.
 func (s *Service) ExportFile(ctx context.Context, tenantID, fileID int64, targetLang string) ([]byte, string, error) {
+	return s.ExportFileLanguages(ctx, tenantID, fileID, []string{targetLang})
+}
+
+// ExportFileLanguages is ExportFile for several target languages at once,
+// written in turn into one copy of the file. Only a multilingual workbook
+// (MultilingualWorkbook) takes more than one: each language goes into its own
+// column. Any other file would have every language overwrite the last, so it
+// is refused.
+func (s *Service) ExportFileLanguages(ctx context.Context, tenantID, fileID int64, targetLangs []string) ([]byte, string, error) {
 	file, err := s.queries.GetFileTenant(ctx, db.GetFileTenantParams{ID: fileID, TenantID: tenantID})
 	if err != nil {
 		return nil, "", fmt.Errorf("get file: %w", err)
 	}
+	if len(targetLangs) == 0 {
+		return nil, "", errors.New("export: no target language")
+	}
+	if len(targetLangs) > 1 && !MultilingualWorkbook(file) {
+		return nil, "", fmt.Errorf("export: file %d holds one language, not %d", file.ID, len(targetLangs))
+	}
 
-	original, err := s.downloadOriginal(ctx, file.StoragePath)
+	result, err := s.downloadOriginal(ctx, file.StoragePath)
 	if err != nil {
 		return nil, "", err
 	}
-
-	rows, err := s.queries.ListApprovedForExport(ctx, db.ListApprovedForExportParams{
-		FileID:         fileID,
-		TargetLanguage: targetLang,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("list translations: %w", err)
-	}
-	rows = joinSplitPieces(rows)
-
-	opts, err := parser.FileOptions(file.InlineHtml, file.XlsxLayout, file.Segmentation)
+	opts, err := parser.FileOptions(file.InlineHtml, file.XlsxLayout, file.Segmentation, file.FilterProfile)
 	if err != nil {
 		return nil, "", err
 	}
-	p, err := exportParser(string(file.Format), opts, original, rows)
-	if err != nil {
-		return nil, "", fmt.Errorf("get parser: %w", err)
-	}
-
-	translations := exportTranslations(rows, string(file.Format), file.InlineHtml)
-	var result []byte
-	if lp, ok := p.(parser.LangAwareReconstructor); ok {
-		var project db.Project
-		project, err = s.queries.GetProject(ctx, db.GetProjectParams{ID: file.ProjectID, TenantID: tenantID})
-		if err != nil {
-			return nil, "", fmt.Errorf("get project: %w", err)
+	if len(targetLangs) > 1 {
+		if err := opts.XLSXLayout.CheckSeparateColumns(targetLangs); err != nil {
+			return nil, "", fmt.Errorf("export: %w", err)
 		}
-		langs := parser.ExportLangs{Source: project.SourceLanguage, Target: targetLang}
-		result, err = lp.ReconstructForLang(ctx, original, translations, langs)
-	} else {
-		result, err = p.Reconstruct(original, translations)
 	}
-	if err != nil {
-		return nil, "", fmt.Errorf("reconstruct: %w", err)
-	}
+	var project *db.Project
+	for _, targetLang := range targetLangs {
+		rows, err := s.queries.ListApprovedForExport(ctx, db.ListApprovedForExportParams{
+			FileID:         fileID,
+			TargetLanguage: targetLang,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("list translations: %w", err)
+		}
+		rows = joinSplitPieces(rows)
 
+		p, err := exportParser(string(file.Format), opts, result, rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("get parser: %w", err)
+		}
+
+		translations := exportTranslations(rows, string(file.Format), file.InlineHtml)
+		if lp, ok := p.(parser.LangAwareReconstructor); ok {
+			if project == nil {
+				pr, err := s.queries.GetProject(ctx, db.GetProjectParams{ID: file.ProjectID, TenantID: tenantID})
+				if err != nil {
+					return nil, "", fmt.Errorf("get project: %w", err)
+				}
+				project = &pr
+			}
+			langs := parser.ExportLangs{Source: project.SourceLanguage, Target: targetLang}
+			result, err = lp.ReconstructForLang(ctx, result, translations, langs)
+		} else {
+			result, err = p.Reconstruct(result, translations)
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("reconstruct: %w", err)
+		}
+	}
 	return result, file.Name, nil
+}
+
+// MultilingualWorkbook reports an Excel file laid out with target columns.
+func MultilingualWorkbook(f db.File) bool {
+	return f.Format == db.FileFormatXlsx && parser.MultilingualXLSX(f.XlsxLayout)
 }
 
 // UserExportMessage returns the message to show when an export failed for a
@@ -135,7 +162,7 @@ func exportParser(format string, opts parser.ParseOptions, original []byte, rows
 				stored[*r.SegmentKey] = parser.StoredSource{Text: r.SourceText, RichText: ptr.Deref(r.SourceRichText)}
 			}
 		}
-		return parser.HTMLWithStoredSource(stored, opts.Segmenter), nil
+		return parser.HTMLWithStoredSourceOptions(stored, opts.Segmenter, opts.HTML), nil
 	}
 	if format != "android_xml" {
 		return parser.GetParserWith(format, opts)

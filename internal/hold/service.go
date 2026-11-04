@@ -156,8 +156,8 @@ func (s *Service) Release(ctx context.Context, tenantID, userID, translationID i
 }
 
 // List returns the live holds in a job.
-func (s *Service) List(ctx context.Context, tenantID, jobID int64) ([]Holder, error) {
-	rows, err := s.q.ListJobHolds(ctx, db.ListJobHoldsParams{JobID: jobID, TenantID: tenantID})
+func (s *Service) List(ctx context.Context, tenantID int64, jobIDs []int64) ([]Holder, error) {
+	rows, err := s.q.ListJobHolds(ctx, db.ListJobHoldsParams{JobIds: jobIDs, TenantID: tenantID})
 	if err != nil {
 		return nil, err
 	}

@@ -87,7 +87,8 @@ func registerAIConfig(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 		title: "Create AI system prompt",
 		description: "Create a system prompt: the standing instruction an AI engine runs on every " +
 			"segment. Pick the mode deliberately — mt returns a translation, qe a verdict and " +
-			"score, ape a corrected translation, qe_ape both — it cannot be changed afterwards. " +
+			"score, ape a corrected translation, qe_ape both, comment only a remark for the linguist " +
+			"(it never changes a segment) — the mode cannot be changed afterwards. " +
 			"Say what each reply field should contain, but do NOT restate the JSON structure: " +
 			"the field names, types and the results envelope are appended automatically, as is " +
 			"the inline-tag instruction on segments that carry tags, so describing those only " +
@@ -116,7 +117,7 @@ func registerAIConfig(s *Server, srv *sdk.Server, managerTier bool, b Backend) {
 		title: "Create AI engine",
 		description: "Create an AI engine by binding a system prompt to a provider " +
 			"connection. The purpose must match the system prompt's mode: an " +
-			"mt prompt makes an engine that translates, a qe/ape/qe_ape prompt one that reviews. " +
+			"mt prompt makes an engine that translates, a qe, ape, qe_ape or comment prompt one that reviews. " +
 			"Get token_id from openloc_list_ai_connections and the prompt id from the " +
 			"prompt list tools; create any missing prompt first.",
 		requireManager:    true,

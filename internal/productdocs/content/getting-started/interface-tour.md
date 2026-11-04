@@ -3,10 +3,13 @@ title: "A tour of the interface"
 summary: "The left menu, the top bar, notifications, themes and the account menu."
 order: 30
 roles: [owner, admin, project_manager, linguist]
-updated_at: 2026-10-30
+updated_at: 2026-11-02
 sources:
   - web/src/App.tsx
   - web/src/components/layout/NavRail.tsx
+  - web/src/components/layout/UserMenu.tsx
+  - web/src/components/layout/VendorOrgRoutes.tsx
+  - web/src/pages/OrgPicker.tsx
   - web/src/components/NotificationBell.tsx
   - web/src/components/OrgSwitcher.tsx
   - web/src/components/layout/ThemeToggle.tsx
@@ -55,10 +58,10 @@ At the top of the left menu is the name **OpenLoc**; click it to return to your 
 | **AI** | Quality estimation and post-editing setup, in three tabs: **Routers** (which AI engine reviews each target language), **Engines** and **Prompts**. |
 | **Integrations** | Connections to content systems. |
 | **QA profiles** | Rule sets for automatic quality checks. |
-| **File configurations** | How uploaded files are handled. Its **Segmentation profiles** tab decides where they are split into segments; each project and template picks one. See [Segmentation profiles](/docs/guides/segmentation). |
+| **File configurations** | How uploaded files are handled, in two tabs. **Segmentation profiles** decides where files are split into segments; see [Segmentation profiles](/docs/guides/segmentation). **Filter profiles** holds named import options per file format; see [Filter profiles](/docs/guides/filter-profiles). Each project and template picks one of each. |
 | **Dashboards** | Live charts you build with **New chart** or the AI assistant. Three tabs: **Organization dashboards**, **My dashboards** and **Pinned**. |
 
-If you are a linguist, your menu holds one entry: **Tasks**. Every other address sends you back to it. The [Roles and permissions](/docs/reference/roles-and-permissions) page lists exactly what each role can do.
+If you are a linguist, your menu holds one entry: **Tasks**. Every other address sends you back to it. In a vendor organization (one a client invited you to as a vendor) the menu is shorter still: **Projects** for admins and project managers, and **Tasks**. The [Roles and permissions](/docs/reference/roles-and-permissions) page lists exactly what each role can do.
 
 To give the page more width, click the panel button at the right end of the menu's top row, next to the name. The whole menu shrinks to a strip of icons: the name disappears, and every entry keeps only its icon — hover one to read its name. The top of the strip then holds only the same button; click it to bring the full menu back. This works on every page, and your choice is remembered in this browser. On a phone the menu always starts as the strip of icons. Opened, it lies over the page and closes again when you pick a page or tap beside it.
 
@@ -68,7 +71,7 @@ The bar shows your organization at its left end and three controls at its right 
 
 ### The organization switcher
 
-The left end of the bar shows the name of the organization you are working in. Hover over it and a small menu opens with the organizations you belong to. The current one has a check mark. Click another one to switch — the app reloads and shows that organization's projects and settings. Below a line, the menu also offers **Playground**: a shared organization with sample data, where you can look around freely. A banner on every page there offers the way back to your organization. See [The Playground and guided tours](/docs/getting-started/demo-and-tours).
+The left end of the bar shows the name of the organization you are working in. Hover over it and a small menu opens with the organizations you belong to. The current one has a check mark. Click another one to switch — the app reloads and shows that organization's projects and settings. The **Choose an organization** page, which appears after sign-in when you belong to several, lists a vendor organization with "Vendor for" and its client's name under it. Below a line, the menu also offers **Playground**: a shared organization with sample data, where you can look around freely. A banner on every page there offers the way back to your organization. See [The Playground and guided tours](/docs/getting-started/demo-and-tours).
 
 ### The notification bell
 
@@ -83,9 +86,9 @@ Next to the bell is a small sun, moon or monitor icon. Click it to cycle through
 The last control shows your name. Click it to open the account menu. The top of the menu shows your name, your email address and the organization you are working in right now. Below that:
 
 - **Settings** — your profile, email notifications and appearance.
-- **Organization settings** — the **Organization** page, in three tabs: **Members** (members and invites, the tab it opens on), **Settings** (registration, notification rules and analysis weights) and **Vendors** (external linguists you invite). Owners and admins see all three. Project managers see this entry too, and it opens **Vendors** only.
-- **AI settings** — under **Providers**, the organization's AI provider credentials (owners and admins manage them, project managers see them read-only); under **Connect an AI tool** (with your connected apps) and **Access keys**, connecting your own AI tools (everyone).
-- **Learn** — the guided tours your role can take. It shows only when the Playground is on. See [The Playground and guided tours](/docs/getting-started/demo-and-tours).
+- **Organization settings** — the **Organization** page, in two tabs: **Members** (members and invites, vendor invites included, the tab it opens on) and **Settings** (registration, notification rules and analysis weights). Only owners and admins see it. In a vendor organization it has only **Members**, with "Vendor for" and the client's name under the title.
+- **AI settings** — under **Providers**, the organization's AI provider credentials (owners and admins manage them, project managers see them read-only); under **Connect an AI tool** (with your connected apps) and **Access keys**, connecting your own AI tools (everyone). A vendor organization does not show it.
+- **Learn** — the guided tours your role can take. It shows only when the Playground is on, and never in a vendor organization. See [The Playground and guided tours](/docs/getting-started/demo-and-tours).
 - **Docs** — these documentation pages. Every role sees the same pages.
 - **API** — documentation for connecting your own systems to OpenLoc with an access key. One sidebar holds the guides and every endpoint, and one search covers both. Every role sees it.
 - **Sign out**.
@@ -108,6 +111,6 @@ Docs works the same on every device. On a narrow screen the docs sidebar is hidd
 
 ## The AI assistant
 
-The round button at the bottom right of any app page opens the built-in AI assistant. It can answer questions about your projects, jobs and deadlines, and it can search these docs for you. Click the button to open the chat; click **Minimize** to keep the conversation for later, or **Close** to end it. The [AI assistant](/docs/guides/ai-assistant) guide explains what it can and cannot do.
+The round button at the bottom right of any app page opens the built-in AI assistant. It can answer questions about your projects, jobs and deadlines, and it can search these docs for you. Click the button to open the chat; click **Minimize** to keep the conversation for later, or **Close** to end it. A vendor organization has no assistant. The [AI assistant](/docs/guides/ai-assistant) guide explains what it can and cannot do.
 
 Next, follow [Your first project](/docs/getting-started/first-project) to upload a file and get a translation back.

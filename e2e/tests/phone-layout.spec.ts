@@ -16,7 +16,7 @@ test.describe("Phone layout", () => {
 
   for (const path of [
     "/projects", "/project/files", "/tasks", "/issues", "/memories", "/memories/profiles",
-    "/terminology", "/integrations", "/ai-settings", "/org", "/org/vendors",
+    "/terminology", "/integrations", "/ai-settings", "/org",
   ]) {
     test(`${path} fits the screen`, async ({ page }) => {
       const url = path === "/project/files" ? `/projects/${await getSeedProjectId(page)}/files` : path;

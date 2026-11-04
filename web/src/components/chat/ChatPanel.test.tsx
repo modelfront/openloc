@@ -371,6 +371,18 @@ describe('ChatPanel', () => {
     expect(screen.getByText('q')).toBeInTheDocument()
   })
 
+  it('shows a plain sentence, not the raw error, when the send fails unexpectedly', async () => {
+    sendMock.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'path')"))
+    renderPanel()
+    openPanel()
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'q' } })
+    fireEvent.click(screen.getByTestId('chat-send'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-error').textContent).toBe('Something went wrong. Try again.')
+    })
+  })
+
   it('an answer cut off offers Try again, which asks again in the same conversation', async () => {
     sendMock.mockImplementationOnce(async (_body, handlers) => {
       handlers.onStart?.({ conversation_id: 7 })

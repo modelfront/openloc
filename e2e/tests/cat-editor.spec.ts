@@ -971,7 +971,7 @@ test.describe("CAT Editor", () => {
     expect(errors, `Console errors: ${errors.join(", ")}`).toHaveLength(0);
   });
 
-  // SIDEBAR_CLICK_WIDTH in CATEditor.tsx: the width a click opens the panel
+  // SIDEBAR_CLICK_WIDTH in useEditorSidebar.ts: the width a click opens the panel
   // at, and the one a double-click on the handle restores.
   const SIDEBAR_CLICK_WIDTH = 320;
   // The panel width tests start from a fresh browser context, so the width is
@@ -1080,7 +1080,7 @@ test.describe("CAT Editor", () => {
     const sidebar = page.getByTestId("editor-sidebar");
     const sectionOrder = () =>
       sidebar.locator("[data-sidebar-section]").evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sidebarSection));
-    expect(await sectionOrder()).toEqual(["tm", "mt", "terminology", "history", "qa", "comments"]);
+    expect(await sectionOrder()).toEqual(["tm", "fuzzy", "mt", "terminology", "history", "qa", "comments"]);
 
     try {
       // Hide Comments through the customize popover.
@@ -1109,14 +1109,14 @@ test.describe("CAT Editor", () => {
         await page.mouse.move(x, startY + 6 + ((targetY - startY - 6) * i) / 8);
       }
       await page.mouse.up();
-      await expect.poll(sectionOrder).toEqual(["mt", "tm", "terminology", "history", "qa"]);
+      await expect.poll(sectionOrder).toEqual(["fuzzy", "mt", "tm", "terminology", "history", "qa"]);
 
       // The arrangement is in localStorage and comes back after a reload.
       const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("cat-sidebar-sections") ?? "null"));
-      expect(stored).toEqual({ order: ["mt", "tm", "terminology", "references", "history", "qa", "comments"], hidden: ["comments"] });
+      expect(stored).toEqual({ order: ["fuzzy", "mt", "tm", "terminology", "references", "history", "qa", "comments"], hidden: ["comments"] });
       await page.reload();
       await expect(page.getByText(/patience/i).first()).toBeVisible({ timeout: 10000 });
-      expect(await sectionOrder()).toEqual(["mt", "tm", "terminology", "history", "qa"]);
+      expect(await sectionOrder()).toEqual(["fuzzy", "mt", "tm", "terminology", "history", "qa"]);
     } finally {
       await page.evaluate(() => localStorage.removeItem("cat-sidebar-sections"));
     }
@@ -4117,7 +4117,7 @@ ${transUnits.join("\n")}
 
   // Anti-tautology: this test was proven non-tautological by reverting the
   // `contentHeight === lastHeight` half of the settle loop's stability check
-  // (web/src/pages/CATEditor.tsx, the `settle` function in the activeSegmentIdx
+  // (web/src/components/editor/useSegmentGrid.ts, the `settle` function in the activeSegmentIdx
   // effect) on 2026-09-22. With the revert applied it fails with: "clicked row
   // drifted 257px from click position (anchor failed)". It only fails that way
   // when frames are slow, which is why the CI runner saw it and a laptop does
@@ -4162,7 +4162,9 @@ ${transUnits.join("\n")}
       const editor = page.locator('[data-testid="segment-editor"] .ProseMirror').first();
       await expect(editor).toBeVisible({ timeout: 5000 });
       await editor.click();
-      await page.keyboard.type("línea ".repeat(80), { delay: 0 });
+      await editor.fill("línea ".repeat(80));
+      // The row must be tall, or its collapse moves nothing and the test proves nothing.
+      expect((await editor.boundingBox())?.height ?? 0).toBeGreaterThan(100);
       await page.waitForTimeout(400);
 
       // Find another visible cell further down and click it natively (no

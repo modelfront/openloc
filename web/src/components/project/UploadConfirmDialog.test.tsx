@@ -2,21 +2,39 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ApiError, type XLSXInspection } from '@/api'
+import { ApiError, type FilterProfile, type FilterProfileChoice, type XLSXInspection } from '@/api'
 
-const api = vi.hoisted(() => ({ inspectXLSX: vi.fn() }))
-vi.mock('@/api', async importOriginal => ({ ...(await importOriginal<object>()), inspectXLSX: api.inspectXLSX }))
+const api = vi.hoisted(() => ({ inspectXLSX: vi.fn(), listFilterProfiles: vi.fn() }))
+vi.mock('@/api', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  inspectXLSX: api.inspectXLSX,
+  listFilterProfiles: api.listFilterProfiles,
+}))
 
 import { UploadConfirmDialog } from './UploadConfirmDialog'
+import { makeFilterProfile } from '@/test/fixtures/filter-profile'
 
 afterEach(() => cleanup())
-beforeEach(() => vi.resetAllMocks())
+beforeEach(() => {
+  vi.resetAllMocks()
+  api.listFilterProfiles.mockResolvedValue(profiles)
+})
 
-function setup(onConfirm = vi.fn(), files = [new File(['x'], 'doc.txt')]) {
+const profile = makeFilterProfile
+const profiles: FilterProfile[] = [
+  profile(1, 'txt', 'Default', 'builtin:txt-default@1'),
+  profile(2, 'txt', 'Plain text strings', 'builtin:txt-plain@1'),
+  profile(3, 'xlsx', 'Default', 'builtin:xlsx-default@1'),
+  profile(4, 'xlsx', 'Plain text strings', 'builtin:xlsx-plain@1'),
+  profile(50, 'txt', 'Subtitles'),
+  profile(60, 'xlsx', 'Catalog columns'),
+]
+
+function setup(onConfirm = vi.fn(), files = [new File(['x'], 'doc.txt')], filterChoices: FilterProfileChoice[] = []) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <UploadConfirmDialog projectId={7} files={files} onOpenChange={() => {}} onConfirm={onConfirm} />
+      <UploadConfirmDialog projectId={7} files={files} filterChoices={filterChoices} onOpenChange={() => {}} onConfirm={onConfirm} />
     </QueryClientProvider>,
   )
   return onConfirm
@@ -38,7 +56,7 @@ describe('UploadConfirmDialog', () => {
     const qc = new QueryClient()
     const closed = () => (
       <QueryClientProvider client={qc}>
-        <UploadConfirmDialog projectId={7} files={null} onOpenChange={() => {}} onConfirm={vi.fn()} />
+        <UploadConfirmDialog projectId={7} files={null} filterChoices={[]} onOpenChange={() => {}} onConfirm={vi.fn()} />
       </QueryClientProvider>
     )
     const { rerender } = render(closed())
@@ -85,7 +103,7 @@ describe('UploadConfirmDialog', () => {
 
       // Sheets start collapsed, showing the suggestion.
       const toggle = await screen.findByTestId('upload-xlsx-catalog.xlsx-sheet-Products-toggle')
-      expect(api.inspectXLSX).toHaveBeenCalledWith(7, xlsx)
+      expect(api.inspectXLSX).toHaveBeenCalledWith(7, xlsx, undefined)
       expect(toggle).toHaveTextContent('Column B')
       expect(toggle).toHaveAttribute('aria-expanded', 'false')
       // How the columns work sits in a tooltip by the file name, not on the dialog.
@@ -102,6 +120,35 @@ describe('UploadConfirmDialog', () => {
       const layouts = onConfirm.mock.calls[0][1] as Map<File, unknown>
       expect(layouts.get(xlsx)).toEqual({ sheets: [{ name: 'Products', header_row: true, columns: ['B', 'C'] }] })
       expect(layouts.size).toBe(1)
+    })
+
+    it('keeps a multilingual profile\'s target columns, and holds the upload until one source column is left', async () => {
+      const user = userEvent.setup()
+      const target_columns = [{ language: 'fr', column: 'C' }]
+      api.inspectXLSX.mockResolvedValueOnce({
+        ...workbook, suggested_layout: { sheets: [{ name: 'Products', header_row: true, columns: ['B'], target_columns }] },
+      })
+      const xlsx = new File(['x'], 'catalog.xlsx')
+      const onConfirm = setup(vi.fn(), [xlsx])
+
+      const toggle = await screen.findByTestId('upload-xlsx-catalog.xlsx-sheet-Products-toggle')
+      expect(toggle).toHaveTextContent('Column B · translations in FR C')
+      await user.click(toggle)
+      expect(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-targets')).toHaveTextContent('FR in C')
+      await user.click(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-columns'))
+      await user.click(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-columns-option-A'))
+      await user.keyboard('{Escape}')
+      expect(screen.getByTestId('upload-xlsx-problem'))
+        .toHaveTextContent('catalog.xlsx: Sheet Products: Choose exactly one source column for the translations to go next to.')
+      await user.click(screen.getByTestId('upload-confirm'))
+      expect(onConfirm).not.toHaveBeenCalled()
+
+      await user.click(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-columns'))
+      await user.click(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-columns-option-A'))
+      await user.keyboard('{Escape}')
+      await user.click(screen.getByTestId('upload-confirm'))
+      const layouts = onConfirm.mock.calls[0][1] as Map<File, unknown>
+      expect(layouts.get(xlsx)).toEqual({ sheets: [{ name: 'Products', header_row: true, columns: ['B'], target_columns }] })
     })
 
     it('holds the upload while the workbook is read, and while no sheet is chosen', async () => {
@@ -177,6 +224,78 @@ describe('UploadConfirmDialog', () => {
       expect(screen.queryByTestId('upload-xlsx-problem')).toBeNull()
       fireEvent.click(screen.getByTestId('upload-confirm'))
       expect((onConfirm.mock.calls[0][1] as Map<File, unknown>).get(xlsx)).toBeNull()
+    })
+  })
+
+  describe('filter profiles', () => {
+    it('asks one per file that has a filter format, starting from the project\'s choice', async () => {
+      setup(vi.fn(), [new File(['x'], 'doc.txt'), new File(['y'], 'readme.md')], [{ format: 'txt', id: 50, name: 'Subtitles' }])
+
+      const picker = await screen.findByTestId('upload-filter-doc.txt')
+      await waitFor(() => expect(picker).toHaveTextContent('Subtitles'))
+      // Markdown has no filter profiles: nothing to ask.
+      expect(screen.queryByTestId('upload-filter-readme.md')).toBeNull()
+    })
+
+    it('starts from the Default when the project names none for the format', async () => {
+      setup()
+      await waitFor(() => expect(screen.getByTestId('upload-filter-doc.txt')).toHaveTextContent('Default'))
+    })
+
+    it('sends nothing when the pick is left alone, and the pick when it changed', async () => {
+      const user = userEvent.setup()
+      const doc = new File(['x'], 'doc.txt')
+      const notes = new File(['y'], 'notes.txt')
+      const onConfirm = setup(vi.fn(), [doc, notes], [{ format: 'txt', id: 50, name: 'Subtitles' }])
+
+      await waitFor(() => expect(screen.getByTestId('upload-filter-notes.txt')).toHaveTextContent('Subtitles'))
+      await user.click(screen.getByTestId('upload-filter-notes.txt'))
+      await user.click(screen.getByTestId('upload-filter-notes.txt-option-2'))
+      await user.click(screen.getByTestId('upload-confirm'))
+
+      const picked = onConfirm.mock.calls[0][2] as Map<File, number>
+      expect([...picked]).toEqual([[notes, 2]])
+    })
+
+    it('sends nothing when a file is picked back to the project\'s profile', async () => {
+      const user = userEvent.setup()
+      const onConfirm = setup()
+
+      await waitFor(() => expect(screen.getByTestId('upload-filter-doc.txt')).toHaveTextContent('Default'))
+      await user.click(screen.getByTestId('upload-filter-doc.txt'))
+      await user.click(screen.getByTestId('upload-filter-doc.txt-option-50'))
+      await user.click(screen.getByTestId('upload-filter-doc.txt'))
+      await user.click(screen.getByTestId('upload-filter-doc.txt-option-1'))
+      await user.click(screen.getByTestId('upload-confirm'))
+
+      expect((onConfirm.mock.calls[0][2] as Map<File, number>).size).toBe(0)
+    })
+
+    it('reads a workbook again with a new pick, and starts its columns from that reading', async () => {
+      const user = userEvent.setup()
+      const fromProfile: XLSXInspection = {
+        ...workbook,
+        suggested_layout: { sheets: [{ name: 'Products', header_row: true, columns: ['C'] }] },
+      }
+      api.inspectXLSX.mockResolvedValueOnce(workbook).mockResolvedValueOnce(fromProfile)
+      const xlsx = new File(['x'], 'catalog.xlsx')
+      const onConfirm = setup(vi.fn(), [xlsx])
+
+      const toggle = await screen.findByTestId('upload-xlsx-catalog.xlsx-sheet-Products-toggle')
+      expect(toggle).toHaveTextContent('Column B')
+      expect(api.inspectXLSX).toHaveBeenLastCalledWith(7, xlsx, undefined)
+
+      await waitFor(() => expect(screen.getByTestId('upload-filter-catalog.xlsx')).toHaveTextContent('Default'))
+      await user.click(screen.getByTestId('upload-filter-catalog.xlsx'))
+      await user.click(screen.getByTestId('upload-filter-catalog.xlsx-option-60'))
+
+      await waitFor(() => expect(api.inspectXLSX).toHaveBeenCalledTimes(2))
+      expect(api.inspectXLSX).toHaveBeenLastCalledWith(7, xlsx, 60)
+      await waitFor(() => expect(screen.getByTestId('upload-xlsx-catalog.xlsx-sheet-Products-toggle')).toHaveTextContent('Column C'))
+
+      await user.click(screen.getByTestId('upload-confirm'))
+      expect((onConfirm.mock.calls[0][1] as Map<File, unknown>).get(xlsx)).toEqual(fromProfile.suggested_layout)
+      expect((onConfirm.mock.calls[0][2] as Map<File, number>).get(xlsx)).toBe(60)
     })
   })
 })

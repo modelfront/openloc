@@ -11,27 +11,28 @@ import { isTaskLockedError } from './task-edit'
 import { count } from './plural'
 
 export interface WriteSpellFixesArgs {
-  fileId: number
+  /** The file, and its job, of a translation: the write goes to each file's endpoint. */
+  fileOf: (translationId: number) => { jobId: number; fileId: number } | undefined
   errors: SpellError[]
   replacement: string
   /** Write locked segments too (owner/admin scope). */
   includeLocked: boolean
   lookup: (translationId: number) => TranslationTextRow | undefined
-  /** The task refused the write. */
-  onTaskLocked: (err: ApiError) => void
-  /** The write reopened a completed task. */
-  onTaskReopened: () => void
+  /** A job's task refused the write. */
+  onTaskLocked: (err: ApiError, jobId: number) => void
+  /** The write reopened a job's completed task. */
+  onTaskReopened: (jobId: number) => void
 }
 
 /**
- * Writes the corrections as drafts and warns about the ones left out: a
- * correction across an inline tag or on text changed since the check, a
- * segment changed meanwhile, locked, or open in someone else's editor.
- * Resolves to the number of segments corrected, or null when the task refused
- * the write (`onTaskLocked` has reported it).
+ * Writes the corrections as drafts, one request per file, and warns about the
+ * ones left out: a correction across an inline tag or on text changed since
+ * the check, a segment changed meanwhile, locked, or open in someone else's
+ * editor. Resolves to the number of segments corrected, or null when every
+ * file's task refused the write (`onTaskLocked` has reported each).
  */
 export async function writeSpellFixes({
-  fileId, errors, replacement, includeLocked, lookup, onTaskLocked, onTaskReopened,
+  fileOf, errors, replacement, includeLocked, lookup, onTaskLocked, onTaskReopened,
 }: WriteSpellFixesArgs): Promise<number | null> {
   const { fixes, unfixable } = buildSpellFixes(errors, replacement, lookup)
   if (unfixable.length > 0) {
@@ -42,25 +43,54 @@ export async function writeSpellFixes({
   }
   if (fixes.length === 0) return 0
 
-  const result = await batchDraftTranslations(fileId, fixes, { includeLocked })
-    .catch((err: unknown) => {
-      if (!isTaskLockedError(err)) throw err
-      onTaskLocked(err)
-      return null
-    })
-  if (!result) return null
-  if (result.taskReopened) onTaskReopened()
-  if (result.conflicts.length > 0) {
+  const byFile = new Map<number, { jobId: number; fixes: typeof fixes }>()
+  for (const fix of fixes) {
+    const file = fileOf(fix.translation_id)
+    if (!file) continue
+    const entry = byFile.get(file.fileId)
+    if (entry) entry.fixes.push(fix)
+    else byFile.set(file.fileId, { jobId: file.jobId, fixes: [fix] })
+  }
+
+  // One file's refusal or failure never stops the others.
+  let written = false
+  let refused = false
+  const failed: unknown[] = []
+  let applied = 0, conflicts = 0, locked = 0, held = 0
+  for (const [fileId, { jobId, fixes: part }] of byFile) {
+    const result = await batchDraftTranslations(fileId, part, { includeLocked })
+      .catch((err: unknown) => {
+        if (isTaskLockedError(err)) {
+          refused = true
+          onTaskLocked(err, jobId)
+        } else {
+          failed.push(err)
+        }
+        return null
+      })
+    if (!result) continue
+    written = true
+    if (result.taskReopened) onTaskReopened(jobId)
+    applied += result.applied.length
+    conflicts += result.conflicts.length
+    locked += result.locked.length
+    held += result.held.length
+  }
+  // Nothing written and no task refused it: the error says why.
+  if (!written && !refused && failed.length > 0) throw failed[0]
+  if (failed.length > 0) toast.warning(`${count(failed.length, 'file')} could not be saved, try again`)
+  if (!written) return null
+  if (conflicts > 0) {
     toast.warning(
-      `${result.conflicts.length} segment${result.conflicts.length === 1 ? '' : 's'} ` +
+      `${conflicts} segment${conflicts === 1 ? '' : 's'} ` +
       'changed since the check — run it again to pick them up',
     )
   }
   // A scope that skips locked rows never checks them, so this only fires for
   // a row locked after the check ran.
-  if (result.locked.length > 0) {
-    toast.warning(`${count(result.locked.length, 'locked segment')} skipped`)
+  if (locked > 0) {
+    toast.warning(`${count(locked, 'locked segment')} skipped`)
   }
-  warnHeldSkipped(result.held.length)
-  return result.applied.length
+  warnHeldSkipped(held)
+  return applied
 }

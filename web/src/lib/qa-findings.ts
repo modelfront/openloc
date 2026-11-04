@@ -1,5 +1,5 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
-import type { ResultDTO, ReportDTO, ReportSummary } from '../types/qa'
+import type { ResultDTO, ReportDTO, ReportSummary, ScopeRunJob } from '../types/qa'
 import { count } from './plural'
 import { chipDotClass, chipTextClass, type ChipColor } from '@/components/ui/chip'
 
@@ -165,4 +165,29 @@ export async function patchQAReport(
 ): Promise<void> {
   await queryClient.cancelQueries({ queryKey: key })
   queryClient.setQueryData<ReportDTO>(key, prev => mergeQAReportRows(prev, translationId, issues))
+}
+
+const RUN_OUTCOME_RANK: Record<string, number> = { done: 0, no_profile: 1, failed: 2 }
+
+/** One outcome per job from a multi-file run sent in chunks: the issues
+ *  added up, and the worst outcome of the job's chunks. */
+export function mergeScopeRuns(parts: readonly (readonly ScopeRunJob[])[]): ScopeRunJob[] {
+  const byJob = new Map<number, ScopeRunJob>()
+  for (const r of parts.flat()) {
+    const prev = byJob.get(r.job_id)
+    if (!prev) {
+      byJob.set(r.job_id, { ...r })
+      continue
+    }
+    prev.issues += r.issues
+    if ((RUN_OUTCOME_RANK[r.outcome] ?? 0) > (RUN_OUTCOME_RANK[prev.outcome] ?? 0)) prev.outcome = r.outcome
+  }
+  return [...byJob.values()]
+}
+
+/** The warning after a multi-file run for the files QA did not check, or null. */
+export function scopeQARunWarning(results: readonly ScopeRunJob[], fileName: (jobId: number) => string): string | null {
+  if (results.some(r => r.outcome === 'no_profile')) return NO_QA_PROFILE_REASON
+  const failed = results.filter(r => r.outcome === 'failed').map(r => fileName(r.job_id))
+  return failed.length > 0 ? `QA could not check ${failed.join(', ')}. Run it again.` : null
 }

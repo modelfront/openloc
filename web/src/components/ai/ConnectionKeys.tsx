@@ -8,7 +8,7 @@ import {
   createVendorToken, updateVendorToken, deleteVendorToken, listEnginesUsingKey,
   type AIProviderId, type AIVendorToken, type VendorTokenInput, type KeyEngine,
 } from '../../api'
-import { queryKeys } from '../../lib/query-keys'
+import { aiKeyChangeKeys, queryKeys } from '../../lib/query-keys'
 import { useMutationWithToast } from '../../hooks/use-mutation-with-toast'
 import ConfirmDialog from '../ConfirmDialog'
 import { AttachKeyDialog } from './AttachKeyDialog'
@@ -60,19 +60,19 @@ export function ConnectionKeys({ provider, keyLabel, entries, ensureConnectionId
     },
     // The form shows the error under the field it belongs to.
     successMessage: 'Key added', errorToast: false,
-    invalidateKeys: [queryKeys.aiVendors.all],
+    invalidateKeys: [...aiKeyChangeKeys],
     onSuccess: token => { setShowCreate(false); setAttachFor(token) },
   })
   const updateMut = useMutationWithToast({
     mutationFn: ({ provider, id, input }: { provider: AIProviderId; id: number; input: VendorTokenInput }) =>
       updateVendorToken(provider, id, input),
     successMessage: 'Key updated', errorToast: false,
-    invalidateKeys: [queryKeys.aiVendors.all], onSuccess: () => setEditingId(null),
+    invalidateKeys: [...aiKeyChangeKeys], onSuccess: () => setEditingId(null),
   })
   const deleteMut = useMutationWithToast({
     mutationFn: ({ provider, id }: { provider: AIProviderId; id: number }) => deleteVendorToken(provider, id),
     successMessage: 'Key removed', errorMessage: 'Delete failed',
-    invalidateKeys: [queryKeys.aiVendors.all], onSuccess: () => setDeleteTarget(null),
+    invalidateKeys: [...aiKeyChangeKeys], onSuccess: () => setDeleteTarget(null),
   })
 
   return (

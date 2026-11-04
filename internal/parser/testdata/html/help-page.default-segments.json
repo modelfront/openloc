@@ -1,0 +1,299 @@
+[
+  {
+    "Key": "seg:1",
+    "Text": "How to set up your router in five minutes.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 0,
+    "Context": "meta:description"
+  },
+  {
+    "Key": "seg:2",
+    "Text": "Router setup guide",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 1,
+    "Context": ""
+  },
+  {
+    "Key": "seg:2.1",
+    "Text": "Back to the home page",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 2,
+    "Context": "a:title"
+  },
+  {
+    "Key": "seg:2.2",
+    "Text": "Example Networks",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 3,
+    "Context": "img:alt"
+  },
+  {
+    "Key": "seg:3",
+    "Text": "Support",
+    "RichText": "\u003cg id=\"1\" ctype=\"x-html-a\" original_markup=\"\u0026lt;a href=\u0026quot;/support\u0026quot;\u0026gt;\"\u003eSupport\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 4,
+    "Context": ""
+  },
+  {
+    "Key": "seg:4",
+    "Text": "Downloads",
+    "RichText": "\u003cg id=\"1\" ctype=\"x-html-a\" original_markup=\"\u0026lt;a href=\u0026quot;/downloads\u0026quot; title=\u0026quot;Firmware and manuals\u0026quot;\u0026gt;\"\u003eDownloads\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 5,
+    "Context": ""
+  },
+  {
+    "Key": "seg:4.1",
+    "Text": "Firmware and manuals",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 6,
+    "Context": "a:title"
+  },
+  {
+    "Key": "seg:5",
+    "Text": "Set up your router",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 7,
+    "Context": ""
+  },
+  {
+    "Key": "seg:6",
+    "Text": "Plug the WAN cable into the yellow port, then press Reset for 5 seconds.",
+    "RichText": "Plug the \u003cg id=\"1\" ctype=\"x-html-abbr\" original_markup=\"\u0026lt;abbr title=\u0026quot;Wide Area Network\u0026quot;\u0026gt;\"\u003eWAN\u003c/g\u003e cable into the \u003cg id=\"2\" ctype=\"x-html-mark\"\u003eyellow\u003c/g\u003e port, then press \u003cg id=\"3\" ctype=\"x-html-kbd\"\u003eReset\u003c/g\u003e for 5 seconds.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 8,
+    "Context": ""
+  },
+  {
+    "Key": "seg:6.1",
+    "Text": "Wide Area Network",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 9,
+    "Context": "abbr:title"
+  },
+  {
+    "Key": "seg:7",
+    "Text": "Look for this icon  on the front panel.",
+    "RichText": "Look for this icon \u003cx id=\"1\" ctype=\"x-html-img\" original_markup=\"\u0026lt;img src=\u0026quot;/img/wifi.png\u0026quot; alt=\u0026quot;Wi-Fi icon\u0026quot; title=\u0026quot;Wireless status\u0026quot;\u0026gt;\"/\u003e on the front panel.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 10,
+    "Context": ""
+  },
+  {
+    "Key": "seg:7.1",
+    "Text": "Wi-Fi icon",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 11,
+    "Context": "img:alt"
+  },
+  {
+    "Key": "seg:7.2",
+    "Text": "Wireless status",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 12,
+    "Context": "img:title"
+  },
+  {
+    "Key": "seg:7.3",
+    "Text": "Before you start:",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 13,
+    "Context": ""
+  },
+  {
+    "Key": "seg:8",
+    "Text": "Keep the box and the X200 manual nearby.",
+    "RichText": "Keep the box and the \u003cg id=\"1\" ctype=\"x-html-span\" original_markup=\"\u0026lt;span class=\u0026quot;product\u0026quot;\u0026gt;\"\u003eX200\u003c/g\u003e manual nearby.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 14,
+    "Context": ""
+  },
+  {
+    "Key": "seg:8.1",
+    "Text": "Prices may vary.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 15,
+    "Context": ""
+  },
+  {
+    "Key": "seg:9",
+    "Text": "Open the app.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 16,
+    "Context": ""
+  },
+  {
+    "Key": "seg:9.1",
+    "Text": "On Android, use Settings.",
+    "RichText": "On Android, use \u003cg id=\"1\" ctype=\"x-html-em\"\u003eSettings\u003c/g\u003e.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 17,
+    "Context": ""
+  },
+  {
+    "Key": "seg:9.2",
+    "Text": "On iOS, use the Home tab.",
+    "RichText": "On iOS, use the \u003cg id=\"1\" ctype=\"x-html-strong\"\u003eHome\u003c/g\u003e tab.",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 18,
+    "Context": ""
+  },
+  {
+    "Key": "seg:9.3",
+    "Text": "Then sign in.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 19,
+    "Context": ""
+  },
+  {
+    "Key": "seg:10",
+    "Text": "Choose a network name.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 20,
+    "Context": ""
+  },
+  {
+    "Key": "seg:11",
+    "Text": "The setup took me two minutes.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 21,
+    "Context": ""
+  },
+  {
+    "Key": "seg:12",
+    "Text": "Light",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 22,
+    "Context": ""
+  },
+  {
+    "Key": "seg:13",
+    "Text": "What it means",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 23,
+    "Context": ""
+  },
+  {
+    "Key": "seg:13.1",
+    "Text": "Meaning",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 24,
+    "Context": "th:abbr"
+  },
+  {
+    "Key": "seg:14",
+    "Text": "Green",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 25,
+    "Context": ""
+  },
+  {
+    "Key": "seg:15",
+    "Text": "Connected to the internet.",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 26,
+    "Context": ""
+  },
+  {
+    "Key": "seg:15.1",
+    "Text": "Search the help",
+    "RichText": "\u003cg id=\"1\" ctype=\"x-html-label\" original_markup=\"\u0026lt;label for=\u0026quot;q\u0026quot;\u0026gt;\"\u003eSearch the help\u003c/g\u003e \u003cx id=\"2\" ctype=\"x-html-input\" original_markup=\"\u0026lt;input id=\u0026quot;q\u0026quot; type=\u0026quot;text\u0026quot; name=\u0026quot;q\u0026quot; placeholder=\u0026quot;Type a question\u0026quot; title=\u0026quot;Search field\u0026quot;\u0026gt;\"/\u003e \u003cx id=\"3\" ctype=\"x-html-input\" original_markup=\"\u0026lt;input type=\u0026quot;hidden\u0026quot; name=\u0026quot;lang\u0026quot; value=\u0026quot;en\u0026quot;\u0026gt;\"/\u003e \u003cx id=\"4\" ctype=\"x-html-input\" original_markup=\"\u0026lt;input type=\u0026quot;submit\u0026quot; value=\u0026quot;Search\u0026quot;\u0026gt;\"/\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 27,
+    "Context": ""
+  },
+  {
+    "Key": "seg:15.2",
+    "Text": "Type a question",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 28,
+    "Context": "input:placeholder"
+  },
+  {
+    "Key": "seg:15.3",
+    "Text": "Search field",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 29,
+    "Context": "input:title"
+  },
+  {
+    "Key": "seg:15.4",
+    "Text": "Search",
+    "RichText": "",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 30,
+    "Context": "input:value"
+  },
+  {
+    "Key": "seg:16",
+    "Text": "Last updated October 1.",
+    "RichText": "\u003cg id=\"1\" ctype=\"x-html-small\"\u003eLast updated \u003cg id=\"2\" ctype=\"x-html-time\" original_markup=\"\u0026lt;time datetime=\u0026quot;2026-10-01\u0026quot;\u0026gt;\"\u003eOctober 1\u003c/g\u003e.\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 31,
+    "Context": ""
+  },
+  {
+    "Key": "seg:17",
+    "Text": "© Example Networks. Privacy",
+    "RichText": "© Example Networks. \u003cg id=\"1\" ctype=\"x-html-a\" original_markup=\"\u0026lt;a href=\u0026quot;/privacy\u0026quot;\u0026gt;\"\u003ePrivacy\u003c/g\u003e",
+    "Target": "",
+    "TargetRichText": "",
+    "Position": 32,
+    "Context": ""
+  }
+]

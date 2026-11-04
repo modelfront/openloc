@@ -27,6 +27,8 @@ interface SegmentEditorProps {
   resolveRef?: RefResolver
   /** The file's strings are plain text: load and save them as typed. */
   plainText?: boolean
+  /** Track changes: the text to mark changes against; null shows none. */
+  trackChangesFrom?: string | null
   onTextChange: (plainText: string) => void
   onSelectionChange?: (from: number, to: number) => void
   onConfirmAndAdvance: () => void
@@ -117,6 +119,7 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
     showWhitespace,
     resolveRef,
     plainText,
+    trackChangesFrom,
     onTextChange,
     onSelectionChange,
     onConfirmAndAdvance,
@@ -187,6 +190,7 @@ const SegmentEditor = forwardRef<SegmentEditorHandle, SegmentEditorProps>(functi
       showWhitespace={showWhitespace}
       resolveRef={resolveRef}
       plainText={plainText}
+      trackChangesFrom={trackChangesFrom}
       extraExtensions={[keymapExt.current, lineMovesExt.current]}
       initialCaret={initialCaret}
       onTextChange={onTextChange}

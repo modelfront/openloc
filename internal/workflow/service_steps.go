@@ -110,10 +110,22 @@ func cleanNote(what, text string) (string, error) {
 	return text, nil
 }
 
+// ErrStepChanged refuses to complete a step that is no longer the job's step
+// in progress: someone completed or sent it back meanwhile.
+var ErrStepChanged = httputil.NewConflictError("this file's step changed since it was loaded; reload to see where it stands")
+
 // Advance completes the job's active step for a person (Complete step).
 // comment is the hand-off note for whoever works the next step; blank means
 // none.
 func (s *Service) Advance(ctx context.Context, tenantID, jobID int64, actor Actor, comment string) (AdvanceResult, error) {
+	return s.AdvanceExpecting(ctx, tenantID, jobID, 0, actor, comment)
+}
+
+// AdvanceExpecting is Advance for the step the caller saw (a job step
+// assignment id; 0 for whichever is active): it refuses with ErrStepChanged
+// when the active step is another one, so a request sent twice never
+// completes two steps.
+func (s *Service) AdvanceExpecting(ctx context.Context, tenantID, jobID, expectedStepID int64, actor Actor, comment string) (AdvanceResult, error) {
 	c, err := cleanNote("comment", comment)
 	if err != nil {
 		return AdvanceResult{}, err
@@ -121,6 +133,9 @@ func (s *Service) Advance(ctx context.Context, tenantID, jobID int64, actor Acto
 	active, err := s.activeStepFor(ctx, tenantID, jobID, actor, "complete")
 	if err != nil {
 		return AdvanceResult{}, err
+	}
+	if expectedStepID != 0 && active.ID != expectedStepID {
+		return AdvanceResult{}, ErrStepChanged
 	}
 	var note *string
 	if c != "" {

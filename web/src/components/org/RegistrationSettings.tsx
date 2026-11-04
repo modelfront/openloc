@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { UserPlus } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { QueryBoundary } from '@/components/layout/QueryBoundary'
 import { SettingsCard } from '@/components/layout/SettingsCard'
@@ -26,7 +27,10 @@ function RegistrationSettingsSection() {
   return (
     <SettingsCard
       title="Registration"
-      className="mb-6"
+      icon={<UserPlus />}
+      summary={settingsQuery.data && (settingsQuery.data.open_registration
+        ? `Open${settingsQuery.data.domain ? ` to @${settingsQuery.data.domain}` : ''} · new people join as Project manager`
+        : 'Invite only')}
       description={<>
         Control how new members join your organization.
         {settingsQuery.data?.domain && <span className="ml-1">Domain: <span className="font-mono text-gray-700 dark:text-gray-300">@{settingsQuery.data.domain}</span></span>}
@@ -46,7 +50,7 @@ function RegistrationSettingsSection() {
             </span>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {settings.open_registration
-                ? 'Anyone with a matching email domain can sign in via Google SSO and automatically join as a Project manager. People already on the Vendors list join as linguists instead.'
+                ? 'Anyone who signs in with an email address on this domain joins as a Project manager. Someone with a pending invitation joins with the invited role instead.'
                 : 'New members must be invited by an admin. They receive an invite link to join.'}
             </p>
           </div>

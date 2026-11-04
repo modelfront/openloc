@@ -14,7 +14,9 @@ import { MemoryRouter } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useProjectCreateSettings, workflowStepsError, pretranslateRouterError, DEFAULT_SETTINGS } from './useProjectCreateSettings'
 import type { WorkflowStep } from '../components/WorkflowStepsEditor'
-import { buildProjectCreatePayload } from '../lib/project-create-payload'
+import { buildProjectCreatePayload, filterProfileIdsPayload } from '../lib/project-create-payload'
+import { makeFilterProfile } from '@/test/fixtures/filter-profile'
+import { queryKeys } from '../lib/query-keys'
 
 const api = vi.hoisted(() => ({
   listStepDefinitions: vi.fn(),
@@ -22,6 +24,7 @@ const api = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   getTemplate: vi.fn(),
   getProjectSettings: vi.fn(),
+  listFilterProfiles: vi.fn(),
 }))
 vi.mock('../api', () => api)
 
@@ -44,6 +47,7 @@ function setup(initialEntry = '/projects/new') {
   const applyMetadata = vi.fn()
   return {
     applyLanguages,
+    qc,
     ...renderHook(() => useProjectCreateSettings({ ready: false, applyLanguages, applyMetadata }), { wrapper }),
   }
 }
@@ -52,6 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   api.listStepDefinitions.mockResolvedValue([translation, review])
   api.listWorkflows.mockResolvedValue([])
+  api.listFilterProfiles.mockResolvedValue([])
 })
 
 describe('useProjectCreateSettings — draft ownership', () => {
@@ -268,5 +273,58 @@ describe('useProjectCreateSettings — requireWorkflow', () => {
     act(() => result.current.setWorkflowSteps([{ step_definition_id: null, name: '', step_type: 'human' } as unknown as WorkflowStep]))
     act(() => { ok = result.current.requireWorkflow({ optional: true }) })
     expect(ok).toBe(false)
+  })
+})
+
+// Without a template a new project or template starts from the org's
+// default filter profiles. The form sends every format (null for the
+// built-in Default), so a form that skipped them would override the default.
+describe('useProjectCreateSettings — org default filter profiles', () => {
+  const orgDefault = makeFilterProfile(42, 'json_i18n', 'Plain JSON', undefined, { org_default: true })
+  const templateDetail = {
+    template: { id: 5, name: 'Excel only', fuzzy_threshold: 0.75, mt_on_upload: true, tm_on_upload: true, workflow_id: null,
+      filter_profiles: [{ format: 'xlsx', id: 7, name: 'Sheet' }] },
+    tm_assignments: [], mt_assignments: [], term_assignments: [], workflow_steps: [], tm_profile: null,
+  }
+
+  it('a new form starts from the org defaults and sends them', async () => {
+    api.listFilterProfiles.mockResolvedValue([makeFilterProfile(1, 'json_i18n', 'Default', 'builtin:json_i18n-default@1'), orgDefault])
+    const { result } = setup()
+    await waitFor(() => expect(result.current.settings.filterProfileIds).toEqual({ json_i18n: 42 }))
+    expect(filterProfileIdsPayload(result.current.currentSettings().filterProfileIds)).toMatchObject({ json_i18n: 42, xlsx: null })
+  })
+
+  it('a template replaces them, and From scratch brings them back', async () => {
+    api.listFilterProfiles.mockResolvedValue([orgDefault])
+    api.getTemplate.mockResolvedValue(templateDetail)
+    const { result } = setup()
+    await waitFor(() => expect(result.current.settings.filterProfileIds).toEqual({ json_i18n: 42 }))
+
+    await act(async () => { await result.current.handleTemplateChange('5') })
+    expect(result.current.currentSettings().filterProfileIds).toEqual({ xlsx: 7 })
+
+    await act(async () => { await result.current.resetToDefaults() })
+    expect(result.current.currentSettings().filterProfileIds).toEqual({ json_i18n: 42 })
+  })
+
+  it('a list that fails, then loads on retry, still seeds the defaults', async () => {
+    api.listFilterProfiles.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([orgDefault])
+    const { result, qc } = setup()
+    await waitFor(() => expect(qc.getQueryState(queryKeys.filterProfiles.list())?.status).toBe('error'))
+    await act(async () => { await qc.refetchQueries({ queryKey: queryKeys.filterProfiles.list() }) })
+    await waitFor(() => expect(result.current.settings.filterProfileIds).toEqual({ json_i18n: 42 }))
+  })
+
+  it('a prefill that lands before the profiles keeps its picks', async () => {
+    let resolveProfiles: (v: unknown) => void = () => {}
+    api.listFilterProfiles.mockReturnValue(new Promise(r => { resolveProfiles = r }))
+    api.getTemplate.mockResolvedValue(templateDetail)
+    const { result, qc } = setup()
+    await act(async () => { await result.current.handleTemplateChange('5') })
+    await act(async () => { resolveProfiles([orgDefault]) })
+    // The profiles reached the hook, and its effect has run.
+    await waitFor(() => expect(qc.getQueryState(queryKeys.filterProfiles.list())?.status).toBe('success'))
+    await act(async () => {})
+    expect(result.current.currentSettings().filterProfileIds).toEqual({ xlsx: 7 })
   })
 })

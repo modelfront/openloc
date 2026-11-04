@@ -288,7 +288,8 @@ func (h *Handler) HandleAIStep(ctx context.Context, t *asynq.Task) (err error) {
 			logging.Info(ctx, "ai step complete", "ai-step-complete",
 				logging.JobID(p.JobID),
 				logging.Debugf("auto_approved", res.AutoApproved),
-				logging.Debugf("needs_review", res.NeedsReview))
+				logging.Debugf("needs_review", res.NeedsReview),
+				logging.Debugf("commented", res.Commented))
 		}
 	}
 	if err != nil {
@@ -296,10 +297,10 @@ func (h *Handler) HandleAIStep(ctx context.Context, t *asynq.Task) (err error) {
 		// needs it, so resolve it from the job.
 		fileID := h.jobFileID(p.JobID)
 		if st, ok := pipeline.StopRequested(h.queries, p.JobID, err); ok {
-			h.finishStopped(ctx, p, fileID, pipeline.PhaseQEAPE, st)
+			h.finishStoppedAs(ctx, p, fileID, pipeline.PhaseQEAPE, aiStepPhase(res.Mode), st)
 			return nil
 		}
-		return h.failRun(ctx, p, fileID, pipeline.PhaseQEAPE, err)
+		return h.failRunAs(ctx, p, fileID, pipeline.PhaseQEAPE, aiStepPhase(res.Mode), err)
 	}
 
 	// See HandleTranslate — completed is reserved for /complete.
@@ -308,8 +309,9 @@ func (h *Handler) HandleAIStep(ctx context.Context, t *asynq.Task) (err error) {
 	// ran nothing — "finished QE+APE" in the history would be a lie. Outcome
 	// counts ride along so the row says what the automation actually decided.
 	if res.SkipReason == "" {
-		h.emitJobPipelineEvent(ctx, p.TenantID, p.JobID, projectevents.TypeJobPipelineCompleted, p.TriggeredBy,
-			map[string]any{"phase": "QE+APE", "auto_approved": res.AutoApproved, "needs_review": res.NeedsReview})
+		details := aiStepOutcome(res)
+		details["phase"] = aiStepPhase(res.Mode)
+		h.emitJobPipelineEvent(ctx, p.TenantID, p.JobID, projectevents.TypeJobPipelineCompleted, p.TriggeredBy, details)
 	}
 
 	// An `ai` step has nobody to hand the result to: it completes itself and
@@ -510,7 +512,7 @@ func (h *Handler) jobHasActiveAIStep(ctx context.Context, jobID int64) bool {
 // (a retry would re-run predict for nothing); a manager can advance the step
 // by hand. Unapproved rows carry forward as needs_review into the next step.
 func (h *Handler) autoCompleteAIStep(ctx context.Context, p PipelinePayload, res pipeline.AIStepResult) {
-	details := map[string]any{"auto_approved": res.AutoApproved, "needs_review": res.NeedsReview}
+	details := aiStepOutcome(res)
 	if res.SkipReason != "" {
 		details["skip_reason"] = string(res.SkipReason)
 	}

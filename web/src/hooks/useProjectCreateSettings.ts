@@ -1,12 +1,13 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listWorkflows, type Project } from '../api'
 import { queryKeys } from '../lib/query-keys'
 import { isPretranslateOnly } from '../lib/workflow-steps'
 import { unpickedRows, type WorkflowStep } from '../components/WorkflowStepsEditor'
 import type { SettingsValues } from '../components/SettingsEditor'
-import { DEFAULT_AUTO_COMPLETE, DEFAULT_INLINE_HTML, DEFAULT_LINGUIST_TERMS, DEFAULT_PENALTY_PCT, DEFAULT_TM_LOOKUP_ORDER } from '../lib/settings-values'
+import { DEFAULT_AUTO_COMPLETE, DEFAULT_LINGUIST_TERMS, DEFAULT_PENALTY_PCT, DEFAULT_TM_LOOKUP_ORDER } from '../lib/settings-values'
 import { usePrefillFromSource } from './usePrefillFromSource'
+import { orgDefaultsMap, useFilterProfiles } from './useFilterProfiles'
 import { toast } from 'sonner'
 import { focusWorkflowPicker } from '../components/project/ProjectCreateWorkflowCard'
 
@@ -18,7 +19,9 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   mtOnUpload: true,
   tmOnUpload: true,
   autoComplete: DEFAULT_AUTO_COMPLETE,
-  inlineHTML: DEFAULT_INLINE_HTML,
+  // None picked: every format uses its Default. The form replaces this with
+  // the org defaults once they load (useProjectCreateSettings).
+  filterProfileIds: {},
   linguistTerms: DEFAULT_LINGUIST_TERMS,
   qaProfileId: null,
   // Null until picked: the form shows and sends the profile the server
@@ -77,11 +80,28 @@ export function useProjectCreateSettings({ ready, tmCollections, termBases, appl
   // The workflow library, for the Workflow card's dropdown.
   const { data: workflows } = useQuery({ queryKey: queryKeys.workflows.all, queryFn: listWorkflows })
 
+  // Without a template the form starts from the org's default filter
+  // profiles, and "From scratch" goes back to them. The form sends every
+  // format, so the server never fills them in for it.
+  const { profiles: filterProfiles, isSuccess: filterProfilesLoaded } = useFilterProfiles()
+  const orgFilterDefaults = useMemo(() => orgDefaultsMap(filterProfiles), [filterProfiles])
+  const defaultSettings = useMemo(() => ({ ...DEFAULT_SETTINGS, filterProfileIds: orgFilterDefaults }), [orgFilterDefaults])
+  const filterDefaultsSeeded = useRef(false)
+  useEffect(() => {
+    // Only a loaded list: after a failed load, the retry still seeds.
+    if (filterDefaultsSeeded.current || !filterProfilesLoaded) return
+    filterDefaultsSeeded.current = true
+    // A prefill or the user got there first: their picks stay.
+    if (settingsRef.current.filterProfileIds !== DEFAULT_SETTINGS.filterProfileIds) return
+    if (Object.keys(orgFilterDefaults).length === 0) return
+    applySettings({ ...settingsRef.current, filterProfileIds: orgFilterDefaults })
+  }, [filterProfilesLoaded, orgFilterDefaults, applySettings])
+
   const {
     templateId, templateName, fromProjectId, fromProjectName, workflowId, hasStartFromDeepLink,
     handleTemplateChange, handleFromProjectChange, handleWorkflowChange,
   } = usePrefillFromSource({
-    defaultSettings: DEFAULT_SETTINGS,
+    defaultSettings,
     currentSettings: () => settingsRef.current,
     ready,
     tmCollections,

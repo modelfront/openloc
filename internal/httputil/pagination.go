@@ -1,9 +1,12 @@
 package httputil
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // CursorParams holds parsed cursor pagination parameters.
@@ -68,4 +71,55 @@ func RefuseWholeFile(w http.ResponseWriter, rows int) bool {
 	ErrorCode(w, http.StatusUnprocessableEntity, "file_too_large",
 		fmt.Sprintf("the file has more than %d segments; read it page by page", WholeFileCap))
 	return true
+}
+
+// ParseSearch reads a list's search text from `q`: trimmed, nil when empty.
+// Longer than max is an error with a user-facing message.
+func ParseSearch(r *http.Request, max int) (*string, error) {
+	s := strings.TrimSpace(r.URL.Query().Get("q"))
+	if s == "" {
+		return nil, nil
+	}
+	if len(s) > max {
+		return nil, errors.New("search text is too long")
+	}
+	return &s, nil
+}
+
+// MaxSearch caps a list's search text; a name or an email is shorter.
+const MaxSearch = 200
+
+// OffsetPage is one page of a list read by row offset: the cursor is the
+// offset, checked to fit the query's int32, and Q the search text.
+type OffsetPage struct {
+	CursorParams
+	Q *string
+}
+
+// Off is the page's row offset.
+func (p OffsetPage) Off() int32 { return int32(p.Cursor) }
+
+// ParseOffsetPage reads cursor, limit and q. The error is a user-facing 400
+// message.
+func ParseOffsetPage(r *http.Request, maxLimit int32) (OffsetPage, error) {
+	p := OffsetPage{CursorParams: ParseCursor(r, maxLimit)}
+	if p.Cursor > math.MaxInt32 {
+		return p, errors.New("invalid cursor")
+	}
+	var err error
+	p.Q, err = ParseSearch(r, MaxSearch)
+	return p, err
+}
+
+// PageTotal is a page's "total" field: every row of the page carries the
+// count of all matches; a page past the end has no row to read it from, so
+// the field is left out (-1) there.
+func PageTotal(cursor int64, rows int, firstRowTotal int64) int64 {
+	if rows > 0 {
+		return firstRowTotal
+	}
+	if cursor == 0 {
+		return 0
+	}
+	return -1
 }

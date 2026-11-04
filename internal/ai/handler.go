@@ -251,6 +251,7 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.catalog.Forget(tenantID, provider)
 	// req.UseForChat, not tok.UseForChat: the row was inserted before the flag
 	// was applied, so the returned row still reads false.
 	httputil.Created(w, tokenStatus{
@@ -344,6 +345,7 @@ func (h *Handler) HandleUpdateToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.catalog.Forget(tenantID, provider)
 	// Same reason as create: report what was APPLIED, not what the update
 	// statement returned before the flag was moved.
 	useForChat := cur.UseForChat
@@ -379,5 +381,6 @@ func (h *Handler) HandleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		httputil.ServerError(w, "delete", "token")
 		return
 	}
+	h.catalog.Forget(tenantID, chi.URLParam(r, "provider"))
 	httputil.NoContent(w)
 }

@@ -32,6 +32,24 @@ INSERT INTO segment_comments (translation_id, user_id, content)
 VALUES ($1, NULL, $2)
 RETURNING *;
 
+-- name: CreateAICommentUnlessDuplicate :execrows
+-- Internal: NOT tenant-scoped. The translation id must come from a
+-- tenant-resolved AI step run (rows listed from a file loaded with
+-- GetFileTenant); never call it with an id straight off a request.
+-- The AI step's comment write: an AI comment, unless the translation already
+-- carries a live AI comment with exactly this wording. A comment-only review
+-- runs over the same segments on every re-run, so without the check each run
+-- would repeat the remarks of the last. Returns 0 when it was a duplicate.
+INSERT INTO segment_comments (translation_id, user_id, content)
+SELECT @translation_id, NULL, @content::text
+WHERE NOT EXISTS (
+  SELECT 1 FROM segment_comments c
+  WHERE c.translation_id = @translation_id
+    AND c.user_id IS NULL
+    AND c.deleted_at IS NULL
+    AND c.content = @content::text
+);
+
 -- name: DeleteAICommentsForTranslations :exec
 -- Internal: NOT tenant-scoped. The translation ids must already come from a
 -- tenant-resolved clear (the three callers pass ids RETURNed by their own

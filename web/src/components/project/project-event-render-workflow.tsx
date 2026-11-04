@@ -23,15 +23,23 @@ function usedNote(ev: ProjectEvent): string {
   return used.length > 0 ? ` with ${joinAnd(used)}` : ''
 }
 
-/** " (12 auto-approved, 3 need review)" / " (TM skipped: no TM for this language)" /
- *  " (no TM matches)" — what the automation decided or why a phase did nothing. */
+/** " (12 auto-approved, 3 need review)" / " (4 commented)" /
+ *  " (TM skipped: no TM for this language)" / " (no TM matches)" — what the
+ *  automation decided or why a phase did nothing. A comment-only run carries
+ *  no approval counts, so its comment count shows even when it is zero. */
 function runOutcomeNote(ev: ProjectEvent): string {
   const parts: string[] = []
   const approved = num(ev.details['auto_approved'])
   const review = num(ev.details['needs_review'])
+  const commented = num(ev.details['commented'])
+  const counts: string[] = []
   if (approved !== null) {
-    parts.push(`${approved} auto-approved${review !== null ? `, ${review} need review` : ''}`)
+    counts.push(`${approved} auto-approved${review !== null ? `, ${review} need review` : ''}`)
   }
+  if (commented !== null && (commented > 0 || approved === null)) {
+    counts.push(`${commented} commented`)
+  }
+  if (counts.length > 0) parts.push(counts.join(', '))
   const tmSkipped = str(ev.details['tm_skipped'])
   const tmNames = ev.details['tm_names']
   if (tmSkipped) {

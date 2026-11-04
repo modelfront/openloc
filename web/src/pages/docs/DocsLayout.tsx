@@ -28,7 +28,7 @@ export function DocsLayout({ signedIn, children }: { signedIn: boolean; children
           </div>
         </PageContainer>
       </header>
-      <main className="flex-1 overflow-y-auto pt-6">{children}</main>
+      <main className="flex-1 overflow-y-auto [--scroll-inset-top:--spacing(6)] pt-(--scroll-inset-top)">{children}</main>
     </div>
   )
 }

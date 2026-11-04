@@ -47,6 +47,7 @@ type Backend interface {
 	resourceTools
 	configTools
 	segmentationTools
+	filterProfileTools
 	insightTools
 	supportIssueTools
 	llmLogTools

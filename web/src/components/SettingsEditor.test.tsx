@@ -6,11 +6,12 @@ import type { TMAssignmentSection } from './project/TMAssignmentSection'
 
 /** The mocked assignment sections leave the pending create-new promise here. */
 type CreateNewWindow = Window & { __lastCreateNewPromise?: ReturnType<NonNullable<ComponentProps<typeof AssignmentSection>['onCreateNewResource']>> }
-import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, within, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { SettingsEditor, type SettingsValues } from './SettingsEditor'
+import { makeFilterProfile } from '@/test/fixtures/filter-profile'
 
 // Render Combobox as a native <select> in tests so selectOptions() keeps working.
 // Pinned actions become sibling buttons (a real <option> would make them look
@@ -29,7 +30,7 @@ vi.mock('@/components/ui/combobox', () => ({
             value, or jsdom snaps the select to its first option. */}
         {!options.some(o => o.value === '') && <option value="" hidden />}
         {options.map(o => (
-          <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+          <option key={o.value} value={o.value} disabled={o.disabled} data-chip={o.chip}>{o.label}</option>
         ))}
       </select>
       {clearable && value !== '' && (
@@ -133,7 +134,16 @@ vi.mock('../api', () => ({
   // The server's list for a source language: only the profiles that suit it,
   // the one a new project starts with marked suggested.
   listSegmentationProfiles: vi.fn((lang?: string) => Promise.resolve(segmentationProfilesFor(lang))),
+  listFilterProfiles: vi.fn(() => Promise.resolve([
+    filterProfile(101, 'Default', 'json_i18n', 'builtin:json_i18n-default@1'),
+    filterProfile(102, 'Plain text strings', 'json_i18n', 'builtin:json_i18n-plain@1'),
+    filterProfile(201, 'Default', 'xlsx', 'builtin:xlsx-default@1'),
+    filterProfile(202, 'Product sheet', 'xlsx', undefined, true),
+  ])),
 }))
+
+const filterProfile = (id: number, name: string, format: string, builtinKey?: string, orgDefault = false) =>
+  makeFilterProfile(id, format, name, builtinKey, { org_default: orgDefault })
 
 const segProfile = (id: number, name: string, sourceLanguage: string, suggested = false) =>
   ({ id, name, source_languages: sourceLanguage ? [sourceLanguage] : [], suggested, builtin: id < 10, builtin_key: id === 1 ? 'builtin:default@1' : undefined, description: '', definition: { mode: 'sentence', rules: [], abbreviations: [], number_abbreviations: [] }, created_at: '', updated_at: '' })
@@ -187,7 +197,7 @@ const baseValues: SettingsValues = {
   mtOnUpload: false,
   tmOnUpload: false,
   autoComplete: true,
-  inlineHTML: true,
+  filterProfileIds: {},
   linguistTerms: 'pending',
   qaProfileId: null,
   segmentationProfileId: null,
@@ -248,31 +258,83 @@ describe('SettingsEditor', () => {
     expect(within(projectCard).getByTestId('settings-auto-complete')).toBeInTheDocument()
   })
 
-  // Strings contain HTML: JSON, PO, TXT and Excel strings are HTML unless off.
-  describe.each([
-    { label: /strings contain html/i, testId: 'settings-inline-html', key: 'inline_html', field: 'inlineHTML' },
-  ] as const)('$testId', ({ label, testId, key, field }) => {
-    const toggle = () => screen.getByRole('checkbox', { name: label })
+  // One filter profile picker per format; a format without a pick shows its
+  // Default, and picking the Default again goes back to null (no pick).
+  describe('Filter profiles', () => {
+    const jsonPicker = () => screen.getByTestId('filter-profile-select-json_i18n')
+    const toggle = () => screen.getByTestId('filter-profiles-toggle')
+    // The rows sit behind the "Filter profiles" toggle, closed at first.
+    const openFilters = () => userEvent.click(toggle())
 
-    it('shows the stored value in the project settings card', () => {
-      renderEditor({ values: { ...baseValues, [field]: false } })
-      const projectCard = screen.getByText('Project settings').closest('div')!
-      expect(within(projectCard).getByTestId(testId)).not.toBeChecked()
+    it('starts closed, with a summary of the formats that have a pick', async () => {
+      renderEditor()
+      await waitFor(() => expect(toggle()).toHaveTextContent('All Default'))
+      expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByTestId('filter-profile-select-json_i18n')).not.toBeInTheDocument()
+      cleanup()
+      renderEditor({ values: { ...baseValues, filterProfileIds: { xlsx: 202, json_i18n: 101 } } })
+      // The JSON pick is its Default, so only Excel counts.
+      await waitFor(() => expect(toggle()).toHaveTextContent('Excel picked'))
+      await openFilters()
+      expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByTestId('filter-profile-select-xlsx')).toHaveValue('202')
     })
 
-    it('edit mode: turning it off saves false', async () => {
+    it('a list that fails to load shows a plain heading and the error, not a toggle that opens nothing', async () => {
+      const api = await import('../api')
+      vi.mocked(api.listFilterProfiles).mockRejectedValueOnce(new Error('server unavailable'))
+      renderEditor()
+      const section = await screen.findByTestId('file-configurations-section')
+      await waitFor(() => expect(section).toHaveTextContent("Couldn't load the filter profiles: server unavailable"))
+      expect(screen.getByTestId('filter-profiles-heading')).toHaveTextContent('Filter profiles')
+      expect(screen.queryByTestId('filter-profiles-toggle')).toBeNull()
+      expect(screen.queryByTestId('filter-profile-select-json_i18n')).toBeNull()
+      expect(section).not.toHaveTextContent('All Default')
+    })
+
+    it('names a built-in "(built-in)", as the segmentation picker does, and chips the org default', async () => {
+      renderEditor()
+      await openFilters()
+      const xlsxPicker = () => screen.getByTestId('filter-profile-select-xlsx')
+      await waitFor(() => expect(xlsxPicker()).toHaveValue('201'))
+      const options = [...xlsxPicker().querySelectorAll('option[value]:not([hidden])')]
+      expect(options.map(o => o.textContent)).toEqual(['Default (built-in)', 'Product sheet'])
+      expect(options.map(o => o.getAttribute('data-chip'))).toEqual([null, 'Org default'])
+    })
+
+    it('shows the Default until a profile is picked, then the pick', async () => {
+      renderEditor()
+      await openFilters()
+      await waitFor(() => expect(jsonPicker()).toHaveValue('101'))
+      cleanup()
+      renderEditor({ values: { ...baseValues, filterProfileIds: { json_i18n: 102 } } })
+      await openFilters()
+      await waitFor(() => expect(jsonPicker()).toHaveValue('102'))
+    })
+
+    it('edit mode: a pick saves that format alone', async () => {
       const { onUpdateScalars } = renderEditor()
-      expect(toggle()).toBeChecked()
-      await userEvent.click(toggle())
-      expect(onUpdateScalars).toHaveBeenCalledWith({ [key]: false })
+      await openFilters()
+      await waitFor(() => expect(jsonPicker()).toHaveValue('101'))
+      await userEvent.selectOptions(jsonPicker(), '102')
+      expect(onUpdateScalars).toHaveBeenCalledWith({ filter_profile_ids: { json_i18n: 102 } })
     })
 
-    it('create mode: turning it off reaches the draft and keeps the other values', async () => {
+    it('edit mode: picking the Default again sends null', async () => {
+      const { onUpdateScalars } = renderEditor({ values: { ...baseValues, filterProfileIds: { json_i18n: 102 } } })
+      await openFilters()
+      await waitFor(() => expect(jsonPicker()).toHaveValue('102'))
+      await userEvent.selectOptions(jsonPicker(), '101')
+      expect(onUpdateScalars).toHaveBeenCalledWith({ filter_profile_ids: { json_i18n: null } })
+    })
+
+    it('create mode: a pick reaches the draft and keeps the other values', async () => {
       const onChange = vi.fn()
-      renderEditor({ mode: 'create', values: { ...baseValues, autoComplete: false }, onChange, onUpdateScalars: undefined })
-      await userEvent.click(toggle())
-      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ [field]: false, autoComplete: false }))
-      expect(toggle()).not.toBeChecked()
+      renderEditor({ mode: 'create', values: { ...baseValues, autoComplete: false, filterProfileIds: { xlsx: 202 } }, onChange, onUpdateScalars: undefined })
+      await openFilters()
+      await waitFor(() => expect(jsonPicker()).toHaveValue('101'))
+      await userEvent.selectOptions(jsonPicker(), '102')
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ filterProfileIds: { xlsx: 202, json_i18n: 102 }, autoComplete: false }))
     })
   })
 

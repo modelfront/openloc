@@ -69,13 +69,13 @@ func TestIntegrationTemplateUpdate_FailedWriteLeavesSettings(t *testing.T) {
 	user := testutil.SeedUser(t, q, tenant.ID, "owner@test.com", "pass")
 	tmpl := testutil.SeedTemplate(t, q, tenant.ID, "T")
 	path := fmt.Sprintf("/api/templates/%d", tmpl.ID)
-	inlineHTML := func() bool {
+	autoComplete := func() bool {
 		t.Helper()
 		sp, err := q.GetSettingsProfile(ctx, tmpl.SettingsProfileID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return sp.InlineHtml
+		return sp.AutoComplete
 	}
 	exec := func(sql string) {
 		t.Helper()
@@ -84,7 +84,7 @@ func TestIntegrationTemplateUpdate_FailedWriteLeavesSettings(t *testing.T) {
 		}
 	}
 
-	before := inlineHTML()
+	before := autoComplete()
 	// The package's tests share one database: the trigger and its function go
 	// with the test, also when it fails before dropping the trigger itself.
 	// Deferred after the pool's own cleanup, so it runs first.
@@ -99,17 +99,17 @@ func TestIntegrationTemplateUpdate_FailedWriteLeavesSettings(t *testing.T) {
 		BEGIN RAISE EXCEPTION 'template update fails'; END $$`)
 	exec(`CREATE TRIGGER test_fail_template_update BEFORE UPDATE ON templates
 		FOR EACH ROW EXECUTE FUNCTION test_fail_template_update()`)
-	rec := testutil.DoRequest(t, router, http.MethodPatch, path, map[string]any{"name": "Renamed", "inline_html": !before}, user.ID, tenant.ID)
+	rec := testutil.DoRequest(t, router, http.MethodPatch, path, map[string]any{"name": "Renamed", "auto_complete": !before}, user.ID, tenant.ID)
 	if rec.Code < http.StatusInternalServerError {
 		t.Errorf("PATCH with the template write failing = %d, want a server error", rec.Code)
 	}
-	if got := inlineHTML(); got != before {
-		t.Errorf("inline_html after the failed PATCH = %v, want still %v", got, before)
+	if got := autoComplete(); got != before {
+		t.Errorf("auto_complete after the failed PATCH = %v, want still %v", got, before)
 	}
 
 	exec(`DROP TRIGGER test_fail_template_update ON templates`)
-	testutil.AssertStatus(t, testutil.DoRequest(t, router, http.MethodPatch, path, map[string]any{"name": "Renamed", "inline_html": !before}, user.ID, tenant.ID), http.StatusOK)
-	if got := inlineHTML(); got == before {
-		t.Errorf("inline_html after the PATCH = %v, want %v", got, !before)
+	testutil.AssertStatus(t, testutil.DoRequest(t, router, http.MethodPatch, path, map[string]any{"name": "Renamed", "auto_complete": !before}, user.ID, tenant.ID), http.StatusOK)
+	if got := autoComplete(); got == before {
+		t.Errorf("auto_complete after the PATCH = %v, want %v", got, !before)
 	}
 }

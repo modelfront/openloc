@@ -128,7 +128,7 @@ func (b *directBackend) PreviewAIPrompt(ctx context.Context, in PreviewAIPromptI
 	} else {
 		flags, ok := aiprompt.FlagsForMode(in.Mode)
 		if !ok {
-			return AIPromptPreview{}, invalidf("give prompt_id, or mode (mt, qe, ape or qe_ape) and text")
+			return AIPromptPreview{}, invalidf("give prompt_id, or mode (mt, qe, ape, qe_ape or comment) and text")
 		}
 		draft.OutStatus, draft.OutText, draft.OutNote, draft.OutComments = flags.OutStatus, flags.OutText, flags.OutNote, flags.OutComments
 	}

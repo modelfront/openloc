@@ -64,6 +64,88 @@ interface Props {
 
 const pending: Record<SegmentBulkAction, string> = { confirm: 'Confirming…', lock: 'Locking…', unlock: 'Unlocking…', clear: 'Clearing…' }
 
+/** Why every action is off when the filter hides the whole selection. */
+const NOTHING_SHOWN = 'The filter hides every selected segment.'
+
+interface ActionButtonProps {
+  testId: string
+  label: string
+  onClick: () => void
+  variant?: 'outline' | 'destructive'
+  /** Why the button is off, beyond the bar being busy or showing nothing. */
+  offReason?: string
+  icon?: ReactNode
+  busy: boolean
+  /** The filter hides every selected row. */
+  nothingShown: boolean
+}
+
+/** One action of a selection bar: off while the bar is busy, while the filter
+ *  hides the selection, or for `offReason`, which it says. */
+export function SelectionActionButton({ testId, label, onClick, variant = 'outline', offReason, icon, busy, nothingShown }: ActionButtonProps) {
+  return (
+    <Button
+      variant={variant}
+      size="xs"
+      startIcon={icon}
+      onClick={onClick}
+      disabled={busy || nothingShown || !!offReason}
+      disabledReason={nothingShown ? NOTHING_SHOWN : offReason}
+      data-testid={testId}
+    >
+      {label}
+    </Button>
+  )
+}
+
+interface EditButtonsProps {
+  canConfirm: boolean
+  canLock: boolean
+  canUnlock: boolean
+  /** The selected rows the filter shows; 0 when it hides them all. */
+  shown: number
+  /** How many of those are locked. */
+  lockedCount: number
+  busy: boolean
+  /** The action running now, if any. */
+  running: SegmentBulkAction | undefined
+  onRun: (action: SegmentBulkAction) => void
+}
+
+/**
+ * Confirm, Lock and Unlock on a segment selection: the editor's selection bar
+ * and the multi-file editor's. Lock shows while something shown is unlocked,
+ * Unlock while something shown is locked.
+ */
+export function SegmentEditButtons({ canConfirm, canLock, canUnlock, shown, lockedCount, busy, running, onRun }: EditButtonsProps) {
+  const nothingShown = shown === 0
+  const button = (action: SegmentBulkAction, label: string, icon?: ReactNode) => (
+    <Button
+      variant="outline"
+      size="xs"
+      startIcon={icon}
+      onClick={() => onRun(action)}
+      disabled={busy || nothingShown}
+      disabledReason={nothingShown ? NOTHING_SHOWN : undefined}
+      data-testid={`segment-bulk-${action}`}
+    >
+      {running === action ? pending[action] : label}
+    </Button>
+  )
+  return (
+    <>
+      {canConfirm && (
+        <>
+          {button('confirm', 'Confirm')}
+          <SelectionBarDivider />
+        </>
+      )}
+      {canLock && (nothingShown || lockedCount < shown) && button('lock', 'Lock', <LockGlyph className="size-3" />)}
+      {canUnlock && (nothingShown || lockedCount > 0) && button('unlock', 'Unlock', <LockGlyph className="size-3" />)}
+    </>
+  )
+}
+
 export function SegmentSelectionBar({
   jobId, projectId, picked, selectedCount, translationsById, canConfirm, canLock, canUnlock, canClear, canPretranslate, qaDisabledReason, onJoin, joinRefusal = null, beforeRun, onSpellCheck, onFindReplace, onClearSelection,
 }: Props) {
@@ -126,17 +208,7 @@ export function SegmentSelectionBar({
   // them all, the buttons say so.
   const nothingShown = picked.length === 0
   const actionButton = (testId: string, label: string, onClick: () => void, variant: 'outline' | 'destructive' = 'outline', offReason?: string, icon?: ReactNode) => (
-    <Button
-      variant={variant}
-      size="xs"
-      startIcon={icon}
-      onClick={onClick}
-      disabled={busy || nothingShown || !!offReason}
-      disabledReason={nothingShown ? 'The filter hides every selected segment.' : offReason}
-      data-testid={testId}
-    >
-      {label}
-    </Button>
+    <SelectionActionButton testId={testId} label={label} onClick={onClick} variant={variant} offReason={offReason} icon={icon} busy={busy} nothingShown={nothingShown} />
   )
   const button = (action: SegmentBulkAction, label: string, onClick = () => run(action), variant: 'outline' | 'destructive' = 'outline', icon?: ReactNode) =>
     actionButton(`segment-bulk-${action}`, running === action ? pending[action] : label, onClick, variant, undefined, icon)
@@ -144,62 +216,63 @@ export function SegmentSelectionBar({
   return (
     <>
       {/* Same gap below as the filter bar above it. */}
-      <div className="mb-2">
-        <SelectionBar
-          label={selectionLabel(picked.length, selectedCount)}
-          onClear={onClearSelection}
+      <SelectionBar
+        className="mb-2"
+        label={selectionLabel(picked.length, selectedCount)}
+        onClear={onClearSelection}
+        busy={busy}
+        testIdPrefix="segment"
+      >
+        <SegmentEditButtons
+          canConfirm={canConfirm}
+          canLock={canLock}
+          canUnlock={canUnlock}
+          shown={rows.length}
+          lockedCount={lockedCount}
           busy={busy}
-          testIdPrefix="segment"
-        >
-          {canConfirm && (
-            <>
-              {button('confirm', 'Confirm')}
-              <SelectionBarDivider />
-            </>
-          )}
-          {canLock && (nothingShown || lockedCount < rows.length) && button('lock', 'Lock', undefined, undefined, <LockGlyph className="size-3" />)}
-          {canUnlock && (nothingShown || lockedCount > 0) && button('unlock', 'Unlock', undefined, undefined, <LockGlyph className="size-3" />)}
-          {onJoin && actionButton('segment-bulk-join', 'Join', onJoin, 'outline', joinRefusal ?? undefined)}
-          <SelectionBarDivider />
-          {actionButton('segment-bulk-qa', qaMut.isPending ? 'Checking…' : 'Run QA', () => qaMut.mutate(picked), 'outline', qaDisabledReason)}
-          {actionButton('segment-bulk-spellcheck', 'Spell check', onSpellCheck)}
-          {actionButton('segment-bulk-find-replace', 'Find & replace', onFindReplace)}
-          {(canPretranslate || canClear) && <SelectionBarDivider />}
-          {/* A menu trigger can't carry a disabled reason (its tooltip wraps
-              the button), so with nothing shown it is the plain button. */}
-          {canPretranslate && nothingShown && actionButton('segment-bulk-pretranslate', 'Pre-translate', () => {})}
-          {canPretranslate && !nothingShown && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button variant="outline" size="xs" disabled={busy} data-testid="segment-bulk-pretranslate">
-                    {applying ? 'Pre-translating…' : 'Pre-translate'}
-                  </Button>
-                }
+          running={running}
+          onRun={run}
+        />
+        {onJoin && actionButton('segment-bulk-join', 'Join', onJoin, 'outline', joinRefusal ?? undefined)}
+        <SelectionBarDivider />
+        {actionButton('segment-bulk-qa', qaMut.isPending ? 'Checking…' : 'Run QA', () => qaMut.mutate(picked), 'outline', qaDisabledReason)}
+        {actionButton('segment-bulk-spellcheck', 'Spell check', onSpellCheck)}
+        {actionButton('segment-bulk-find-replace', 'Find & replace', onFindReplace)}
+        {(canPretranslate || canClear) && <SelectionBarDivider />}
+        {/* A menu trigger can't carry a disabled reason (its tooltip wraps
+            the button), so with nothing shown it is the plain button. */}
+        {canPretranslate && nothingShown && actionButton('segment-bulk-pretranslate', 'Pre-translate', () => {})}
+        {canPretranslate && !nothingShown && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline" size="xs" disabled={busy} data-testid="segment-bulk-pretranslate">
+                  {applying ? 'Pre-translating…' : 'Pre-translate'}
+                </Button>
+              }
+            />
+            <DropdownMenuContent className="min-w-72">
+              <PretranslateItem
+                label="Apply TM"
+                description="Fill TM matches into the selected untranslated and MT-filled segments (preserves human edits and locked segments)"
+                running={applyTM.isPending}
+                disabled={busy}
+                onClick={() => void pretranslate(applyTM)}
+                testId="segment-bulk-apply-tm"
               />
-              <DropdownMenuContent className="min-w-72">
-                <PretranslateItem
-                  label="Apply TM"
-                  description="Fill TM matches into the selected untranslated and MT-filled segments (preserves human edits and locked segments)"
-                  running={applyTM.isPending}
-                  disabled={busy}
-                  onClick={() => void pretranslate(applyTM)}
-                  testId="segment-bulk-apply-tm"
-                />
-                <PretranslateItem
-                  label="Apply MT"
-                  description="Translate the selected empty segments with the configured MT engine (skips locked segments)"
-                  running={applyMT.isPending}
-                  disabled={busy}
-                  onClick={() => void pretranslate(applyMT)}
-                  testId="segment-bulk-apply-mt"
-                />
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {canClear && button('clear', 'Clear translation', () => setClearOpen(true), 'destructive')}
-        </SelectionBar>
-      </div>
+              <PretranslateItem
+                label="Apply MT"
+                description="Translate the selected empty segments with the configured MT engine (skips locked segments)"
+                running={applyMT.isPending}
+                disabled={busy}
+                onClick={() => void pretranslate(applyMT)}
+                testId="segment-bulk-apply-mt"
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {canClear && button('clear', 'Clear translation', () => setClearOpen(true), 'destructive')}
+      </SelectionBar>
       <ConfirmDialog
         open={clearOpen}
         onOpenChange={setClearOpen}

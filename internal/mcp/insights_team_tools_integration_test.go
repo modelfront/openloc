@@ -165,6 +165,7 @@ func TestIntegrationMCPInsightsInviteScope(t *testing.T) {
 			t.Fatalf("token: %v", err)
 		}
 		inv, err := f.q.CreateInvite(context.Background(), db.CreateInviteParams{
+			Kind:     "member",
 			TenantID: f.tenantA.ID, Email: email, Role: role, InvitedBy: f.ownerA.ID, Token: token,
 			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		})

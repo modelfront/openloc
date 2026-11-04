@@ -120,6 +120,17 @@ func sampleBody(f *fixture, operationID string) any {
 		}
 		return map[string]any{"name": "Probe rules v2", "source_language": "en", "definition": sampleSegmentationDefinition,
 			"updated_at": cur.UpdatedAt.Time.Format(time.RFC3339Nano)}
+	case "createFilterProfile":
+		return map[string]any{"name": "Probe sheet", "format": "xlsx", "options": map[string]any{"xlsx": map[string]any{"columns": []string{"B"}}}}
+	case "setFilterProfileDefault":
+		return map[string]any{"format": "xlsx", "filter_profile_id": nil}
+	case "replaceFilterProfile":
+		tenantID := f.tenant.ID
+		cur, err := f.q.GetFilterProfile(context.Background(), db.GetFilterProfileParams{ID: f.ids["filterProfileID"], TenantID: &tenantID})
+		if err != nil {
+			panic(err)
+		}
+		return map[string]any{"name": "Probe sheet v2", "options": map[string]any{}, "updated_at": cur.UpdatedAt.Time.Format(time.RFC3339Nano)}
 	}
 	return nil
 }
@@ -215,7 +226,7 @@ func prepare(t *testing.T, f *fixture, o specOp, role string) {
 			t.Fatalf("split before the join: %d", code)
 		}
 		rows, err := f.q.ListEditorIndex(context.Background(), db.ListEditorIndexParams{
-			TargetLanguage: "de", FileID: f.file.ID, TenantID: f.tenant.ID,
+			TargetLanguage: "de", FileIds: []int64{f.file.ID}, TenantID: f.tenant.ID,
 		})
 		if err != nil || len(rows) != 2 {
 			t.Fatalf("pieces after the split: %d (%v)", len(rows), err)
@@ -319,7 +330,7 @@ func TestIntegrationV1_ListsShowOnlyOwnOrganization(t *testing.T) {
 		decodeJSON(t, rec, &body)
 		out := map[float64]bool{}
 		for _, item := range body.Data {
-			// A built-in segmentation profile is shared by every
+			// A built-in segmentation or filter profile is shared by every
 			// organization; only the organization's own items count.
 			if item["builtin"] == true {
 				continue
@@ -507,6 +518,12 @@ var appTwin = map[string]string{
 	"replaceSegmentationProfile": "PUT /api/segmentation-profiles/{profileID}",
 	"deleteSegmentationProfile":  "DELETE /api/segmentation-profiles/{profileID}",
 	"exportSegmentationSRX":      "GET /api/segmentation-profiles/{profileID}/srx",
+	"listFilterProfiles":         "GET /api/filter-profiles",
+	"createFilterProfile":        "POST /api/filter-profiles",
+	"getFilterProfile":           "GET /api/filter-profiles/{filterProfileID}",
+	"replaceFilterProfile":       "PUT /api/filter-profiles/{filterProfileID}",
+	"deleteFilterProfile":        "DELETE /api/filter-profiles/{filterProfileID}",
+	"setFilterProfileDefault":    "PUT /api/filter-profiles/defaults",
 }
 
 // Every v1 route refuses exactly the roles its app twin refuses, so the two

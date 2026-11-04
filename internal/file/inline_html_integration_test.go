@@ -1,7 +1,7 @@
 package file_test
 
 // "Strings contain HTML": an upload is parsed in the mode of the project's
-// setting and the file keeps that mode. Each test runs the same file with the
+// filter profile and the file keeps that mode. Each test runs the same file with the
 // setting on and off, so the "on" half proves the "off" half is not passing
 // just because the parser never makes chips.
 
@@ -13,23 +13,22 @@ import (
 	"testing"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/testutil"
 )
 
 const taggedJSON = `{"bold": "Use <b>bold</b> here"}`
 
-// setInlineHTML stores the project's "Strings contain HTML" setting.
-func setInlineHTML(t *testing.T, q db.Querier, profileID int64, on bool) {
+// setInlineHTML picks, for every string format, the Default filter profile
+// (on) or the Plain text strings built-in (off).
+func setInlineHTML(t *testing.T, q db.Querier, tenantID, profileID int64, on bool) {
 	t.Helper()
 	ctx := context.Background()
-	p, err := q.GetSettingsProfile(ctx, profileID)
+	choices, err := filterprofile.InlineHTMLChoices(ctx, q, on, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.UpdateSettingsProfile(ctx, db.UpdateSettingsProfileParams{
-		ID: p.ID, FuzzyThreshold: p.FuzzyThreshold, MtOnUpload: p.MtOnUpload, TmOnUpload: p.TmOnUpload,
-		QaProfileID: p.QaProfileID, InlineHtml: &on,
-	}); err != nil {
+	if err := filterprofile.SetChoices(ctx, q, tenantID, profileID, choices); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -79,7 +78,7 @@ func TestIntegrationUploadFollowsInlineHTMLSetting(t *testing.T) {
 		t.Run(fmt.Sprintf("inline_html=%v", on), func(t *testing.T) {
 			project := testutil.SeedProject(t, q, tenant.ID, fmt.Sprintf("P %v", on), "en", []string{"fr"})
 			if !on {
-				setInlineHTML(t, q, project.SettingsProfileID, false)
+				setInlineHTML(t, q, tenant.ID, project.SettingsProfileID, false)
 			}
 			rec := testutil.DoFileUpload(t, router, fmt.Sprintf("/api/projects/%d/files", project.ID),
 				"strings.json", "application/json", taggedJSON, user.ID, tenant.ID)
@@ -108,7 +107,7 @@ func TestIntegrationUploadFollowsInlineHTMLSetting(t *testing.T) {
 	}
 }
 
-// The setting applies to JSON, PO, TXT and XLSX only: a file of another
+// "Strings contain HTML" applies to JSON, PO, TXT and XLSX only: a file of another
 // format is stored with its strings read as HTML, so the editor keeps its
 // chips whatever the project says.
 func TestIntegrationUploadOtherFormatIgnoresInlineHTMLSetting(t *testing.T) {
@@ -118,7 +117,7 @@ func TestIntegrationUploadOtherFormatIgnoresInlineHTMLSetting(t *testing.T) {
 	tenant := testutil.SeedTenant(t, q, "InlineHTMLOther")
 	user := testutil.SeedUser(t, q, tenant.ID, "u@inline-html-other.test", "pass")
 	project := testutil.SeedProject(t, q, tenant.ID, "P html", "en", []string{"fr"})
-	setInlineHTML(t, q, project.SettingsProfileID, false)
+	setInlineHTML(t, q, tenant.ID, project.SettingsProfileID, false)
 
 	rec := testutil.DoFileUpload(t, router, fmt.Sprintf("/api/projects/%d/files", project.ID),
 		"page.html", "text/html", `<p>Use <b>bold</b> here</p>`, user.ID, tenant.ID)
@@ -140,9 +139,9 @@ func TestIntegrationDraftPublishKeepsFileInlineHTML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setInlineHTML(t, f.q, project.SettingsProfileID, false)
+	setInlineHTML(t, f.q, f.tenant.ID, project.SettingsProfileID, false)
 	fileID := f.upload(t, "strings.json", taggedJSON)
-	setInlineHTML(t, f.q, project.SettingsProfileID, true)
+	setInlineHTML(t, f.q, f.tenant.ID, project.SettingsProfileID, true)
 
 	rec := testutil.DoRequestWithRole(t, f.router, "POST", fmt.Sprintf("/api/projects/%d/publish", f.draftID),
 		map[string]any{"analyze": false}, f.pm.ID, f.tenant.ID, "project_manager")
@@ -171,7 +170,7 @@ func TestIntegrationUploadXLSXTargetsFollowInlineHTML(t *testing.T) {
 		t.Run(fmt.Sprintf("inline_html=%v", on), func(t *testing.T) {
 			project := testutil.SeedProject(t, q, tenant.ID, fmt.Sprintf("X %v", on), "en", []string{"fr"})
 			if !on {
-				setInlineHTML(t, q, project.SettingsProfileID, false)
+				setInlineHTML(t, q, tenant.ID, project.SettingsProfileID, false)
 			}
 			rec := testutil.DoMultipartUpload(t, router, fmt.Sprintf("/api/projects/%d/files", project.ID),
 				"strings.xlsx", xlsx, nil, user.ID, tenant.ID, "")

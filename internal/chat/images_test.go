@@ -17,7 +17,7 @@ var testShot = &Image{MediaType: "image/png", Data: []byte("\x89PNG shot")}
 func TestImagePartsPerAdapter(t *testing.T) {
 	msgs := []Message{{Role: "user", Text: "Here it is.", Image: testShot}}
 
-	raw, err := json.Marshal((&anthropicLLM{model: DefaultModel}).buildAnthropicParams(Request{Messages: msgs, MaxTokens: 10}))
+	raw, err := json.Marshal((&anthropicLLM{model: FallbackModel}).buildAnthropicParams(Request{Messages: msgs, MaxTokens: 10}))
 	if err != nil {
 		t.Fatal(err)
 	}

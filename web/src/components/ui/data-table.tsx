@@ -138,6 +138,12 @@ interface DataTableProps<TData, TValue> {
    * must fit one line.
    */
   virtualRows?: { rowHeight: number }
+  /**
+   * Optional: keep the column headers for screen readers only, for a table
+   * whose surroundings already say what its columns are (a table repeated
+   * under one heading per group).
+   */
+  hideHeader?: boolean
 }
 
 /**
@@ -208,6 +214,7 @@ export function DataTable<TData, TValue>({
   columnSizing,
   onColumnSizingChange,
   virtualRows,
+  hideHeader = false,
 }: DataTableProps<TData, TValue>) {
   const boxRef = useRef<HTMLDivElement>(null)
   const sizing = columnSizing ?? {}
@@ -253,7 +260,16 @@ export function DataTable<TData, TValue>({
         className="w-full table-fixed max-md:min-w-(--table-min-width)"
         style={{ '--table-min-width': `${neededWidth(table, sizing, flexibleIds)}px` } as CSSProperties}
       >
-        <thead>
+        {/* A hidden header leaves the layout, so its widths move to the columns. */}
+        {hideHeader && (
+          <colgroup>
+            {table.getVisibleLeafColumns().map(column => (
+              <col key={column.id}
+                style={{ width: flexibleIds.has(column.id) && sizing[column.id] === undefined ? undefined : column.getSize() }} />
+            ))}
+          </colgroup>
+        )}
+        <thead className={hideHeader ? 'sr-only' : undefined}>
           {table.getHeaderGroups().map(headerGroup => (
             <tr
               key={headerGroup.id}

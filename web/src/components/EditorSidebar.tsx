@@ -11,6 +11,8 @@ import QAFindingsSection from './QAFindingsSection'
 import { EditorSidebarTMSection } from './EditorSidebarTMSection'
 import { EditorSidebarCustomizer } from './EditorSidebarCustomizer'
 import { EditorSidebarSection } from './EditorSidebarSection'
+import { EditorSidebarFuzzySection } from './EditorSidebarFuzzySection'
+import type { EditorId } from '../lib/editor-scope'
 import SegmentHistorySection from './SegmentHistorySection'
 import { qaIssuesEqual, type QaFinding } from '../lib/qa-findings'
 import type { PanelInsert } from '../lib/panel-insert'
@@ -62,6 +64,13 @@ export interface SegmentReference {
 
 interface Props {
   jobId: number
+  /** The editor the panel sits in, for internal matches: the job, or a
+   *  multi-file editor (lib/editor-scope). Defaults to jobId. */
+  editorId?: EditorId
+  /** The open segment, for internal matches; null when none is open. */
+  segmentId?: number | null
+  /** File names by file id, for a multi-file editor's internal matches. */
+  fileNames?: ReadonlyMap<number, string>
   sourceText: string
   editText: string
   terms: TermLookupResult[]
@@ -95,6 +104,9 @@ export function editorSidebarEqual(prev: Props, next: Props): boolean {
   // when switching A→B where both have the same count of (different) terms.
   return (
     prev.jobId === next.jobId &&
+    prev.editorId === next.editorId &&
+    prev.segmentId === next.segmentId &&
+    prev.fileNames === next.fileNames &&
     prev.sourceText === next.sourceText &&
     prev.editText === next.editText &&
     prev.terms === next.terms &&
@@ -112,7 +124,7 @@ export function editorSidebarEqual(prev: Props, next: Props): boolean {
 }
 
 export default memo(function EditorSidebar({
-  jobId, sourceText, editText, terms, references, qaIssues,
+  jobId, editorId, segmentId = null, fileNames, sourceText, editText, terms, references, qaIssues,
   onInsertMatch, onTermClick, onTermHover, onJumpToReference, onQARefresh, onClose, onMatchHover, translationId, plainText = false, onAddTerm,
 }: Props) {
   const [mtOpen, setMtOpen] = useState(true)
@@ -195,6 +207,16 @@ export default memo(function EditorSidebar({
         onInsertMatch={onInsertMatch}
         onMatchHover={onMatchHover}
         modKey={modKey}
+      />
+    ),
+
+    fuzzy: (
+      <EditorSidebarFuzzySection
+        editorId={editorId ?? jobId}
+        segmentId={segmentId}
+        sourceText={sourceText}
+        fileNames={fileNames}
+        onInsertMatch={onInsertMatch}
       />
     ),
 

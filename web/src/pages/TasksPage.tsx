@@ -6,9 +6,10 @@
 //
 // Filters live in the URL (TaskFilterBar); the list is cursor-paged with a
 // "Load more" button. Clicking a card opens that job in the CAT editor, in a
-// new tab.
+// new tab. Ticking cards of one project and one target language offers "Open
+// in editor": those files in one editor grid.
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getMe, listTasksPage, type Task } from '../api'
@@ -17,7 +18,8 @@ import { parseTaskFilters } from '../lib/task-filters'
 import { isAdminRole } from '../lib/roles'
 import { deadlineChipProps, type DeadlineBand } from '../lib/deadline'
 import { isAIStepRunning } from '../lib/project-logic'
-import { editorPath, openEditorTab } from '../lib/editor-link'
+import { editorPath, editorScopePath, openEditorTab } from '../lib/editor-link'
+import { openTogetherBlock } from '../lib/editor-scope'
 import { NEW_TAB_ATTRS } from '../lib/new-tab'
 import { useRefreshOnReturn } from '../hooks/useRefreshOnReturn'
 import { cn } from '@/lib/utils'
@@ -34,6 +36,8 @@ import { listCardClass } from '@/components/list/list-row'
 import { LoadMoreButton } from '@/components/list/LoadMoreButton'
 import { EditableTitle } from '@/components/list/EditableTitle'
 import { TaskFilterBar } from '../components/task/TaskFilterBar'
+import { SelectionBar } from '@/components/list/SelectionBar'
+import { BulkButton } from '@/components/project/BulkButton'
 
 const PAGE_SIZE = 50
 
@@ -88,6 +92,15 @@ export default function TasksPage() {
       (q.state.data?.pages ?? []).some(p => p.data.some(isRunning)) ? 2000 : false,
   })
   const tasks = useMemo(() => data?.pages.flatMap(p => p.data) ?? [], [data])
+  // Ticked cards, by job id; kept in list order when opened.
+  const [picked, setPicked] = useState<ReadonlySet<number>>(new Set())
+  const toggle = (jobId: number) => setPicked(prev => {
+    const next = new Set(prev)
+    if (!next.delete(jobId)) next.add(jobId)
+    return next
+  })
+  const pickedTasks = tasks.filter(t => picked.has(t.job_id))
+  const openBlock = openTogetherBlock(pickedTasks)
 
   if (isLoading) return <LoadingPlaceholder />
 
@@ -109,6 +122,28 @@ export default function TasksPage() {
 
       {loadFailed && <LoadFailed what="tasks" error={error} onRetry={() => refetch()} />}
 
+      {pickedTasks.length > 0 && (
+        <SelectionBar
+          className="mb-2"
+          label={`${pickedTasks.length} ${pickedTasks.length === 1 ? 'task' : 'tasks'} selected`}
+          onClear={() => setPicked(new Set())}
+          testIdPrefix="tasks"
+        >
+          <BulkButton
+            label="Open in editor"
+            pending={false}
+            eligibleCount={openBlock ? 0 : pickedTasks.length}
+            disabled={false}
+            tooltip={pickedTasks.length === 1
+              ? 'Open this task in the CAT editor'
+              : `Work through the ${pickedTasks.length} files in one editor grid`}
+            ineligibleTooltip={openBlock ?? undefined}
+            onClick={() => openTask(editorScopePath(pickedTasks[0].project_id, pickedTasks.map(t => t.job_id)))}
+            testid="tasks-open-editor-btn"
+          />
+        </SelectionBar>
+      )}
+
       <div data-guide="tasks.list" className="space-y-2">
         {tasks.map(t => {
           // Hard-block opening the task while its QE+APE step runs.
@@ -129,6 +164,15 @@ export default function TasksPage() {
             >
               <div className="flex max-md:flex-wrap items-center justify-between gap-4 gap-y-1">
                 <div className="flex items-center gap-2 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(t.job_id)}
+                    onChange={() => toggle(t.job_id)}
+                    onClick={e => e.stopPropagation()}
+                    className="size-3.5 shrink-0 cursor-pointer accent-primary"
+                    aria-label={`Select ${t.file_name} (${t.target_language})`}
+                    data-testid={`task-select-${t.job_id}`}
+                  />
                   {aiRunning ? (
                     <span className="flex min-w-0" data-testid={`task-open-${t.job_id}`}>
                       <EditableTitle name={t.file_name} canEdit={false} className="font-medium" />

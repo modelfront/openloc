@@ -157,6 +157,19 @@ func Register(r chi.Router, h Handlers) {
 		})
 	})
 
+	// Every member reads filter profiles; managers write them.
+	r.Route("/filter-profiles", func(r chi.Router) {
+		r.Get("/", h.listFilterProfiles)
+		r.Get("/{filterProfileID}", h.getFilterProfile)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireManager())
+			r.Put("/defaults", h.setFilterProfileDefault)
+			r.Post("/", h.createFilterProfile)
+			r.Put("/{filterProfileID}", h.replaceFilterProfile)
+			r.Delete("/{filterProfileID}", h.deleteFilterProfile)
+		})
+	})
+
 	r.Route("/jobs/{jobID}", func(r chi.Router) {
 		r.Use(auth.RequireJobOwnership(h.Queries))
 		r.Use(auth.RequireLinguistJobAccess(h.Queries))

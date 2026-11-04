@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	db "openloc/internal/database/sqlcgen"
+	"openloc/internal/filterprofile"
 	"openloc/internal/httputil"
 	"openloc/internal/logging"
 	"openloc/internal/parser"
@@ -25,8 +26,12 @@ type IngestOptions struct {
 	// Analyze requests the automatic analysis once the jobs exist.
 	Analyze bool
 	// XLSXLayout is the uploader's column layout of an Excel workbook without
-	// language codes in row 1; nil reads the workbook by its row 1.
+	// language codes in row 1; nil takes it from the filter profile's Excel
+	// rules, else reads the workbook by its row 1.
 	XLSXLayout *parser.XLSXLayout
+	// FilterProfileID overrides the project's filter profile for this file;
+	// nil uses the project's choice for the file's format.
+	FilterProfileID *int64
 }
 
 // IngestResult is the stored file and any dispatch warnings (work that could
@@ -66,11 +71,24 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	if err != nil {
 		return IngestResult{}, fmt.Errorf("get settings profile: %w", err)
 	}
-	// The file keeps the mode it is parsed with, so a later change of the
-	// setting never re-reads it differently. The setting applies to the
-	// InlineHTMLFormat formats only; every other file's strings are HTML.
-	inlineHTML := settingsProfile.InlineHtml || !parser.InlineHTMLFormat(format)
-	layoutJSON, err := validateIngestLayout(format, content, opts.XLSXLayout)
+	// The file keeps the filter profile it is parsed with (a snapshot, not a
+	// reference), so a later edit of the profile never re-reads it
+	// differently. "Strings contain HTML" applies to the InlineHTMLFormat
+	// formats only; every other file's strings are HTML.
+	filter, err := filterprofile.Resolve(ctx, h.queries, project.TenantID, project.SettingsProfileID, format, opts.FilterProfileID)
+	if err != nil {
+		return IngestResult{}, err
+	}
+	filterJSON, err := encodeFilterSnapshot(filter)
+	if err != nil {
+		return IngestResult{}, err
+	}
+	inlineHTML := filter.InlineHTML() || !parser.InlineHTMLFormat(format)
+	layout, err := ingestLayout(format, content, opts.XLSXLayout, filter)
+	if err != nil {
+		return IngestResult{}, err
+	}
+	layoutJSON, err := validateIngestLayout(format, content, layout)
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -88,7 +106,7 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	if err != nil {
 		return IngestResult{}, fmt.Errorf("compile segmentation rules: %w", err)
 	}
-	p, err := parser.GetParserWith(format, parser.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: opts.XLSXLayout, Segmenter: segmenter})
+	p, err := parser.GetParserWith(format, withFilterOptions(parser.ParseOptions{InlineHTML: inlineHTML, XLSXLayout: layout, Segmenter: segmenter}, filter))
 	if err != nil {
 		logging.Warn(ctx, err, "parser lookup failed", "upload-parser-lookup-failed")
 		return IngestResult{}, httputil.NewClientError(fmt.Sprintf("file format %q is not supported", format))
@@ -128,14 +146,15 @@ func (h *Handler) Ingest(ctx context.Context, project db.Project, filename strin
 	txq := db.New(tx)
 
 	fileRecord, err := txq.CreateFile(ctx, db.CreateFileParams{
-		ProjectID:    project.ID,
-		Name:         filename,
-		Format:       db.FileFormat(format),
-		StoragePath:  storagePath,
-		SegmentCount: int32(len(segments)),
-		InlineHtml:   &inlineHTML,
-		XlsxLayout:   layoutJSON,
-		Segmentation: segmentationJSON,
+		ProjectID:     project.ID,
+		Name:          filename,
+		Format:        db.FileFormat(format),
+		StoragePath:   storagePath,
+		SegmentCount:  int32(len(segments)),
+		InlineHtml:    &inlineHTML,
+		XlsxLayout:    layoutJSON,
+		Segmentation:  segmentationJSON,
+		FilterProfile: filterJSON,
 	})
 	if err != nil {
 		doneIngest(err)
@@ -316,6 +335,42 @@ func (h *Handler) batchInsertTranslations(ctx context.Context, dbtx db.DBTX, seg
 		}
 	}
 	return nil
+}
+
+// ingestLayout is the Excel column layout a new file is parsed with: the
+// uploader's, else the one the filter profile's Excel rules give the
+// workbook, else nil (row 1 reads it).
+func ingestLayout(format string, content []byte, uploaded *parser.XLSXLayout, filter *filterprofile.Snapshot) (*parser.XLSXLayout, error) {
+	if uploaded != nil || format != "xlsx" || filter == nil || filter.Options.XLSX == nil || filter.Options.XLSX.Empty() {
+		return uploaded, nil
+	}
+	in, err := parser.InspectXLSX(content)
+	if err != nil {
+		return nil, httputil.NewClientError("could not read the xlsx file — check that the file is well-formed")
+	}
+	r := filter.Options.XLSX
+	return in.LayoutFor(r.Sheets, r.HeaderRow, r.Columns, r.TargetColumns), nil
+}
+
+// withFilterOptions adds a filter snapshot's HTML and XML options to o.
+func withFilterOptions(o parser.ParseOptions, filter *filterprofile.Snapshot) parser.ParseOptions {
+	if filter != nil {
+		o.HTML, o.XML = filter.Options.HTML, filter.Options.XML
+	}
+	return o
+}
+
+// encodeFilterSnapshot is the files.filter_profile value; NULL for a format
+// without filter profiles.
+func encodeFilterSnapshot(s *filterprofile.Snapshot) ([]byte, error) {
+	if s == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("encode filter profile snapshot: %w", err)
+	}
+	return raw, nil
 }
 
 // validateIngestLayout checks an upload's Excel column layout against the

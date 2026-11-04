@@ -4,9 +4,13 @@
 // source: types.go
 
 /**
+ * MaxScopeJobs caps the jobs one editor scope opens together.
+ */
+export const MaxScopeJobs = 500;
+/**
  * Repetition roles in Index.Repetition.
  */
-export const RepetitionNone = 0; // the source text occurs once in the file
+export const RepetitionNone = 0; // the source text occurs once in the scope
 /**
  * Repetition roles in Index.Repetition.
  */
@@ -16,8 +20,9 @@ export const RepetitionSource = 1; // first occurrence of a source text that rep
  */
 export const RepetitionRepeat = 2; // a later occurrence of an earlier source text
 /**
- * Index describes every segment of a job without its text, one array per
- * field, all in document order. Positions keep the import numbering; a piece
+ * Index describes every segment of a scope without its text, one array per
+ * field, file after file in scope order, each file in document order. Files
+ * says which rows belong to which file. Positions keep the import numbering; a piece
  * of a split has the position of the row it came from and a sub-position from
  * 1 up (segment number "position+1.sub").
  */
@@ -51,6 +56,45 @@ export interface Index {
   joins_next: boolean[];
   repetition: number /* int8 */[];
   repetition_stats: RepetitionStats;
+  files: ScopeFile[];
+}
+/**
+ * ScopeFile is one file of a scope: its job, the rows FirstRow up to
+ * FirstRow+RowCount-1 of the index, its step in progress, and whether the
+ * caller may edit it.
+ */
+export interface ScopeFile {
+  job_id: number /* int64 */;
+  file_id: number /* int64 */;
+  file_name: string;
+  file_format: string;
+  inline_html: boolean;
+  first_row: number /* int */;
+  row_count: number /* int */;
+  step_name: string;
+  step_assignee?: number /* int64 */;
+  /**
+   * StepID is the step in progress (a job step assignment), nil when none:
+   * what a bulk Complete step sends back so a repeat never advances twice.
+   */
+  step_id?: number /* int64 */;
+  /**
+   * EditBlock is why the caller may not edit the file's rows, nil when
+   * they may.
+   */
+  edit_block?: EditBlock;
+  /**
+   * HasPreviousStep: a step round of the file has finished, so its rows
+   * carry a track-changes baseline.
+   */
+  has_previous_step: boolean;
+}
+/**
+ * EditBlock is a task edit refusal, with the code the editor branches on.
+ */
+export interface EditBlock {
+  code: string;
+  message: string;
 }
 /**
  * RepetitionStats totals the later occurrences of repeated source texts.
@@ -67,9 +111,10 @@ export interface SearchResult {
   segment_ids: number /* int64 */[];
 }
 /**
- * Ref is the segment a cross-reference chip points at.
+ * Ref is the segment a cross-reference chip in file FileID points at.
  */
 export interface Ref {
+  file_id: number /* int64 */;
   key: string;
   segment_id: number /* int64 */;
   source: string;
@@ -84,5 +129,21 @@ export interface WordCandidate {
   locked: boolean;
   active_text?: string;
   active_rich_text?: string;
+  updated_at: string;
+}
+/**
+ * FuzzyMatch is a confirmed segment of the scope whose source is like the
+ * looked-up segment's: an internal fuzzy match. Percent is scored like a TM
+ * match, so the two read the same.
+ */
+export interface FuzzyMatch {
+  segment_id: number /* int64 */;
+  file_id: number /* int64 */;
+  translation_id: number /* int64 */;
+  percent: number /* int16 */;
+  source_text: string;
+  source_rich_text?: string;
+  target_text: string;
+  target_rich_text?: string;
   updated_at: string;
 }

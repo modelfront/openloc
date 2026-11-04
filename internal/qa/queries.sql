@@ -166,6 +166,21 @@ LEFT JOIN users u ON u.id = qr.ignored_by
 WHERE f.id = @file_id AND t.target_language = @target_language
 ORDER BY s.position, s.sub_position, qr.severity, qr.check_type;
 
+-- name: ListQAResultsForFiles :many
+-- The findings of the files of @file_ids in one target language, file by file
+-- in the order given: a multi-file editor's QA report. Tenant scoping is
+-- structural via files→projects.
+SELECT qr.*, t.segment_id, s.position AS segment_position, u.name AS ignored_by_name
+FROM qa_results qr
+JOIN translations t ON t.id = qr.translation_id
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+LEFT JOIN users u ON u.id = qr.ignored_by
+WHERE f.id = ANY(@file_ids::bigint[]) AND t.target_language = @target_language
+  AND p.tenant_id = @tenant_id
+ORDER BY array_position(@file_ids::bigint[], f.id), s.position, s.sub_position, qr.severity, qr.check_type;
+
 -- name: ListTranslationIDsWithQAResults :many
 -- Internal: caller must have tenant-verified the job (GetJobTenant) and pass
 -- ids of its rows. Lets a QA run skip the write for segments that have no
@@ -287,3 +302,15 @@ WHERE qa_profile_id = $1
 SELECT translation_id, check_type, message
 FROM qa_results
 WHERE translation_id = ANY(@ids::bigint[]) AND ignored;
+
+-- name: ListTranslationFilesForQA :many
+-- The file of each translation of @ids among the files of @file_ids in one
+-- target language: a multi-file QA run on a selection sends each job only
+-- its own rows. Tenant scoping is structural via files→projects.
+SELECT t.id AS translation_id, s.file_id
+FROM translations t
+JOIN segments s ON s.id = t.segment_id
+JOIN files f ON f.id = s.file_id
+JOIN projects p ON p.id = f.project_id
+WHERE t.id = ANY(@ids::bigint[]) AND s.file_id = ANY(@file_ids::bigint[])
+  AND t.target_language = @target_language AND p.tenant_id = @tenant_id;

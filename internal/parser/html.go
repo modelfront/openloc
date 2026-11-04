@@ -18,6 +18,8 @@ type HTML struct {
 	// HTML.chipNumbering). Nil reads every translation by the run's own. A
 	// pointer, so HTML values stay comparable.
 	stored *map[string]StoredSource
+	// Options are the file's import options; nil is DefaultHTMLOptions.
+	Options *HTMLOptions
 }
 
 // StoredSource is a segment's source text and rich text as stored.
@@ -30,20 +32,29 @@ type StoredSource struct {
 // seg (nil: the conservative built-in set), as the file was imported, so a file
 // stored by sentence exports through it too.
 func HTMLWithStoredSource(stored map[string]StoredSource, seg *segmentation.Segmenter) Parser {
-	return sentenceSegmenter{inner: HTML{stored: &stored}, richExport: true, seg: seg}
+	return HTMLWithStoredSourceOptions(stored, seg, nil)
 }
 
-func (HTML) Parse(content []byte) ([]Segment, error) {
+// HTMLWithStoredSourceOptions is HTMLWithStoredSource for a file imported with
+// opts (nil: DefaultHTMLOptions).
+func HTMLWithStoredSourceOptions(stored map[string]StoredSource, seg *segmentation.Segmenter, opts *HTMLOptions) Parser {
+	return sentenceSegmenter{inner: HTML{stored: &stored, Options: opts}, richExport: true, seg: seg}
+}
+
+func (p HTML) Parse(content []byte) ([]Segment, error) {
 	doc, err := html.Parse(bytes.NewReader(content))
 	if err != nil {
 		return nil, fmt.Errorf("html parse: %w", err)
 	}
 
+	cfg := p.config()
 	var segments []Segment
 	seq := 0
-	extractMeta(doc, &segments, &seq)
+	if cfg.meta {
+		extractMeta(doc, &segments, &seq)
+	}
 
-	for _, u := range collectHTMLUnits(doc, seq) {
+	for _, u := range collectHTMLUnits(doc, seq, cfg) {
 		segments = append(segments, Segment{
 			Key:      u.key,
 			Text:     u.plain,
@@ -78,10 +89,13 @@ func (p HTML) reconstructJoined(original []byte, translations map[string]string,
 		}
 	}
 
+	cfg := p.config()
 	seq := 0
-	reconstructMeta(doc, plain, &seq)
+	if cfg.meta {
+		reconstructMeta(doc, plain, &seq)
+	}
 
-	units := collectHTMLUnits(doc, seq)
+	units := collectHTMLUnits(doc, seq, cfg)
 	// Attributes go first: a run's translation copies its inline elements,
 	// attributes included.
 	for _, u := range units {

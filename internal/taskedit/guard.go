@@ -52,6 +52,11 @@ type Decision struct {
 	found   bool
 }
 
+// JobID is the job the edit lands on, 0 when the edit has no job.
+func (d Decision) JobID() int64 {
+	return d.state.JobID
+}
+
 // InFirstStep reports whether the edit's current task is the workflow's first
 // step. True when the edit has no job or the job has no workflow.
 func (d Decision) InFirstStep() bool {
@@ -256,9 +261,34 @@ func readState(ctx context.Context, q db.Querier, tenantID int64, ref Ref) (Stat
 		}
 		return stateFromTranslation(r), nil
 	}
-	r, err := q.GetTaskEditState(ctx, db.GetTaskEditStateParams{JobID: ref.JobID, TenantID: tenantID})
+	rows, err := q.ListTaskEditStates(ctx, db.ListTaskEditStatesParams{JobIds: []int64{ref.JobID}, TenantID: tenantID})
 	if err != nil {
 		return State{}, err
 	}
-	return stateFromJob(r), nil
+	if len(rows) == 0 {
+		return State{}, pgx.ErrNoRows
+	}
+	return stateFromJob(rows[0]), nil
+}
+
+// CheckJobs decides, without writing, whether the caller in ctx may edit each
+// of jobIDs: a nil entry may edit (a manager's edit on a completed task would
+// reopen it), otherwise the refusal. A job outside the tenant has no entry.
+// One query for every job, for the editor's multi-file scope.
+func (g *Guard) CheckJobs(ctx context.Context, tenantID int64, jobIDs []int64, opts Opts) (map[int64]*LockedError, error) {
+	role := ""
+	if claims, ok := auth.ClaimsFromContext(ctx); ok {
+		role = claims.Role
+	}
+	opts.NoReopen = opts.NoReopen || reopenRefused(ctx)
+	rows, err := g.q.ListTaskEditStates(ctx, db.ListTaskEditStatesParams{JobIds: jobIDs, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*LockedError, len(rows))
+	for _, r := range rows {
+		_, lerr := decide(stateFromJob(r), role, opts)
+		out[r.JobID] = lerr
+	}
+	return out, nil
 }

@@ -674,8 +674,14 @@ test.describe("Translation memory", () => {
     await page.locator(`[data-testid="tm-cell-${entryId}-target"]`).click();
     const editor = page.locator(`[data-testid="tm-cell-edit-${entryId}-target"] .ProseMirror`);
     await expect(editor).toBeVisible({ timeout: 3000 });
-    await page.keyboard.press("Alt+F8");
-    await expect(editor.locator("span.xliff-tag"), "Alt+F8 inserts both missing tags").toHaveCount(2);
+    // Alt+F8 is the editor's own key: it does nothing until the editor takes
+    // focus, which it does on a timer after mounting. Pressing again is safe:
+    // it inserts only the tags still missing, so the count stays exact.
+    await expect(editor).toBeFocused();
+    await expect(async () => {
+      await page.keyboard.press("Alt+F8");
+      await expect(editor.locator("span.xliff-tag"), "Alt+F8 inserts both missing tags").toHaveCount(2, { timeout: 500 });
+    }).toPass({ timeout: 5000 });
 
     const saved = page.waitForResponse(r =>
       r.url().includes(`/api/tms/${tmId}/entries/${entryId}`) && r.request().method() !== "GET");

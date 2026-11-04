@@ -27,8 +27,9 @@ import { searchHighlightRegex } from '../lib/text-search'
 import { qaIssuesEqual, type QaFinding } from '../lib/qa-findings'
 import QASummaryDot from './QASummaryDot'
 import { toast } from 'sonner'
+import type { EditorId } from '../lib/editor-scope'
 import { queryKeys } from '../lib/query-keys'
-import { invalidateJobContext, invalidateSegmentSaveContext, applyTMUpdatesAfterSave } from '../lib/query-invalidation'
+import { invalidateJobContext, invalidateQAReports, invalidateSegmentSaveContext, applyTMUpdatesAfterSave } from '../lib/query-invalidation'
 import { applySegmentSaveSuccess, patchPropagatedSiblings } from '../lib/segment-save'
 import { deriveDisplayStatus, deriveMatchChip } from '../lib/segment-status'
 import { useInFlightGuard } from '../hooks/useInFlightGuard'
@@ -153,6 +154,9 @@ export interface SegmentRowProps {
   number: string
   jobId: number
   fileId: number
+  /** The editor the row sits in, when it is a multi-file editor
+   *  (lib/editor-scope): a confirm propagates across its open files. */
+  editorId?: EditorId
   projectId: number | null
   targetLanguage: string
   sourceLanguage: string
@@ -321,6 +325,7 @@ export const SegmentRow = memo(function SegmentRow({
   number,
   jobId,
   fileId,
+  editorId,
   projectId,
   targetLanguage,
   sourceLanguage,
@@ -368,17 +373,20 @@ export const SegmentRow = memo(function SegmentRow({
     () => (refTerms ? refResolver(refTerms, 'source') : undefined), [refTerms])
   const resolveRefTarget = useMemo(
     () => (refTerms ? refResolver(refTerms, 'target') : undefined), [refTerms])
-  // Track changes on an inactive row: the rich text its chips render from, and
+  // Track changes: the rich text an inactive row's chips render from, and
   // whether the row is drawn by SegmentText. A row with bold or italic
-  // formatting keeps its formatted rendering and shows no marks. While the view
-  // is on, Find hits take the quiet search tint on every drawn row, so they never
-  // read as added words.
+  // formatting keeps its formatted rendering and shows no marks, closed or
+  // open; with ¶ on a closed row shows its tags as text and is marked, but the
+  // editor still loads them as formatting, so the open row is not. While the
+  // view is on, Find hits take the quiet search tint on every drawn row, so
+  // they never read as added words.
   const activeText = translation?.active_text ?? ''
   const trackRich = plainText ? null
     : translation?.active_rich_text && hasXliffTags(translation.active_rich_text) ? translation.active_rich_text
     : hasXliffTags(activeText) ? activeText : null
-  const trackView = trackChanges && !isActive && activeText !== ''
-    && (plainText || trackRich !== null || showWhitespace || !hasHTMLFormatting(activeText))
+  const unformatted = plainText || trackRich !== null || !hasHTMLFormatting(activeText)
+  const trackable = trackChanges && activeText !== ''
+  const trackView = trackable && !isActive && (unformatted || showWhitespace)
   const showTrackChanges = trackView && trackChangesFrom != null && trackChangesFrom !== activeText
   const trackSearch = useMemo(
     () => (findHighlightTerm ? searchHighlightRegex(findHighlightTerm, { searchSource: false, searchTarget: true, caseSensitive: false, useRegex: false }) : null),
@@ -441,7 +449,8 @@ export const SegmentRow = memo(function SegmentRow({
   // Updated on every successful save so back-to-back saves by the same user
   // keep working. Cleared when the row is deactivated.
   const baselineUpdatedAtRef = useRef<string | null>(null)
-  // The shared post-save sync of every save path (confirm, draft, "Use mine").
+  // The shared post-save sync of every save path (confirm, draft, "Use mine")
+  // and of both Clear paths, with the cleared row.
   const syncSaved = useCallback((saved: Translation | undefined) => applySegmentSaveSuccess({
     queryClient, jobId, saved, prior: translation,
     wordCount: segment.word_count, charCount: segment.source_text.length,
@@ -522,7 +531,7 @@ export const SegmentRow = memo(function SegmentRow({
       // If an auto-propagation to THIS row's source is still in flight, it has
       // already bumped our server-side updated_at; wait for it and adopt the
       // fresh baseline so we don't 409 against the user's own propagation.
-      await reconcilePropagationBaseline(jobId, segment.source_text, translation?.id, baselineUpdatedAtRef)
+      await reconcilePropagationBaseline(editorId ?? jobId, segment.source_text, translation?.id, baselineUpdatedAtRef)
       const delta = editingTimer.consume()
       const { text, richText } = vars ?? serializeEditor(editorRef.current, editText, plainText)
       let result: Awaited<ReturnType<typeof updateTranslationHuman>>
@@ -576,6 +585,7 @@ export const SegmentRow = memo(function SegmentRow({
           vars?.text ?? editText,
           translation.id,
           saved?.active_rich_text ?? undefined,
+          editorId,
         )
           .then(r => {
             if (r.taskReopened) handleTaskReopened(queryClient, projectId ?? 0, jobId)
@@ -588,15 +598,18 @@ export const SegmentRow = memo(function SegmentRow({
               toast.success(`Propagated to ${r.propagated} segment${r.propagated > 1 ? 's' : ''}`)
               if (projectId) invalidateSegmentSaveContext(queryClient, projectId, jobId)
               // The siblings' stored QA findings describe their old text.
-              queryClient.invalidateQueries({ queryKey: queryKeys.job.qaReport(jobId) })
+              invalidateQAReports(queryClient, jobId)
             }
             warnHeldSkipped(r.held, 'repetition')
+            if (r.not_editable) {
+              toast.warning(`${r.not_editable} repetition${r.not_editable > 1 ? 's' : ''} in files you cannot edit now ${r.not_editable > 1 ? 'were' : 'was'} left as ${r.not_editable > 1 ? 'they were' : 'it was'}.`)
+            }
             return new Map<number, string>(
               r.siblings.filter(s => s.updated_at).map(s => [s.id, s.updated_at!]),
             )
           })
           .catch((err) => { console.warn('QA/propagation failed:', err); return new Map<number, string>() })
-        trackPropagation(jobId, segment.source_text, propagated)
+        trackPropagation(editorId ?? jobId, segment.source_text, propagated)
       }
     },
     onError: (err: Error) => {
@@ -728,13 +741,14 @@ export const SegmentRow = memo(function SegmentRow({
       if (emptiedRef.current && !insert) {
         const { translation: cleared } = await clearMut.mutateAsync(translation.id)
         loadVersion(cleared)
+        syncSaved(cleared)
         emptiedRef.current = false
         dirtyRef.current = false
         return true
       }
       // Same in-flight propagation reconcile as saveMut — an autosave/flush on
       // a propagated sibling must not 409 against the user's own propagation.
-      await reconcilePropagationBaseline(jobId, segment.source_text, translation.id, baselineUpdatedAtRef)
+      await reconcilePropagationBaseline(editorId ?? jobId, segment.source_text, translation.id, baselineUpdatedAtRef)
       const { text, richText } = serializeEditor(editorRef.current, insert?.text ?? editText, plainText)
       try {
         const { translation: saved, taskReopened } = await saveTranslationDraft(
@@ -747,7 +761,7 @@ export const SegmentRow = memo(function SegmentRow({
           insert?.insertToken,
         )
         // Post-save sync (advance baseline, patch cache and leverage bar, sync
-        // originalText, clear dirty) — single helper, used by saveMut + saveDraft + onUseMine.
+        // originalText, clear dirty) — single helper, used by every save path and Clear.
         syncSaved(saved)
         // A displayed-status change (an empty segment's first draft, an
         // approval taken away) moves the job's counts, which gate the toolbar
@@ -781,7 +795,7 @@ export const SegmentRow = memo(function SegmentRow({
         throw err
       }
     })
-  }, [translation, effectiveReadOnly, editText, fileId, projectId, dirtyRef, queryClient, jobId, guardSave, clearMut, loadVersion, onQARefreshRef, segment.source_text, plainText, syncSaved])
+  }, [translation, effectiveReadOnly, editText, fileId, projectId, dirtyRef, queryClient, jobId, editorId, guardSave, clearMut, loadVersion, onQARefreshRef, segment.source_text, plainText, syncSaved])
 
   // Split and join replace this row, so its draft is saved first and the
   // write carries the version that save left.
@@ -1256,6 +1270,7 @@ export const SegmentRow = memo(function SegmentRow({
                 showWhitespace={showWhitespace}
                 resolveRef={resolveRefTarget}
                 plainText={plainText}
+                trackChangesFrom={trackable && unformatted ? trackChangesFrom : null}
                 onTextChange={(text) => {
                   setEditText(text)
                   // Force memo recomputation on every editor transaction —
@@ -1354,7 +1369,7 @@ export const SegmentRow = memo(function SegmentRow({
         )}
         {matchChip === 'repetition' && (
           <Chip
-            title="Repetition — same source appears earlier in this file"
+            title="Repetition — the same source appears in an earlier segment"
             data-testid="repetition-badge"
             className="font-semibold"
           >
@@ -1429,7 +1444,7 @@ export const SegmentRow = memo(function SegmentRow({
           title="Clear translation?"
           description="This reverts the segment to untranslated and removes any MT, TM match, or human edit. Translation memory entries are not affected."
           actionLabel="Clear"
-          onConfirm={() => clearMut.mutate(translation.id, { onSuccess: ({ translation: cleared }) => loadVersion(cleared) })}
+          onConfirm={() => clearMut.mutate(translation.id, { onSuccess: ({ translation: cleared }) => { loadVersion(cleared); syncSaved(cleared) } })}
         />
       )}
     </div>

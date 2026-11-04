@@ -194,3 +194,28 @@ func ids(models []Model) []string {
 	}
 	return out
 }
+
+func TestNewestSonnet(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ids  []string
+		want string
+	}{
+		{"the highest version wins", []string{"claude-opus-5-5", "claude-sonnet-5", "claude-sonnet-5-5"}, "claude-sonnet-5-5"},
+		{"whatever the list order", []string{"claude-sonnet-4-5", "claude-sonnet-5", "claude-sonnet-4-8"}, "claude-sonnet-5"},
+		{"a dated snapshot reads as its alias", []string{"claude-sonnet-4-5-20250929", "claude-sonnet-4-8"}, "claude-sonnet-4-8"},
+		{"the old naming counts too", []string{"claude-3-5-sonnet-20241022"}, "claude-3-5-sonnet-20241022"},
+		{"no Sonnet", []string{"claude-opus-5-5", "claude-haiku-4-5"}, ""},
+		{"no models", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			models := make([]Model, len(tc.ids))
+			for i, id := range tc.ids {
+				models[i] = Model{ID: id}
+			}
+			if got := NewestSonnet(models); got != tc.want {
+				t.Errorf("NewestSonnet(%v) = %q, want %q", tc.ids, got, tc.want)
+			}
+		})
+	}
+}

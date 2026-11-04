@@ -7,6 +7,8 @@
 //
 // Only a tenant marked 'deleting' is deleted: the owner's request marks it,
 // which already shuts every member out (the tenant is no longer approved).
+// A client org's vendor orgs go first, each on the same path, so the client
+// row's cascade never takes a whole vendor org in one statement.
 package tenantdelete
 
 import (
@@ -162,6 +164,9 @@ func deleteLocked(ctx context.Context, q *db.Queries, tenantID int64) error {
 		return nil
 	}
 
+	if err := deleteVendorOrgs(ctx, q, tenantID); err != nil {
+		return err
+	}
 	if err := deleteFiles(ctx, q, tenantID); err != nil {
 		return err
 	}
@@ -190,6 +195,40 @@ func deleteLocked(ctx context.Context, q *db.Queries, tenantID int64) error {
 		return fmt.Errorf("delete tenant: %w", err)
 	}
 	logging.Info(ctx, "tenant deleted", "tenant-deleted", logging.TenantID(tenantID))
+	return nil
+}
+
+// errVendorDeleteRunning fails a client's delete while one of its vendor
+// orgs is being deleted elsewhere; asynq retries it later.
+var errVendorDeleteRunning = errors.New("a vendor org's delete is running elsewhere")
+
+// deleteVendorOrgs marks each vendor org of clientID 'deleting' and deletes
+// it under its own delete lock, on q's connection. The mark lets the sweep
+// finish a vendor org on its own should this run stop half way.
+func deleteVendorOrgs(ctx context.Context, q *db.Queries, clientID int64) error {
+	ids, err := q.ListVendorTenantIDs(ctx, &clientID)
+	if err != nil {
+		return fmt.Errorf("list vendor orgs: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := q.MarkTenantDeleting(ctx, id); err != nil {
+			return fmt.Errorf("mark vendor org deleting: %w", err)
+		}
+		locked, err := q.TryLockTenantDelete(ctx, id)
+		if err != nil {
+			return fmt.Errorf("take the vendor org delete lock: %w", err)
+		}
+		if !locked {
+			return fmt.Errorf("vendor org %d: %w", id, errVendorDeleteRunning)
+		}
+		err = deleteLocked(ctx, q, id)
+		if _, uerr := q.UnlockTenantDelete(context.WithoutCancel(ctx), id); uerr != nil {
+			logging.Error(ctx, uerr, "tenant delete lock not released", "tenant-delete-unlock-failed", logging.TenantID(id))
+		}
+		if err != nil {
+			return fmt.Errorf("vendor org %d: %w", id, err)
+		}
+	}
 	return nil
 }
 

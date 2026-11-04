@@ -45,6 +45,7 @@ import (
 	"openloc/internal/slack"
 	"openloc/internal/tenantdelete"
 	"openloc/internal/translationmemory"
+	"openloc/internal/vendoridle"
 	"openloc/internal/worker"
 	"openloc/internal/workflow"
 )
@@ -331,6 +332,15 @@ func main() {
 	tenantdelete.New(pool, enqueuer).RegisterHandlers(mux)
 	// Background purges of deleted projects, and their sweep.
 	projectdelete.New(pool, enqueuer).RegisterHandlers(mux)
+	// Vendor org memberships nobody uses: warned, then disabled. A server that
+	// cannot email the warning disables nobody.
+	var idleSender vendoridle.EmailSender
+	if notif.Delivers(emailSender) {
+		idleSender = emailSender
+	} else {
+		logging.Info(ctx, "no email sender: vendor members are not warned or disabled for disuse", "startup-vendor-idle-off")
+	}
+	vendoridle.New(queries, idleSender, cfg.BaseURL).RegisterHandlers(mux)
 
 	for _, srv := range asynqServers {
 		go func() {
@@ -450,6 +460,18 @@ func main() {
 		fatal(ctx, err, "asynq scheduler register failed", "startup-scheduler-register-failed")
 	}
 
+	// Vendor org memberships unused for 83 days get a warning email, and at
+	// 90 days are disabled. Hourly, so a missed run costs an hour, not a day;
+	// unique for the window, so several replicas enqueue one sweep.
+	if _, err := asynqScheduler.Register(
+		"@every 1h",
+		vendoridle.NewSweepTask(),
+		asynq.Queue(taskQueue),
+		asynq.Unique(time.Hour),
+	); err != nil {
+		fatal(ctx, err, "asynq scheduler register failed", "startup-scheduler-register-failed")
+	}
+
 	// An organization delete whose task was lost or failed for good is queued
 	// again. Unique for the window, so several replicas enqueue one sweep.
 	if _, err := asynqScheduler.Register(
@@ -537,10 +559,6 @@ func main() {
 	// notifies on commit and pgListener receives it.
 	holdFeed := hold.NewFeed()
 	holdFeed.ListenOn(pgListener)
-	go func() {
-		defer errtrack.Monitor(ctx, "startup", "pg-listen")
-		pgListener.Run(ctx, pool.Config().ConnConfig)
-	}()
 
 	// Per-tenant LLM model catalog. Fills on demand and is
 	// kept fresh by a ticker that only re-reads what is actually being used. An
@@ -560,6 +578,12 @@ func main() {
 		logging.Info(ctx, fmt.Sprintf("AI model catalog: refreshing warm entries every %d min, %d models per vendor",
 			cfg.AIModelRefreshMinutes, cfg.AIModelListLimit), "startup-ai-catalog-on")
 	}
+	// A key changed on another replica clears this replica's cached list too.
+	aiCatalog.ListenOn(pgListener)
+	go func() {
+		defer errtrack.Monitor(ctx, "startup", "pg-listen")
+		pgListener.Run(ctx, pool.Config().ConnConfig)
+	}()
 
 	// User documentation is embedded and parsed once. A malformed page is a
 	// build-time mistake, so it fails startup rather than a user's request.

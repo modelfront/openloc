@@ -230,6 +230,7 @@ func (h *Handler) HandlePlatformCreateOrg(w http.ResponseWriter, r *http.Request
 		InvitedBy: operatorID,
 		Token:     token,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(ownerInviteExpiry), Valid: true},
+		Kind:      InviteKindMember,
 	})
 	if err != nil {
 		httputil.ServerError(w, "create", "owner invite")

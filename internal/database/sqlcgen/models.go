@@ -641,30 +641,78 @@ type Extension struct {
 }
 
 type File struct {
-	ID           int64              `json:"id"`
-	ProjectID    int64              `json:"project_id"`
-	Name         string             `json:"name"`
-	Format       FileFormat         `json:"format"`
-	StoragePath  string             `json:"storage_path"`
-	SegmentCount int32              `json:"segment_count"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	OriginalName *string            `json:"original_name"`
-	InlineHtml   bool               `json:"inline_html"`
-	XlsxLayout   json.RawMessage    `json:"xlsx_layout"`
-	Segmentation json.RawMessage    `json:"-"`
+	ID            int64              `json:"id"`
+	ProjectID     int64              `json:"project_id"`
+	Name          string             `json:"name"`
+	Format        FileFormat         `json:"format"`
+	StoragePath   string             `json:"storage_path"`
+	SegmentCount  int32              `json:"segment_count"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	OriginalName  *string            `json:"original_name"`
+	InlineHtml    bool               `json:"inline_html"`
+	XlsxLayout    json.RawMessage    `json:"xlsx_layout"`
+	Segmentation  json.RawMessage    `json:"-"`
+	FilterProfile json.RawMessage    `json:"-"`
+}
+
+type FilterBuiltinProfile struct {
+	ID          int64              `json:"id"`
+	BuiltinKey  string             `json:"builtin_key"`
+	Name        string             `json:"name"`
+	Format      string             `json:"format"`
+	Description string             `json:"description"`
+	Options     []byte             `json:"options"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type FilterProfile struct {
+	ID        int64              `json:"id"`
+	TenantID  int64              `json:"tenant_id"`
+	Name      string             `json:"name"`
+	Format    string             `json:"format"`
+	Options   []byte             `json:"options"`
+	BasedOn   *int64             `json:"based_on"`
+	CreatedBy *int64             `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type FilterProfileCatalog struct {
+	ID          int64              `json:"id"`
+	TenantID    *int64             `json:"tenant_id"`
+	BuiltinKey  *string            `json:"builtin_key"`
+	Name        string             `json:"name"`
+	Format      string             `json:"format"`
+	Description string             `json:"description"`
+	Options     []byte             `json:"options"`
+	BasedOn     *int64             `json:"based_on"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type FilterProfileDefault struct {
+	TenantID        int64              `json:"tenant_id"`
+	Format          string             `json:"format"`
+	FilterProfileID int64              `json:"filter_profile_id"`
+	UpdatedBy       *int64             `json:"updated_by"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Invite struct {
-	ID         int64              `json:"id"`
-	TenantID   int64              `json:"tenant_id"`
-	Email      string             `json:"email"`
-	Role       string             `json:"role"`
-	InvitedBy  int64              `json:"invited_by"`
-	Token      string             `json:"token"`
-	AcceptedAt pgtype.Timestamptz `json:"accepted_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID            int64              `json:"id"`
+	TenantID      int64              `json:"tenant_id"`
+	Email         string             `json:"email"`
+	Role          string             `json:"role"`
+	InvitedBy     int64              `json:"invited_by"`
+	Token         string             `json:"token"`
+	AcceptedAt    pgtype.Timestamptz `json:"accepted_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	Kind          string             `json:"kind"`
+	VendorOrgName *string            `json:"vendor_org_name"`
 }
 
 type Issue struct {
@@ -909,11 +957,15 @@ type McpToolCall struct {
 }
 
 type Membership struct {
-	ID        int64              `json:"id"`
-	UserID    int64              `json:"user_id"`
-	TenantID  int64              `json:"tenant_id"`
-	Role      string             `json:"role"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID                         int64              `json:"id"`
+	UserID                     int64              `json:"user_id"`
+	TenantID                   int64              `json:"tenant_id"`
+	Role                       string             `json:"role"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	LastActiveAt               pgtype.Timestamptz `json:"last_active_at"`
+	InactivityWarnedAt         pgtype.Timestamptz `json:"inactivity_warned_at"`
+	DisabledAt                 pgtype.Timestamptz `json:"disabled_at"`
+	InactivityWarningClaimedAt pgtype.Timestamptz `json:"inactivity_warning_claimed_at"`
 }
 
 type MfEngine struct {
@@ -1211,10 +1263,15 @@ type SettingsProfile struct {
 	WorkflowID            *int64             `json:"workflow_id"`
 	MtRouterID            *int64             `json:"mt_router_id"`
 	TmLookupOrder         string             `json:"tm_lookup_order"`
-	InlineHtml            bool               `json:"inline_html"`
 	WorkflowEdited        bool               `json:"workflow_edited"`
 	SegmentationProfileID *int64             `json:"segmentation_profile_id"`
 	LinguistTerms         string             `json:"linguist_terms"`
+}
+
+type SettingsProfileFilterProfile struct {
+	SettingsProfileID int64  `json:"settings_profile_id"`
+	Format            string `json:"format"`
+	FilterProfileID   int64  `json:"filter_profile_id"`
 }
 
 type SettingsTerminologyAssignment struct {
@@ -1292,6 +1349,7 @@ type Tenant struct {
 	Kind             string             `json:"kind"`
 	DemoVersion      *int32             `json:"demo_version"`
 	DemoBuiltAt      pgtype.Timestamptz `json:"demo_built_at"`
+	ClientTenantID   *int64             `json:"client_tenant_id"`
 }
 
 type Term struct {
@@ -1502,6 +1560,7 @@ type UserLanguagePair struct {
 	TargetLang string             `json:"target_lang"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	RowGroup   int32              `json:"row_group"`
+	TenantID   int64              `json:"tenant_id"`
 }
 
 type Workflow struct {

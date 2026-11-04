@@ -1,9 +1,9 @@
 // Track changes in the target column: an inactive row marks what changed since
 // the previous workflow step, removed words struck through and added words
-// highlighted. The row being edited shows plain text in its editor.
+// highlighted, in its editor too while the row is being edited.
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // Stubs from web/src/lib/__mocks__: the real extensions need browser APIs jsdom lacks.
@@ -85,10 +85,58 @@ describe('SegmentRow — track changes', () => {
     expect(screen.getByText('Denuncia recibida')).toBeInTheDocument()
   })
 
-  it('shows no marks in the row being edited', () => {
-    const { container } = renderRow({ isActive: true, trackChangesFrom: 'Denuncia enviada' })
-    expect(screen.queryByTestId('track-changes')).not.toBeInTheDocument()
-    expect(struck(container)).toEqual([])
+  it('keeps the marks in the editor of the row being edited', async () => {
+    renderRow({ isActive: true, trackChangesFrom: 'Denuncia enviada' })
+    const editor = await screen.findByTestId('segment-editor')
+    await waitFor(() => expect(struck(editor)).toEqual(['enviada']))
+    expect(markTexts(editor, ADDED)).toEqual(['recibida'])
+  })
+
+  it('shows no marks in the editor of a formatted row, or while the view is off', async () => {
+    renderRow({
+      isActive: true,
+      translation: { ...translation, active_text: 'Denuncia <strong>recibida</strong>' },
+      trackChangesFrom: 'Denuncia enviada',
+    })
+    let editor = await screen.findByTestId('segment-editor')
+    await waitFor(() => expect(editor).toHaveTextContent('Denuncia recibida'))
+    expect(struck(editor)).toEqual([])
+    cleanup()
+
+    // ¶ shows a closed formatted row as raw text, but the editor still loads
+    // it as formatting, so its unchanged tags must not read as removed words.
+    renderRow({
+      isActive: true,
+      showWhitespace: true,
+      translation: { ...translation, active_text: 'Denuncia <strong>recibida</strong>' },
+      trackChangesFrom: 'Denuncia <strong>enviada</strong>',
+    })
+    editor = await screen.findByTestId('segment-editor')
+    await waitFor(() => expect(editor).toHaveTextContent('Denuncia recibida'))
+    expect(struck(editor)).toEqual([])
+    cleanup()
+
+    renderRow({ isActive: true, trackChanges: false, trackChangesFrom: 'Denuncia enviada' })
+    editor = await screen.findByTestId('segment-editor')
+    await waitFor(() => expect(editor).toHaveTextContent('Denuncia recibida'))
+    expect(struck(editor)).toEqual([])
+  })
+
+  it('turns the marks on and off in a row that is already open', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const row = (over: Partial<SegmentRowProps>) => (
+      <QueryClientProvider client={qc}><SegmentRow {...props({ isActive: true, ...over })} /></QueryClientProvider>
+    )
+    const { rerender } = render(row({ trackChanges: false, trackChangesFrom: null }))
+    const editor = await screen.findByTestId('segment-editor')
+    await waitFor(() => expect(editor).toHaveTextContent('Denuncia recibida'))
+    expect(struck(editor)).toEqual([])
+
+    rerender(row({ trackChangesFrom: 'Denuncia enviada' }))
+    await waitFor(() => expect(struck(editor)).toEqual(['enviada']))
+
+    rerender(row({ trackChanges: false, trackChangesFrom: null }))
+    await waitFor(() => expect(struck(editor)).toEqual([]))
   })
 
   it('keeps the Find highlight on a marked row', () => {

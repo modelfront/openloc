@@ -165,6 +165,18 @@ func (s *Service) AdvanceJob(ctx context.Context, tenantID, jobID int64, active 
 			if _, err := q.LockJobForTaskEdit(ctx, db.LockJobForTaskEditParams{JobID: jobID, TenantID: tenantID}); err != nil {
 				return fmt.Errorf("lock job: %w", err)
 			}
+			// A person's Complete step read the step before the lock: a
+			// concurrent one may have completed it meanwhile, and completing
+			// it again would move the job on twice.
+			if !auto {
+				current, readErr := q.GetJobCurrentStepID(ctx, jobID)
+				if readErr != nil {
+					return fmt.Errorf("read current step: %w", readErr)
+				}
+				if current == nil || *current != active.ID {
+					return ErrStepChanged
+				}
+			}
 			if err := stepround.Close(ctx, q, active.ID, stepround.Completed); err != nil {
 				return err
 			}

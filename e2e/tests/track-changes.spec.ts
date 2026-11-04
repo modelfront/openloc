@@ -75,8 +75,22 @@ test.describe("Track changes", () => {
     await expect(marked.locator("span.line-through")).toHaveText("enviada");
     await expect(marked.locator("span.bg-yellow-300")).toHaveText("recibida");
 
-    // Editing the row shows plain text in the editor, with no marks.
+    // The editor of the open row keeps the marks, and they follow typing.
     await page.locator("[data-translation-cell]").first().click();
-    await expect(page.getByTestId("track-changes")).toHaveCount(0);
+    const editor = page.getByTestId("segment-editor-inner");
+    await expect(editor).toBeFocused();
+    await expect(editor.locator("span.line-through")).toHaveText("enviada");
+    await expect(editor.locator("span.bg-yellow-300")).toHaveText("recibida");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" mismo");
+    await expect(editor.locator("span.bg-yellow-300")).toHaveText(["recibida", "mismo"]);
+
+    // The removed word is shown, never saved.
+    const saved = page.waitForResponse(
+      (r) => r.request().method() === "PUT" && r.url().endsWith(`/translations/${a.id}`) && r.ok(),
+    );
+    await page.keyboard.press("ControlOrMeta+Enter");
+    const body = (await saved).request().postDataJSON() as { human_text: string };
+    expect(body.human_text).toBe("Denuncia recibida hoy mismo");
   });
 });

@@ -27,6 +27,7 @@ test.describe("AI prompts, engines, and QE+APE steps", () => {
   let engineId = 0;
   let routerId = 0;
   let projectId = 0;
+  let copyPromptId = 0;
 
   const auth = () => ({ Authorization: `Bearer ${token}` });
 
@@ -50,6 +51,11 @@ test.describe("AI prompts, engines, and QE+APE steps", () => {
       if (def) await deleteStepDefinitionViaAPI(page, def.id);
       if (routerId) await page.request.delete(`/api/ai/routers/${routerId}`, { headers });
       await page.request.delete(`/api/ai/engines/${engineId}`, {
+        headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("token"))}` },
+      });
+    }
+    if (copyPromptId) {
+      await page.request.delete(`/api/ai/prompts/${copyPromptId}`, {
         headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("token"))}` },
       });
     }
@@ -217,5 +223,36 @@ test.describe("AI prompts, engines, and QE+APE steps", () => {
     const settings = await getProjectSettingsViaAPI(page, projectId);
     const steps = settings.data.workflow_steps as Array<{ name: string; ai_router_id: number | null }>;
     expect(steps.find((s) => s.name === `AI review ${engineId}`)?.ai_router_id, "router must persist on the step").toBe(routerId);
+  });
+
+  // The built-in comment-only prompt is on the Prompts tab, and a duplicate of
+  // it keeps its type: comments only, no status, no text.
+  test("duplicate the built-in Comment only prompt", async ({ page }) => {
+    await page.goto("/ai/prompts");
+    const listRes = await page.request.get(`/api/ai/prompts`, { headers: auth() });
+    expect(listRes.ok()).toBe(true);
+    const builtIn = ((await listRes.json()).data as Array<{ id: number; name: string; is_default: boolean }>)
+      .find((p) => p.name === "Default Comment only" && p.is_default);
+    expect(builtIn, "the Comment only default must be provisioned").toBeTruthy();
+
+    const card = page.getByTestId(`ai-prompt-${builtIn!.id}`);
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "Duplicate" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ai/prompts/new\\?from=${builtIn!.id}$`));
+
+    const form = page.getByTestId("ai-prompt-form");
+    await form.getByTestId("ai-prompt-name").fill(`E2E Comment only ${suffix}`);
+    const [createRes] = await Promise.all([
+      page.waitForResponse(
+        (r) => new URL(r.url()).pathname === "/api/ai/prompts" && r.request().method() === "POST" && r.ok(),
+        { timeout: 30_000 },
+      ),
+      form.getByTestId("ai-prompt-submit").click(),
+    ]);
+    const copy = (await createRes.json()).data as
+      { id: number; out_status: boolean; out_text: boolean; out_comments: boolean };
+    copyPromptId = copy.id;
+    expect({ status: copy.out_status, text: copy.out_text, comments: copy.out_comments })
+      .toEqual({ status: false, text: false, comments: true });
   });
 });

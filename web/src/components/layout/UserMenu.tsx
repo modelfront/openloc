@@ -6,10 +6,10 @@ import {
 } from 'lucide-react'
 import { logout, getMe } from '@/api'
 import { queryKeys } from '@/lib/query-keys'
-import { isAdminRole as isAdmin, isManagerRole } from '@/lib/roles'
+import { isAdminRole as isAdmin, isVendorOrg } from '@/lib/roles'
 import { useStartSavedTour } from '@/lib/playbooks'
 import { siteLink, useAppConfig } from '@/pages/docs/DocsHost'
-import { ORG_MEMBERS_PATH, ORG_VENDORS_PATH } from '@/pages/org/org-paths'
+import { ORG_MEMBERS_PATH } from '@/pages/org/org-paths'
 import { ReportIssueDialog } from '@/components/issues/ReportIssueDialog'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -58,22 +58,24 @@ export function UserMenu({ role = 'member', isPlatformAdmin = false }: { role?: 
           Settings
         </DropdownMenuItem>
         {/* AI settings is open to every role: admins manage the org's vendor
-            keys there, everyone else manages their own MCP tokens.
-            Organization settings is for managers: owners and admins get every
-            tab, a project manager only Vendors. */}
-        {isManagerRole(role) && (
-          <DropdownMenuItem onClick={() => navigate(isAdmin(role) ? ORG_MEMBERS_PATH : ORG_VENDORS_PATH)}>
+            keys there, everyone else manages their own MCP tokens. A vendor
+            org has neither. Organization settings is owner/admin only. */}
+        {isAdmin(role) && (
+          <DropdownMenuItem onClick={() => navigate(ORG_MEMBERS_PATH)}>
             <Building2 className="w-4 h-4" />
             Organization settings
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={() => navigate('/ai-settings')}>
-          <Sparkles className="w-4 h-4" />
-          AI settings
-        </DropdownMenuItem>
+        {!isVendorOrg(me) && (
+          <DropdownMenuItem onClick={() => navigate('/ai-settings')} data-testid="user-menu-ai-settings">
+            <Sparkles className="w-4 h-4" />
+            AI settings
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         {/* Learn is open to every role and lists the tours the role may take;
-            it is hidden when there are none (the Playground is off). */}
+            it is hidden when there are none (the Playground is off, or a
+            vendor org). */}
         {tours.length > 0 && (
           <DropdownMenuItem onClick={() => navigate('/learn')} data-testid="user-menu-learn">
             <GraduationCap className="w-4 h-4" />

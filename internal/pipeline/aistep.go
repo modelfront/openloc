@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"openloc/internal/ai"
 	"openloc/internal/aiengine"
 	"openloc/internal/airouter"
 	"openloc/internal/aiusage"
@@ -21,10 +22,15 @@ import (
 
 // AIStepResult reports the outcome of a QE+APE workflow-step predict run.
 type AIStepResult struct {
-	Total        int             `json:"total"`
-	AutoApproved int             `json:"auto_approved"`
-	NeedsReview  int             `json:"needs_review"`
-	SkipReason   PhaseSkipReason `json:"skip_reason,omitempty"`
+	Total        int `json:"total"`
+	AutoApproved int `json:"auto_approved"`
+	NeedsReview  int `json:"needs_review"`
+	// Commented counts the segments that got a new AI comment.
+	Commented int `json:"commented"`
+	// Mode is the output mode the step ran, e.g. ai.ModeComment; empty on a
+	// skip before the engine resolved.
+	Mode       string          `json:"mode,omitempty"`
+	SkipReason PhaseSkipReason `json:"skip_reason,omitempty"`
 }
 
 // PhaseSkipNoAIStep — the job's active workflow step carries no AI router, so
@@ -250,10 +256,16 @@ func (s *Service) RunAIStep(ctx context.Context, tenantID, jobID int64, onProgre
 		}
 	}
 
-	// A round that re-runs its AI after a rollback reviews every unconfirmed,
-	// unlocked segment with text; any other run only the pre-translated ones.
+	res.Mode = mode
+
+	// A comment-only review changes nothing, so it reads every segment with
+	// text, people's and locked ones included. A round that re-runs its AI
+	// after a rollback reviews every unconfirmed, unlocked segment with text;
+	// any other run only the pre-translated ones.
+	commentOnly := mode == ai.ModeComment
 	pending, err := s.queries.ListPreTranslatedByFile(ctx, db.ListPreTranslatedByFileParams{
 		FileID: file.ID, TargetLanguage: targetLang, ReviewAll: step.AiReviewAll,
+		EveryTranslation: commentOnly,
 	})
 	if err != nil {
 		return res, fmt.Errorf("list pre-translated: %w", err)
@@ -275,7 +287,9 @@ func (s *Service) RunAIStep(ctx context.Context, tenantID, jobID int64, onProgre
 	// results are routed and written here, one batch at a time in file order.
 	// After a failed batch no more are sent, but the answers of the batches
 	// already in flight are still written, so a retry does not pay for them
-	// again; then the step fails.
+	// again; then the step fails. A comment-only run is the exception: it
+	// leaves nothing on a row, so a retry sends every segment again and only
+	// the wording check keeps its comments from repeating.
 	totalBatches := (len(pending) + batchSize - 1) / batchSize
 	predictions := predictConcurrently(ctx, runPredict, pending, batchSize, aiPredictMaxInFlight, predictStage, predictMeta)
 	defer predictions.stop()
@@ -325,6 +339,15 @@ func (s *Service) RunAIStep(ctx context.Context, tenantID, jobID int64, onProgre
 				logging.Warn(ctx, nil, "predict returned no result for translation", "ai-step-no-result", logging.JobID(jobID), logging.TranslationID(row.ID))
 				continue
 			}
+			// Comment-only: the comment is the whole outcome. No predict
+			// write, no history row — the segment's text and status stay
+			// exactly as they were.
+			if commentOnly {
+				if s.addAIComment(routeCtx, jobID, row.ID, result) {
+					res.Commented++
+				}
+				continue
+			}
 			var params db.UpdateTranslationPredictParams
 			if mode != "qe" {
 				params = routePredictOutcome(row, result)
@@ -347,17 +370,7 @@ func (s *Service) RunAIStep(ctx context.Context, tenantID, jobID int64, onProgre
 			} else {
 				res.NeedsReview++
 			}
-			// The LLM's `comment` output lands as an AI-authored segment
-			// comment (NULL user_id). Best-effort, like
-			// history emission: a comment failure must not fail the step.
-			if comment := aiComment(result); comment != nil {
-				if _, err := s.queries.CreateAIComment(routeCtx, db.CreateAICommentParams{
-					TranslationID: row.ID,
-					Content:       *comment,
-				}); err != nil {
-					logging.Error(ctx, err, "failed to create AI comment", "ai-step-comment-failed", logging.JobID(jobID), logging.TranslationID(row.ID))
-				}
-			}
+			s.addAIComment(routeCtx, jobID, row.ID, result)
 			// Two mutually exclusive outcomes get a history row, and which one
 			// depends on whether the text moved:
 			//

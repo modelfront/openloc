@@ -177,6 +177,8 @@ func reference(e Event) (refType string, refID int64) {
 	switch {
 	case e.IssueID > 0:
 		return "issue", e.IssueID
+	case e.VendorOrgID > 0:
+		return "vendor_org", e.VendorOrgID
 	case e.JobID == 0 && e.ProjectID > 0:
 		return "project", e.ProjectID
 	}
